@@ -14,7 +14,8 @@ import time
 
 from .api import Panel, request
 from .core import (ROOT, InstallError, require, run, write, save, token, free_port,
-                   fqdn, download, verify_bundle, extract, wait_for)
+                   fqdn, download, verify_bundle, extract, wait_for, digest)
+from .geodata import verify_server_geodata
 from .portal import generate
 from .routing import deeplink, inbound, server_template
 
@@ -259,9 +260,9 @@ def panel(s, lock, work):
     require(match is not None, 'Official CLI API-token response changed')
     s['api_token'] = match.group(1)
     save(STATE/'state.json',s)
-    configure_panel(s)
+    configure_panel(s, lock)
 
-def configure_panel(s):
+def configure_panel(s, lock):
     cert = f'/etc/letsencrypt/live/{s["domain"]}/'
     api = Panel(s)
     settings = api.call('setting/all', {}, method='POST')
@@ -270,13 +271,17 @@ def configure_panel(s):
         subCertFile=cert+'fullchain.pem', subKeyFile=cert+'privkey.pem',
         subEncrypt=True, subEnableRouting=True, subRoutingRules=deeplink('happ'),
         subIncyEnableRouting=True, subIncyRoutingRules=deeplink('incy'),
-        subHappAutoDetect=True, subIncyAppAutoDetect=True,
+        subHappAutoDetect=True, subHappTunType='xray', subHappLocalProxyAuth='auto',
+        subIncyAppAutoDetect=True,
         subJsonEnable=False, subJsonAutoDetect=False, subClashEnable=False,
         webListen='0.0.0.0')
     api.call('setting/update', settings)
-    # Server datasets are separate from client profile .dat files and category names.
-    shutil.copyfile(ROOT/'vendor/routing/geosite.dat', '/usr/local/x-ui/bin/geosite.dat')
-    shutil.copyfile(ROOT/'vendor/routing/geoip.dat', '/usr/local/x-ui/bin/geoip.dat')
+    # Keep the stock databases from the SHA256-pinned 3x-ui archive. Happ/INCY
+    # profiles use their separately pinned DigneZzZ mobile datasets.
+    geodata_root = Path('/usr/local/x-ui/bin')
+    for name, expected in lock['server_geodata']['files'].items():
+        require(digest(geodata_root/name) == expected, 'Unexpected server geodata: '+name)
+    verify_server_geodata(geodata_root)
     view = api.call('xray/', {}, method='POST')
     if isinstance(view, str):
         view = json.loads(view)

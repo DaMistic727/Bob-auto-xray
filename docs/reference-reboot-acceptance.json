@@ -1,0 +1,15 @@
+{
+  "date": "2026-10-18",
+  "environment": "Ubuntu 24.04 amd64; address and domain redacted",
+  "bootIdChanged": true,
+  "servicesAfterBoot": {
+    "x-ui": "active",
+    "nginx": "active",
+    "warp-svc": "active",
+    "fail2ban": "active",
+    "php8.3-fpm": "active"
+  },
+  "onHostAcceptance": "23/23 passed plus REALITY/subscription/sniffing E2E",
+  "externalAcceptance": "7/7 scenarios passed",
+  "temporaryClientsRemoved": true
+}
