@@ -183,6 +183,18 @@ class BbrTests(unittest.TestCase):
             self.assertTrue(report['moduleLoadedDuringPreflight'])
             self.assertIn(('modprobe', 'tcp_bbr'), kernel.calls)
 
+    def test_missing_modinfo_uses_module_files_without_mutation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); etc, run_root, _, _ = self.paths(root)
+            module = root / 'modules/6.8.0-test/kernel/net/ipv4/tcp_bbr.ko.zst'
+            module.parent.mkdir(parents=True)
+            module.write_bytes(b'')
+            kernel = FakeKernel(available=('reno', 'cubic'), module='unknown')
+            report = bbr.preflight(kernel, etc, run_root, module_root=root / 'modules')
+            self.assertEqual(report['module'], 'loadable')
+            self.assertFalse(report['bbrAvailable'])
+            self.assertNotIn(('modprobe', 'tcp_bbr'), kernel.calls)
+
     def test_qdisc_is_diagnostic_even_when_interface_is_noqueue(self):
         kernel = FakeKernel()
         report = bbr.qdisc_diagnostics(kernel)

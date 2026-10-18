@@ -34,7 +34,7 @@ bootstrap_sha = hashlib.sha256(installer.read_bytes()).hexdigest()
 
 3x-ui + VLESS TCP REALITY Vision Self-SNI, nginx/PHP portal, selective WARP, native Geodata Auto-Update, TCP BBR с FQ и отдельные профили Happ/INCY.
 
-Для VPN-основы v0.3.1 проверены clean install Ubuntu 26.04.1 amd64, REALITY Target в API/DB/web editor/runtime, новая регистрация WARP, geodata hot reload/rollback, внешний Vision-клиент и reboot. BBR v0.3.2 покрыт 14 mock-сценариями и общей регрессией; clean install и reboot именно v0.3.2 на VPS пока не выполнялись. Happ/INCY проверены пользователем на физическом iPhone; Android, DNS leaks и отдельные UDP/QUIC-сценарии требуют проверки.
+Кандидат на основе v0.3.2 прошёл clean install Ubuntu 26.04.1 amd64, новую регистрацию WARP, BBR/FQ, REALITY Target в API/DB/web editor/runtime, geodata hot reload/rollback, внешний Vision-клиент и reboot. Исправление preflight для минимальных образов без modinfo покрыто regression-тестом. Опубликованный tag v0.3.2 остаётся неизменным; evidence относится к кандидату с этим исправлением. Happ/INCY проверены пользователем на физическом iPhone; Android, DNS leaks и отдельные UDP/QUIC-сценарии требуют проверки.
 
 ## Установка от root на чистой VPS
 

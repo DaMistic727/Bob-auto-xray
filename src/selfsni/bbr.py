@@ -70,11 +70,18 @@ def duplicates(etc=Path('/etc'), run_root=Path('/run')):
             if item['value'] == DESIRED[item['key']]]
 
 
-def _module_kind(command):
+def _module_kind(command, module_root=Path('/lib/modules')):
     filename = _safe(command, 'modinfo', '-F', 'filename', 'tcp_bbr')
     if filename == '(builtin)':
         return 'built-in'
     if filename:
+        return 'loadable'
+    # Minimal images may ship kernel modules before installing the kmod CLI.
+    # A read-only filesystem probe keeps --preflight-only truthful and lets
+    # provisioning install kmod before configure() actually calls modprobe.
+    kernel = _safe(command, 'uname', '-r') or platform.release()
+    module_dir = Path(module_root) / kernel / 'kernel/net/ipv4'
+    if any(module_dir.glob('tcp_bbr.ko*')):
         return 'loadable'
     return 'unknown'
 
@@ -99,7 +106,8 @@ def qdisc_diagnostics(command=run):
     return result
 
 
-def probe(command=run, etc=Path('/etc'), run_root=Path('/run')):
+def probe(command=run, etc=Path('/etc'), run_root=Path('/run'),
+          module_root=Path('/lib/modules')):
     """Read-only compatibility probe. It must never load modules or write sysctls."""
     available = _safe(command, 'sysctl', '-n',
                       'net.ipv4.tcp_available_congestion_control').split()
@@ -110,7 +118,7 @@ def probe(command=run, etc=Path('/etc'), run_root=Path('/run')):
         'restrictedContainer': virtualization in RESTRICTED_VIRTUALIZATION,
         'current': {key: _safe(command, 'sysctl', '-n', key) for key in DESIRED},
         'availableCongestionControl': available,
-        'module': _module_kind(command),
+        'module': _module_kind(command, module_root),
         'persistentAssignments': persistent_assignments(etc, run_root),
         'conflicts': conflicts(etc, run_root),
         'duplicates': duplicates(etc, run_root),
@@ -121,8 +129,9 @@ def probe(command=run, etc=Path('/etc'), run_root=Path('/run')):
     return report
 
 
-def preflight(command=run, etc=Path('/etc'), run_root=Path('/run'), allow_modprobe=False):
-    report = probe(command, etc, run_root)
+def preflight(command=run, etc=Path('/etc'), run_root=Path('/run'), allow_modprobe=False,
+              module_root=Path('/lib/modules')):
+    report = probe(command, etc, run_root, module_root)
     require(not report['restrictedContainer'],
             'TCP BBR requires host sysctl control; restricted container detected: '
             + report['virtualization'])
@@ -158,9 +167,10 @@ def _restore(path, previous, mode):
 
 
 def configure(command=run, sysctl_config=SYSCTL_CONFIG,
-              module_config=MODULE_CONFIG, etc=Path('/etc'), run_root=Path('/run')):
+              module_config=MODULE_CONFIG, etc=Path('/etc'), run_root=Path('/run'),
+              module_root=Path('/lib/modules')):
     """Apply the project-owned settings, rolling files and runtime back on failure."""
-    before = preflight(command, etc, run_root)
+    before = preflight(command, etc, run_root, module_root=module_root)
     old_runtime = {key: _sysctl(command, key) for key in DESIRED}
     old_sysctl = _snapshot(sysctl_config)
     old_module = _snapshot(module_config)
