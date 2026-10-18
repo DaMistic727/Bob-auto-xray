@@ -35,7 +35,7 @@
 3. **Запустите установщик одной командой** от root:
 
    ```bash
-   bash <(curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' https://github.com/DaMistic727/Bob-auto-xray/releases/download/v0.1.0/install.sh)
+   bash <(curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' https://github.com/DaMistic727/Bob-auto-xray/releases/download/v0.1.1/install.sh)
    ```
 
    Он запросит FQDN и необязательный email Let's Encrypt. Bootstrap загружает **конкретный релиз** и проверяет закреплённый SHA256 архива до выполнения модулей. [Модель доверия и ручная проверка →](docs/RELEASE.md)
