@@ -6,7 +6,7 @@
       "passed": true
     },
     {
-      "name": "Basic UI shape + panel API save round-trip",
+      "name": "Basic UI + native geodata panel API save round-trip",
       "passed": true
     },
     {
@@ -23,6 +23,10 @@
     },
     {
       "name": "Runtime outbound set + safe REALITY diagnostics",
+      "passed": true
+    },
+    {
+      "name": "Native geodata process timezone and 03:00 Europe/Moscow schedule",
       "passed": true
     },
     {
@@ -78,7 +82,7 @@
       "passed": true
     },
     {
-      "name": "systemd php8.3-fpm",
+      "name": "systemd php8.5-fpm",
       "passed": true
     },
     {

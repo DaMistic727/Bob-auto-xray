@@ -1,81 +1,71 @@
 # Отчёт о тестировании · 18 октября 2026
 
-Проверенная среда: чистое повторное развёртывание на Ubuntu 24.04.5 LTS amd64. Адрес и домен удалены из публикуемых материалов. Существующий Cloudflare WARP был принят через `--adopt-warp`: регистрация не удалялась и не создавалась заново, listener остался на `127.0.0.1:40000`.
+## v0.3.0: Ubuntu 26, чистая установка
 
-Перед тестом прежняя установка была сохранена в закрытом root-каталоге VPS. После очистки компонентов Self-SNI preflight подтвердил единственные TCP listeners: SSH, локальный DNS и WARP. Полный запуск выполнен одной командой:
+Проверенная среда: новая Ubuntu 26.04.1 LTS amd64, kernel `7.0.0-38-generic`. До запуска отсутствовали Bob Auto Xray, 3x-ui, nginx, Certbot и регистрация Cloudflare WARP; TCP слушали только SSH и локальный DNS. Адрес и домен удалены из публикуемых материалов.
 
-```sh
-bash /root/selfsni/install.sh --domain vpn.example.com --adopt-warp
-```
-
-## Проверенная конфигурация
-
-- Один VLESS TCP REALITY inbound на 443, постоянных клиентов нет.
-- REALITY: Self-SNI через Unix socket, `show: true`, Firefox fingerprint.
-- Sniffing: `http`, `tls`, `quic`, `fakedns`, итоговый `routeOnly: true`.
-- User outbounds: `direct`, штатный `blocked`, `warp-outbound`; отдельного `block` нет.
-- Сначала служебное правило API, затем blocked IP, BitTorrent, blocked domains и WARP GeoSite; terminal DIRECT rule отсутствует.
-- `domainStrategy: IPOnDemand`.
-- Happ: `Tun-Type=xray`, SOCKS/HTTP auth `auto`; поддерживаемый TUN mode не перезаписывается.
-- INCY использует собственный body/deeplink без Happ-заголовков.
-
-Полный обезличенный снимок сохранён в [reference-config-redacted.json](reference-config-redacted.json). Он содержит Xray setting из API панели, inbound, Hosts, релевантные subscription settings и фактический runtime `/usr/local/x-ui/bin/config.json`. REALITY keys, short IDs, credentials, адрес, домен и случайные пути заменены маркерами.
-
-## Автоматические проверки
-
-Локально прошли 19 unittest/bootstrap tests. Они покрывают checksums, безопасную распаковку, offline adapter официального 3x-ui installer, отказ на неверных входных данных, profiles/subscription contracts, точный порядок и идемпотентность routing, Firefox/REALITY/sniffing и разбор обязательных protobuf-категорий GeoSite/GeoIP.
-
-Статические проверки:
+Полный запуск выполнен без `--adopt-warp`:
 
 ```sh
-git diff --check
-PYTHONPYCACHEPREFIX=/tmp/selfsni-pycache python3 -m compileall -q src tools
-bash -n install.sh vendor/3x-ui/x-ui.sh vendor/3x-ui/install.sh
-shellcheck install.sh
+bash /root/selfsni/install.sh --domain vpn.example.com
 ```
 
-После полного install и после reboot прошли все 23 базовые on-host проверки:
+Установщик сам подключил официальный Cloudflare repository для Ubuntu `resolute`, установил WARP `2026.8.2110.0`, создал регистрацию, включил proxy mode на `127.0.0.1:40000` и подтвердил `Connected / healthy`. В ходе первого кандидата обнаружена ошибка прав нового APT keyring при строгом `umask 077`; установщик исправлен и чистый preflight повторён. Provisioning исправленного кандидата дошёл до всех компонентов. Новая проверка планировщика сначала ожидала необязательную INFO-строку при runtime loglevel `warning`; проверка заменена фактическим E2E планировщика и повторно прошла.
 
-- канонический Basic UI/API shape и сохранение того же Xray JSON через `xray/update`;
-- наличие категорий во всех четырёх установленных `.dat`;
-- `nginx -t`, `xray run -test`, runtime outbounds и API service;
-- отсутствие private REALITY key в журнале x-ui;
-- HTTPS panel, реальный login/CSRF/logout, единый сертификат на трёх TLS listeners;
-- fallback REALITY → PROXY v1 → Unix socket → nginx/PHP portal;
-- отсутствие тестовых form values в sessions/logs;
-- WARP `warp=on` через loopback и системный `warp=off`;
-- сохранённые Happ/INCY profiles и settings;
-- live route tests для `.ru`, `.su`, `.рф`, RU IPv4/IPv6, BitTorrent, AI, IP-check и DIRECT;
-- иностранный домен `77.88.8.8.nip.io`, разрешающийся в RU IP, блокируется;
-- systemd, UFW, Fail2ban и Certbot timer.
+Фактические версии:
 
-[Обезличенный on-host JSON →](reference-onhost-acceptance.json)
+| Компонент | Версия |
+|---|---|
+| Ubuntu | 26.04.1 LTS amd64 |
+| Kernel | 7.0.0-38-generic |
+| 3x-ui | 3.10.2 |
+| Xray-core | 26.10.10, commit `701af60`, Go 1.27.2 |
+| Cloudflare WARP | 2026.8.2110.0 |
+| nginx | 1.28.3-2ubuntu1.11 |
+| PHP-FPM | 8.5.4-0ubuntu1.3 |
+| Certbot | 4.0.0-4 |
+| Fail2ban | 1.1.0-9 |
+| UFW | 0.36.2-9build1 |
 
-## Реальные соединения
+## Native Geodata Auto-Update
 
-On-host E2E создаёт одного временного клиента через актуальный clients API и всегда удаляет его в `finally`. Проверены реальные подписки Happ/INCY, Firefox VLESS REALITY Vision, DIRECT, WARP IP-check и отказ RU destinations.
+Используется только встроенный Xray `geodata`; cron jobs и дополнительные systemd timers не создаются. Исходный код Xray 26.10.10 использует локальный timezone процесса. Drop-in `x-ui.service` задаёт `TZ=Etc/UTC`, Xray наследует эту переменную, а `geodata.cron` равен `0 0 * * *`. Это соответствует ровно 03:00 Europe/Moscow (UTC+3 без сезонного перевода) и не меняет системный timezone VPS.
 
-Поведение `routeOnly` проверено без подмены конфигурацией: SOCKS5 получает конкретный IP, а TLS передаёт отдельный SNI. При `routeOnly: false` Xray переписал dial target на sniffed домен; при `true` сохранил исходный IP, из-за чего ожидаемо не прошла проверка сертификата. WARP GeoSite работал в обоих режимах. Финальное значение восстановлено в `true`.
+Через `geodata.outbound=direct` настроены четыре стандартных источника 3x-ui:
 
-Внешний Mac/arm64 Xray 26.10.10 подключался к публичному TCP/443. Прошли:
+- Loyalsoldier: `geosite.dat`, `geoip.dat`;
+- runetfreedom: `geosite_RU.dat`, `geoip_RU.dat`.
 
-- Happ и INCY subscription contracts;
-- VLESS REALITY Vision с Firefox fingerprint;
-- DIRECT trace и отдельный WARP egress для IP-check;
-- настоящий OpenAI HTTP exchange с ростом byte counters `warp-outbound`;
-- блокировка RU domain, RU IP и иностранного имени с RU IP;
-- отсутствие внешнего SOCKS5 handshake на порту WARP.
+Активный E2E временно переключал cron на каждую минуту. Все четыре файла скачались, их mtime изменился, категории повторно прочитались, а PID Xray остался прежним. Затем 404 оставил все digest/mtime неизменными. HTTP 200 с невалидным protobuf вызвал reload failure и атомарный rollback; digest/mtime и категории сохранились. В `finally` восстановлены production assets, `direct` и `0 0 * * *`. Настройки видны в `geodataSources` 3x-ui, проходят API save round-trip и сохранились после reboot. [Обезличенный geodata E2E →](reference-geodata-acceptance.json)
 
-[Обезличенный внешний JSON →](reference-external-acceptance.json)
+## Acceptance и реальные соединения
 
-## Перезагрузка
+Локально прошёл 21 unittest/bootstrap test, включая regression для прав APT keyring, точную native geodata-конфигурацию, источники и обязательные protobuf-категории.
 
-Выполнена реальная перезагрузка. Boot ID изменился, SSH восстановился, `x-ui`, nginx, WARP, Fail2ban и PHP-FPM запустились автоматически. После загрузки повторно прошли 23/23 on-host checks, временный REALITY E2E и полный внешний Mac test. Временные клиенты удалены. [Краткое reboot evidence →](reference-reboot-acceptance.json)
+До и после reboot прошли 24/24 базовые on-host проверки:
+
+- Basic UI/API save round-trip, runtime Xray и geodata;
+- HTTPS-панель, login/CSRF/logout и общий сертификат трёх TLS listeners;
+- REALITY fallback → PROXY v1 → Unix socket → nginx/PHP;
+- WARP через loopback при системном `warp=off`;
+- RU/UA/private/BitTorrent block, AI/IP-check через WARP и обычный DIRECT;
+- Happ/INCY contracts, UFW, Fail2ban, Certbot timer и все systemd services.
+
+On-host E2E создал одного временного клиента, проверил Firefox VLESS REALITY Vision, route-only sniffing, реальные подписки и маршрутизацию, затем удалил клиента. [Обезличенный on-host JSON →](reference-onhost-acceptance.json)
+
+Внешний Mac/arm64 Xray 26.10.10 до и после reboot подключался к публичному TCP/443. Проверены REALITY Vision, DIRECT trace, отдельный WARP egress, OpenAI HTTP exchange с ростом `warp-outbound` counters, блокировка RU domain/IP/foreign-name-to-RU-IP и отсутствие публичного SOCKS5. [Обезличенный внешний JSON →](reference-external-acceptance.json)
+
+Выполнена реальная перезагрузка: boot ID изменился; `x-ui`, nginx, WARP, Fail2ban, PHP 8.5 FPM и Certbot timer запустились автоматически. Production geodata JSON и timezone сохранились. После повторных on-host и внешних E2E постоянных клиентов осталось ноль. [Краткое reboot evidence →](reference-reboot-acceptance.json)
+
+Полный обезличенный снимок API и runtime находится в [reference-config-redacted.json](reference-config-redacted.json).
+
+## v0.2.0: отдельная прежняя среда
+
+v0.2.0 проверялся на Ubuntu 24.04.5 LTS amd64 с уже существующим WARP через `--adopt-warp`. В том прогоне регистрация WARP не создавалась заново. Эти результаты не использовались как доказательство совместимости v0.3.0 с Ubuntu 26.
 
 ## Границы подтверждения
 
-- Ubuntu 22.04, 26.04 и arm64 VPS не проверялись отдельным развёртыванием.
-- Реальные мобильные приложения Happ/INCY на устройствах не запускались; проверены их HTTP/Base64/JSON/deeplink contracts и Xray-клиент.
-- Новая регистрация WARP реализована, но в этом прогоне использовалась существующая разрешённая регистрация.
-- GeoIP/GeoSite — закреплённый снимок из официального релиза 3x-ui; SHA256 и наличие используемых категорий проверяются, качество классификации зависит от upstream.
-- Проверен TCP/HTTPS через WARP; UDP через WARP SOCKS отдельно не проверялся.
+- Ubuntu 22.04 и arm64 VPS не проверялись отдельным clean install.
+- Реальные Happ/INCY на мобильных устройствах не запускались; проверены HTTP/Base64/JSON/deeplink contracts и совместимый Xray-клиент.
+- Подключение с подтверждённого российского source IP и UDP через WARP SOCKS отдельно не проверялись.
+- Классификация GeoIP/GeoSite зависит от upstream; установщик и E2E проверяют digest/структуру и все используемые категории.

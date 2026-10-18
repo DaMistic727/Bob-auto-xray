@@ -18,13 +18,19 @@ from selfsni.core import require, save, run, free_port, wait_for, InstallError
 p=argparse.ArgumentParser()
 p.add_argument('--host',required=True)
 p.add_argument('--control-path',required=True)
+p.add_argument('--identity',help='Optional SSH private key for a direct BatchMode connection')
+p.add_argument('--known-hosts',default='/tmp/selfsni-known-hosts',
+               help='Known-hosts file containing the already verified VPS host key')
 p.add_argument('--xray',required=True)
 p.add_argument('--output',default='external-acceptance.json')
 a=p.parse_args()
 
 def remote(action):
-    return run('ssh','-o','BatchMode=yes','-o','ControlPath='+a.control_path,
-        '-o','UserKnownHostsFile=/tmp/selfsni-known-hosts',a.host,
+    ssh = ['ssh','-o','BatchMode=yes','-o','ControlPath='+a.control_path,
+           '-o','UserKnownHostsFile='+a.known_hosts]
+    if a.identity:
+        ssh += ['-o','IdentitiesOnly=yes','-i',a.identity]
+    return run(*ssh,a.host,
         'PYTHONPATH=/root/selfsni/src python3 /root/selfsni/tools/remote_fixture.py '+action,timeout=60)
 
 def http(url, agent=None):

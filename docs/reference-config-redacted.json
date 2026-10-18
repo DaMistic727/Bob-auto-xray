@@ -137,12 +137,34 @@
           "https+local://1.1.1.1/dns-query"
         ],
         "queryStrategy": "UseIP"
+      },
+      "geodata": {
+        "cron": "0 0 * * *",
+        "outbound": "direct",
+        "assets": [
+          {
+            "url": "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat",
+            "file": "geosite.dat"
+          },
+          {
+            "url": "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat",
+            "file": "geoip.dat"
+          },
+          {
+            "url": "https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/geosite.dat",
+            "file": "geosite_RU.dat"
+          },
+          {
+            "url": "https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/geoip.dat",
+            "file": "geoip_RU.dat"
+          }
+        ]
       }
     },
     "inbound": {
       "id": 1,
-      "up": 75054,
-      "down": 103430,
+      "up": 39020,
+      "down": 49043,
       "total": 0,
       "remark": "Self-SNI REALITY · add Vision clients manually",
       "subSortIndex": 1,
@@ -160,7 +182,7 @@
       "shareAddrStrategy": "node",
       "shareAddr": "",
       "disableFlow": false,
-      "originNodeGuid": "158e8257-4bb4-4ebb-a45b-4e8ddccc1101",
+      "originNodeGuid": "86ca624b-2af1-4dda-a129-c14cb7655083",
       "settings": {
         "clients": [],
         "decryption": "none",
@@ -390,6 +412,28 @@
     "metrics": {
       "listen": "127.0.0.1:11111",
       "tag": "metrics_out"
+    },
+    "geodata": {
+      "cron": "0 0 * * *",
+      "outbound": "direct",
+      "assets": [
+        {
+          "url": "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat",
+          "file": "geosite.dat"
+        },
+        {
+          "url": "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat",
+          "file": "geoip.dat"
+        },
+        {
+          "url": "https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/geosite.dat",
+          "file": "geosite_RU.dat"
+        },
+        {
+          "url": "https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/geoip.dat",
+          "file": "geoip_RU.dat"
+        }
+      ]
     }
   }
 }

@@ -9,11 +9,13 @@ from unittest.mock import patch
 
 from selfsni.core import InstallError, fqdn, verify_bundle, extract
 from selfsni.portal import generate
-from selfsni.geodata import REQUIRED, categories, verify_server_geodata
+from selfsni.geodata import (GEODATA_ASSETS, GEODATA_CRON, GEODATA_TIMEZONE,
+                             REQUIRED, automatic_config, categories,
+                             verify_server_geodata)
 from selfsni.routing import (BLOCKED_DOMAINS, BLOCKED_IPS, WARP_DOMAINS, deeplink,
                              profile, server_template, inbound, TAG)
 from selfsni.acceptance import verify_sub_response
-from selfsni.provision import os_info
+from selfsni.provision import install_apt_key, os_info
 
 class InstallerTests(unittest.TestCase):
     def test_bundle_checksums(self):
@@ -58,7 +60,20 @@ class InstallerTests(unittest.TestCase):
                          ['direct','blocked','warp-outbound'])
         self.assertNotIn('block', [x['tag'] for x in result['outbounds']])
         self.assertFalse(any(x.get('outboundTag') == 'direct' for x in rules))
+        self.assertEqual(result['geodata'], automatic_config())
+        self.assertEqual(result['geodata']['cron'], '0 0 * * *')
+        self.assertEqual(result['geodata']['outbound'], 'direct')
+        self.assertEqual({x['file'] for x in result['geodata']['assets']}, set(REQUIRED))
         self.assertEqual(server_template(result), result)
+
+    def test_native_geodata_schedule_and_sources(self):
+        self.assertEqual(GEODATA_TIMEZONE, 'Etc/UTC')
+        self.assertEqual(GEODATA_CRON, '0 0 * * *')
+        self.assertEqual(len(GEODATA_ASSETS), 4)
+        self.assertEqual({x['file'] for x in GEODATA_ASSETS}, set(REQUIRED))
+        self.assertTrue(all(x['url'].startswith('https://') for x in GEODATA_ASSETS))
+        self.assertTrue(any('Loyalsoldier/v2ray-rules-dat' in x['url'] for x in GEODATA_ASSETS))
+        self.assertTrue(any('runetfreedom/russia-v2ray-rules-dat' in x['url'] for x in GEODATA_ASSETS))
 
     def test_server_geodata_categories(self):
         def varint(value):
@@ -106,6 +121,15 @@ class InstallerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             p=Path(d)/'os-release'; p.write_text('ID=debian\nVERSION_ID="12"\n')
             with self.assertRaises(InstallError): os_info(p)
+
+    def test_apt_key_is_readable_under_private_installer_umask(self):
+        with tempfile.TemporaryDirectory() as d:
+            target = Path(d) / 'archive-keyring.gpg'
+            def fake_run(*args, **kwargs):
+                target.write_bytes(b'public key')
+            with patch('selfsni.provision.run', side_effect=fake_run):
+                install_apt_key('source.asc', target)
+            self.assertEqual(target.stat().st_mode & 0o777, 0o644)
 
     def test_reality_zero_clients(self):
         i=inbound('test.example','priv','pub','aabb')

@@ -4,6 +4,7 @@ import copy
 import json
 
 from .core import ROOT, require
+from .geodata import automatic_config
 
 
 TAG = 'inbound-443'
@@ -81,6 +82,7 @@ def server_template(original):
     result.setdefault('policy', {}).setdefault('system', {}).update(
         statsOutboundUplink=True, statsOutboundDownlink=True)
     result['dns'] = {'servers': ['https+local://1.1.1.1/dns-query'], 'queryStrategy': 'UseIP'}
+    result['geodata'] = automatic_config()
     return result
 
 

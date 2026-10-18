@@ -24,7 +24,15 @@ WARP adapter повторяет официальный APT-репозитори�
 
 В v3.10.2 upstream уже исправил конфликт #6273: для INCY собственный профиль находится в теле raw/Base64 subscription, а Happ Routing header удаляется. Happ получает свой Routing header. Никаких patches upstream и лишнего subscription proxy нет. Тесты проверяют именно эти разные контракты; для INCY отсутствие Routing является требуемым результатом, а не ошибкой. Реальные мобильные приложения проверяются отдельно от HTTP-контракта.
 
-Серверные GeoSite/GeoIP берутся из закреплённого официального архива 3x-ui. Архив содержит основной набор Loyalsoldier и RU-набор runetfreedom; SHA256 каждого `.dat` записан в `versions.lock.json`, а установщик разбирает protobuf и проверяет наличие всех реально используемых категорий до настройки панели. Малые файлы DigneZzZ остаются только в клиентских профилях Happ/INCY.
+Начальные серверные GeoSite/GeoIP берутся из закреплённого официального архива 3x-ui. Архив содержит основной набор Loyalsoldier и RU-набор runetfreedom; SHA256 каждого `.dat` записан в `versions.lock.json`, а установщик разбирает protobuf и проверяет наличие всех реально используемых категорий до настройки панели. Малые файлы DigneZzZ остаются только в клиентских профилях Happ/INCY.
+
+## Штатное обновление geodata
+
+После установки Xray сам обновляет четыре server assets через native `geodata.assets`: основные `geosite.dat`/`geoip.dat` из Loyalsoldier и RU-файлы из runetfreedom. `geodata.outbound` равен `direct`; отдельные cron jobs, download scripts и systemd timers отсутствуют. Конфигурация хранится в штатном Xray JSON, отображается в Geodata UI 3x-ui и сохраняется обычным `xray/update`.
+
+Xray-core 26.10.10 создаёт `robfig/cron` без `WithLocation`, поэтому cron использует Go `time.Local` процесса. Systemd drop-in устойчиво задаёт `TZ=Etc/UTC` для `x-ui` и дочернего Xray, а cron `0 0 * * *` означает 00:00 UTC = 03:00 Europe/Moscow. Системный timezone сервера не меняется. Drop-in переживает restart и reboot.
+
+Native updater сначала загружает все assets во временные файлы, затем атомарно заменяет цели и вызывает reload registries. Ошибка скачивания не меняет установленные файлы; ошибка reload возвращает прежние файлы. Acceptance проверяет оба пути, hot reload без смены PID и повторно валидирует используемые категории.
 
 Штатные теги Basic UI — `direct` и `blocked`; отдельный дублирующий `block` не создаётся. Пользовательские outbounds имеют ровно такой порядок: `direct`, `blocked`, `warp-outbound`. Правила:
 

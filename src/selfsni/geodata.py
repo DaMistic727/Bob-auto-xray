@@ -11,6 +11,36 @@ REQUIRED = {
     'geoip_RU.dat': {'ru'},
 }
 
+GEODATA_TIMEZONE = 'Etc/UTC'
+GEODATA_CRON = '0 0 * * *'  # 03:00 Europe/Moscow (UTC+3, no DST)
+GEODATA_ASSETS = [
+    {
+        'url': 'https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat',
+        'file': 'geosite.dat',
+    },
+    {
+        'url': 'https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat',
+        'file': 'geoip.dat',
+    },
+    {
+        'url': 'https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/geosite.dat',
+        'file': 'geosite_RU.dat',
+    },
+    {
+        'url': 'https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/geoip.dat',
+        'file': 'geoip_RU.dat',
+    },
+]
+
+
+def automatic_config(cron=GEODATA_CRON, assets=None):
+    """Return the exact Xray-native geodata section shown by 3x-ui."""
+    return {
+        'cron': cron,
+        'outbound': 'direct',
+        'assets': list(GEODATA_ASSETS if assets is None else assets),
+    }
+
 
 def _varint(data, offset):
     value = 0
