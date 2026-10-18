@@ -18,6 +18,7 @@ import urllib.parse
 import uuid
 
 from .api import LocalTLS, Panel, request
+from .bbr import verify as verify_bbr
 from .core import (digest, json_obj, InstallError, require, run, save, token,
                    free_port, wait_for)
 from .geodata import (GEODATA_ASSETS, GEODATA_CRON, GEODATA_TIMEZONE,
@@ -64,6 +65,7 @@ def editor_reality_target(row):
 
 def verify(s):
     checks = []
+    bbr_report = {}
     def check(name, fn):
         try:
             fn()
@@ -274,7 +276,11 @@ def verify(s):
     check('UFW active',lambda:expect('Status: active' in run('ufw','status'),'UFW inactive'))
     check('Fail2ban jails',lambda:(run('fail2ban-client','status','sshd'),run('fail2ban-client','status','3x-ipl')))
     check('Certbot timer',lambda:run('systemctl','is-enabled','certbot.timer'))
-    return {'scope':'on-host; no external client/reboot claims', 'checks':checks}
+    def tcp_bbr():
+        bbr_report.update(verify_bbr())
+    check('TCP BBR congestion control and FQ persistence', tcp_bbr)
+    return {'scope':'on-host; no external client/reboot claims', 'checks':checks,
+            'tcpBbr': bbr_report}
 
 
 def geodata_e2e(s):

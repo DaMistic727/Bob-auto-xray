@@ -8,6 +8,26 @@ REALITY `target=/run/selfsni/nginx.sock`, `xver=1`. Ключ `target` нужен
 
 Certbot использует только HTTP-01 webroot `/var/lib/selfsni-acme`. Панель, nginx и подписки читают одни и те же `live/<FQDN>/{fullchain,privkey}.pem`. Deploy hook проверяет и перезагружает nginx, затем перезапускает x-ui (панель, Xray, подписки). Проверяется `certbot renew --dry-run --run-deploy-hooks`.
 
+## TCP BBR и FQ
+
+Установщик проверяет возможности запущенного ядра и выбирает стандартный Linux TCP BBR как системный congestion control для новых TCP-сокетов. Он записывает только два параметра в управляемый файл `/etc/sysctl.d/99-zz-bob-auto-xray-bbr.conf`:
+
+```ini
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+```
+
+`fq` обеспечивает нужный BBR packet pacing. Если `tcp_bbr` является загружаемым модулем, отдельный modules-load файл включает его до применения sysctl при загрузке; встроенный в ядро BBR не обязан отображаться в `lsmod`. Запись атомарна, а ошибка применения восстанавливает прежние runtime-значения и проектные файлы. Установщик не меняет TCP buffers, ECN, Fast Open, MTU и другие сетевые параметры.
+
+BBR управляет перегрузкой TCP-соединений, созданных после смены default. Приложение может явно выбрать другой доступный алгоритм для своего сокета. BBR не относится напрямую к UDP, не заменяет WARP и не гарантирует рост скорости каждого VPN-соединения: результат зависит от канала, RTT, потерь, провайдера и виртуальной сети VPS.
+
+`net.core.default_qdisc=fq` задаёт default для новых подходящих сетевых очередей, но уже существующий виртуальный интерфейс может законно показывать `noqueue`, `mq` или qdisc своего virtio/гипервизора. Acceptance сохраняет этот qdisc как диагностику и не выполняет опасный `tc qdisc replace` на удалённом интерфейсе. Базовая ручная проверка:
+
+```bash
+sysctl net.ipv4.tcp_congestion_control
+sysctl net.core.default_qdisc
+```
+
 ## Проверяемые зависимости
 
 `versions.lock.json` фиксирует 3x-ui, upstream scripts, commit VPS-Server-Menu и commit routing. Release assets 3x-ui сверяются с SHA256 GitHub release metadata, записанным в lock при разработке. Оригинальный non-interactive `install.sh` 3x-ui запускается без изменений; временный offline curl adapter обслуживает исключительно заранее скачанные и проверенные файлы. Доступ к неизвестным URL прекращается. Временный HTTP порт панели закрыт UFW; наружу он открывается после настройки HTTPS и сертификата.
