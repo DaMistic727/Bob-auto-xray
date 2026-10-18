@@ -163,8 +163,8 @@
     },
     "inbound": {
       "id": 1,
-      "up": 39020,
-      "down": 49043,
+      "up": 80186,
+      "down": 111332,
       "total": 0,
       "remark": "Self-SNI REALITY · add Vision clients manually",
       "subSortIndex": 1,
@@ -178,39 +178,50 @@
       "listen": "0.0.0.0",
       "port": 443,
       "protocol": "vless",
-      "tag": "inbound-443",
-      "shareAddrStrategy": "node",
+      "tag": "in-443-tcp",
+      "shareAddrStrategy": "listen",
       "shareAddr": "",
       "disableFlow": false,
       "originNodeGuid": "86ca624b-2af1-4dda-a129-c14cb7655083",
       "settings": {
         "clients": [],
         "decryption": "none",
-        "fallbacks": []
+        "encryption": "none",
+        "testseed": [
+          900,
+          500,
+          900,
+          256
+        ]
       },
       "streamSettings": {
         "network": "tcp",
-        "security": "reality",
         "tcpSettings": {
           "acceptProxyProtocol": false,
           "header": {
             "type": "none"
           }
         },
+        "security": "reality",
         "realitySettings": {
           "show": true,
-          "dest": "/run/selfsni/nginx.sock",
           "xver": 1,
+          "target": "/run/selfsni/nginx.sock",
           "serverNames": [
             "vpn.example.com"
           ],
           "privateKey": "<redacted>",
+          "minClientVer": "",
+          "maxClientVer": "",
+          "maxTimediff": 0,
           "shortIds": "<redacted>",
+          "mldsa65Seed": "",
           "settings": {
             "publicKey": "<redacted-public-key>",
             "fingerprint": "firefox",
             "serverName": "",
-            "spiderX": "/"
+            "spiderX": "/",
+            "mldsa65Verify": ""
           }
         }
       },
@@ -312,18 +323,27 @@
         "settings": {
           "clients": [],
           "decryption": "none",
-          "fallbacks": []
+          "testseed": [
+            900,
+            500,
+            900,
+            256
+          ]
         },
         "streamSettings": {
           "network": "tcp",
           "realitySettings": {
-            "dest": "/run/selfsni/nginx.sock",
+            "maxClientVer": "",
+            "maxTimediff": 0,
+            "minClientVer": "",
+            "mldsa65Seed": "",
             "privateKey": "<redacted>",
             "serverNames": [
               "vpn.example.com"
             ],
             "shortIds": "<redacted>",
             "show": true,
+            "target": "/run/selfsni/nginx.sock",
             "xver": 1
           },
           "security": "reality",
@@ -334,7 +354,7 @@
             }
           }
         },
-        "tag": "inbound-443",
+        "tag": "in-443-tcp",
         "sniffing": {
           "enabled": true,
           "destOverride": [

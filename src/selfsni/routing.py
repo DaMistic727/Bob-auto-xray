@@ -101,7 +101,7 @@ def inbound(domain, private, public, short_id, route_only=True):
             'tcpSettings': {'acceptProxyProtocol': False, 'header': {'type': 'none'}},
             'realitySettings': {
                 'show': True,
-                'dest': '/run/selfsni/nginx.sock',
+                'target': '/run/selfsni/nginx.sock',
                 'xver': 1,
                 'serverNames': [domain],
                 'privateKey': private,
