@@ -22,6 +22,8 @@ buffer=io.BytesIO()
 with tarfile.open(fileobj=buffer,mode='w') as tf:
     for p in sorted(files):
         info=tf.gettarinfo(str(p),arcname='selfsni/'+str(p.relative_to(root)))
+        # Git records only the executable bit; normalize private local read/write modes.
+        info.mode=0o755 if info.mode & 0o111 else 0o644
         info.uid=info.gid=0
         info.uname=info.gname='root'
         info.mtime=0

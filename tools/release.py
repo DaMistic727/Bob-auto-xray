@@ -30,7 +30,7 @@ installer.write_text(bootstrap)
 installer.chmod(0o755)
 bootstrap_sha = hashlib.sha256(installer.read_bytes()).hexdigest()
 (root / 'dist/SHA256SUMS').write_text(f'{checksum}  {archive.name}\n{bootstrap_sha}  install.sh\n')
-(root / 'dist/release-notes.md').write_text(f'''Первый preview-релиз Bob Auto Xray {a.tag}.
+(root / 'dist/release-notes.md').write_text(f'''Preview-релиз Bob Auto Xray {a.tag}.
 
 3x-ui + VLESS TCP REALITY Vision Self-SNI, nginx/PHP portal, selective WARP и отдельные профили Happ/INCY.
 
