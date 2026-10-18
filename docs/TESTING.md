@@ -1,5 +1,20 @@
 # Отчёт о тестировании · 18 октября 2026
 
+## v0.3.1: REALITY Target UI
+
+Patch-релиз заменяет legacy-ключ `realitySettings.dest` на единственный `realitySettings.target` при создании inbound. В 3x-ui v3.10.2 `rawInboundToFormValues()` передаёт raw `streamSettings` прямо в `methods.reset()`, а поле формы связано с `streamSettings.realitySettings.target`.
+
+Проверены четыре независимых уровня после штатного API update, реального сохранения веб-формы, restart x-ui и reboot:
+
+- API: `target=/run/selfsni/nginx.sock`, `dest` отсутствует;
+- SQLite DB: то же значение и только `target`;
+- веб-редактор: поле «Цель» визуально показывает Unix socket; после «Сохранить изменения» и повторного открытия значение сохранено;
+- runtime Xray JSON: `target=/run/selfsni/nginx.sock`, `dest` отсутствует, `xray run -test` проходит.
+
+Веб-редактор штатно нормализовал tag с `inbound-443` на `in-443-tcp`; routing rules глобальны и от inbound tag не зависят. После UI-save прошли 25/25 checks, REALITY fallback и Firefox Vision E2E. Те же 25/25, on-host и внешний E2E прошли после reboot; временные клиенты удалены. [Target evidence →](reference-target-acceptance.json)
+
+Дополнительно после reboot подтверждены `TZ=Etc/UTC` у процесса Xray, cron `0 0 * * *`, outbound `direct` и четыре native geodata assets. Это по-прежнему соответствует 03:00 Europe/Moscow.
+
 ## v0.3.0: Ubuntu 26, чистая установка
 
 Проверенная среда: новая Ubuntu 26.04.1 LTS amd64, kernel `7.0.0-38-generic`. До запуска отсутствовали Bob Auto Xray, 3x-ui, nginx, Certbot и регистрация Cloudflare WARP; TCP слушали только SSH и локальный DNS. Адрес и домен удалены из публикуемых материалов.
@@ -40,7 +55,7 @@ bash /root/selfsni/install.sh --domain vpn.example.com
 
 ## Acceptance и реальные соединения
 
-Локально прошёл 21 unittest/bootstrap test, включая regression для прав APT keyring, точную native geodata-конфигурацию, источники и обязательные protobuf-категории.
+Локально прошли 22 unittest/bootstrap tests, включая отдельный regression для модели REALITY Target, права APT keyring, точную native geodata-конфигурацию, источники и обязательные protobuf-категории.
 
 До и после reboot прошли 24/24 базовые on-host проверки:
 

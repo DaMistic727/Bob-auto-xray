@@ -2,7 +2,7 @@
 
 Xray слушает `0.0.0.0:443`, VLESS TCP REALITY. Сервис 3x-ui v3.10.2 управляет Xray; собственных постоянных демонов установщика нет. Клиенты добавляются вручную с Vision. Правила назначения применяются ко всем пользовательским inbound, поэтому добавленные через панель inbound получают ту же защиту. Служебное правило API сохраняется первым. География источника соединения никогда не фильтруется.
 
-REALITY `dest=/run/selfsni/nginx.sock`, `xver=1`. nginx принимает исходный TLS с PROXY v1 (`ssl http2 proxy_protocol`), завершает TLS и передаёт только корень сайта и случайный auth endpoint в PHP-FPM. Публичного второго порта заглушки нет. В Xray 26.10.10 RAW и TCP — совместимые имена транспорта. Проверка обычного HTTPS через TCP/443 одновременно проверяет TLS passthrough, Unix socket и PROXY protocol: nginx без корректного префикса отвергает соединение.
+REALITY `target=/run/selfsni/nginx.sock`, `xver=1`. Ключ `target` нужен модели веб-редактора 3x-ui v3.10.2; legacy `dest` не записывается рядом. nginx принимает исходный TLS с PROXY v1 (`ssl http2 proxy_protocol`), завершает TLS и передаёт только корень сайта и случайный auth endpoint в PHP-FPM. Публичного второго порта заглушки нет. В Xray 26.10.10 RAW и TCP — совместимые имена транспорта. Проверка обычного HTTPS через TCP/443 одновременно проверяет TLS passthrough, Unix socket и PROXY protocol: nginx без корректного префикса отвергает соединение.
 
 Каталог сокета создаётся tmpfiles и ExecStartPre nginx. Права каталога 0750 root:root; Xray работает в официальном root-сервисе панели. x-ui запускается после nginx и WARP и проверяет наличие сокета. nginx при рестарте пересоздаёт listener; REALITY открывает новое Unix-соединение для каждого fallback.
 

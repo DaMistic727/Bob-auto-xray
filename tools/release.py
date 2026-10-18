@@ -34,7 +34,7 @@ bootstrap_sha = hashlib.sha256(installer.read_bytes()).hexdigest()
 
 3x-ui + VLESS TCP REALITY Vision Self-SNI, nginx/PHP portal, selective WARP, native Geodata Auto-Update и отдельные профили Happ/INCY.
 
-Проверены clean install Ubuntu 26.04.1 amd64, новая регистрация WARP, geodata hot reload/rollback, внешний Vision-клиент и reboot. Ubuntu 22.04, arm64 VPS и мобильные приложения требуют отдельных e2e-проверок.
+Проверены clean install Ubuntu 26.04.1 amd64, REALITY Target в API/DB/web editor/runtime, новая регистрация WARP, geodata hot reload/rollback, внешний Vision-клиент и reboot. Ubuntu 22.04, arm64 VPS и мобильные приложения требуют отдельных e2e-проверок.
 
 ## Установка от root на чистой VPS
 

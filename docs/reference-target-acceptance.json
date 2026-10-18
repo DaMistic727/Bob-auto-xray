@@ -1,0 +1,31 @@
+{
+  "api": {
+    "target": "/run/selfsni/nginx.sock",
+    "destPresent": false
+  },
+  "database": {
+    "target": "/run/selfsni/nginx.sock",
+    "destPresent": false
+  },
+  "webEditorModel": {
+    "target": "/run/selfsni/nginx.sock",
+    "source": "rawInboundToFormValues streamSettings passed to methods.reset"
+  },
+  "runtimeXray": {
+    "target": "/run/selfsni/nginx.sock",
+    "destPresent": false
+  },
+  "geodata": {
+    "cron": "0 0 * * *",
+    "outbound": "direct",
+    "assets": [
+      "geosite.dat",
+      "geoip.dat",
+      "geosite_RU.dat",
+      "geoip_RU.dat"
+    ],
+    "processTimezone": "Etc/UTC",
+    "moscowExecution": "03:00 Europe/Moscow"
+  },
+  "clients": 0
+}

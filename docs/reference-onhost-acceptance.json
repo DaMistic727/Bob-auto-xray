@@ -6,6 +6,10 @@
       "passed": true
     },
     {
+      "name": "REALITY Target in API/DB/editor model survives inbound save",
+      "passed": true
+    },
+    {
       "name": "Basic UI + native geodata panel API save round-trip",
       "passed": true
     },

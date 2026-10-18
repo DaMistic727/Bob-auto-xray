@@ -14,7 +14,7 @@ from selfsni.geodata import (GEODATA_ASSETS, GEODATA_CRON, GEODATA_TIMEZONE,
                              verify_server_geodata)
 from selfsni.routing import (BLOCKED_DOMAINS, BLOCKED_IPS, WARP_DOMAINS, deeplink,
                              profile, server_template, inbound, TAG)
-from selfsni.acceptance import verify_sub_response
+from selfsni.acceptance import editor_reality_target, verify_sub_response
 from selfsni.provision import install_apt_key, os_info
 
 class InstallerTests(unittest.TestCase):
@@ -136,6 +136,9 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(json.loads(i['settings'])['clients'],[])
         stream=json.loads(i['streamSettings'])
         reality=stream['realitySettings']
+        self.assertEqual(reality['target'],'/run/selfsni/nginx.sock')
+        self.assertNotIn('dest',reality)
+        self.assertEqual(editor_reality_target(i),'/run/selfsni/nginx.sock')
         self.assertEqual(reality['xver'],1)
         self.assertTrue(reality['show'])
         self.assertEqual(reality['settings']['fingerprint'],'firefox')
@@ -144,6 +147,15 @@ class InstallerTests(unittest.TestCase):
         self.assertTrue(sniffing['routeOnly'])
         self.assertFalse(json.loads(inbound('test.example','priv','pub','aabb',False)['sniffing'])['routeOnly'])
         self.assertEqual(i['tag'],TAG)
+
+    def test_reality_target_is_present_in_web_editor_model(self):
+        generated = inbound('test.example','priv','pub','aabb')
+        reality = json.loads(generated['streamSettings'])['realitySettings']
+        self.assertEqual(reality['target'], '/run/selfsni/nginx.sock')
+        self.assertNotIn('dest', reality)
+        # 3x-ui v3.10.2 rawInboundToFormValues passes raw streamSettings to
+        # methods.reset(), so this is the value rendered by the Target field.
+        self.assertEqual(editor_reality_target(generated), '/run/selfsni/nginx.sock')
 
     def test_offline_installer_denies_unknown_download(self):
         with tempfile.TemporaryDirectory() as d:

@@ -17,7 +17,8 @@
     "outbound": "direct",
     "assetCount": 4
   },
-  "onHostAcceptance": "24/24 passed plus REALITY/subscription/sniffing E2E",
+  "realityTarget": "API, DB, web-editor model and runtime preserved /run/selfsni/nginx.sock",
+  "onHostAcceptance": "25/25 passed plus REALITY/subscription/sniffing E2E",
   "externalAcceptance": "7/7 scenarios passed",
   "temporaryClientsRemoved": true
 }

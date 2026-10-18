@@ -36,7 +36,7 @@
 3. **Запустите установщик одной командой** от root:
 
    ```bash
-   bash <(curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' https://github.com/DaMistic727/Bob-auto-xray/releases/download/v0.3.0/install.sh)
+   bash <(curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' https://github.com/DaMistic727/Bob-auto-xray/releases/download/v0.3.1/install.sh)
    ```
 
    Он запросит FQDN и необязательный email Let's Encrypt. Bootstrap загружает **конкретный релиз** и проверяет закреплённый SHA256 архива до выполнения модулей.
@@ -80,13 +80,13 @@ flowchart LR
 | Платформа / сценарий | Статус |
 |---|---|
 | v0.2.0 · Ubuntu 24.04 amd64 + существующий WARP | Проверены установка через `--adopt-warp`, внешний клиент и reboot |
-| v0.3.0 · Ubuntu 26.04.1 amd64, чистая ОС | Проверены установка всех компонентов, новая регистрация WARP, внешний клиент и reboot |
+| v0.3.1 · Ubuntu 26.04.1 amd64, чистая ОС | Проверены установка всех компонентов, Target UI, новая регистрация WARP, внешний клиент и reboot |
 | Ubuntu 22.04; arm64 | Предусмотрены в коде; отдельное развёртывание не проверено |
 | Native Geodata Auto-Update | Проверены 4 assets, UTC→03:00 МСК, hot reload, ошибка, rollback и reboot |
 | Happ / INCY | Проверены реальные HTTP-ответы, Base64/JSON и deeplink |
 | Мобильные приложения | Импорт и работа на устройствах пока не проверены |
 
-CI выполняет статические проверки, unit/bootstrap-тесты и воспроизводимую сборку. Он **не заменяет** развёртывание на VPS. Подробные подтверждения: [тестирование](docs/TESTING.md), [обезличенный API/runtime snapshot](docs/reference-config-redacted.json), [native geodata E2E](docs/reference-geodata-acceptance.json), [on-host E2E](docs/reference-onhost-acceptance.json), [внешний клиент](docs/reference-external-acceptance.json).
+CI выполняет статические проверки, unit/bootstrap-тесты и воспроизводимую сборку. Он **не заменяет** развёртывание на VPS. Подробные подтверждения: [тестирование](docs/TESTING.md), [REALITY Target API/DB/editor/runtime](docs/reference-target-acceptance.json), [обезличенный API/runtime snapshot](docs/reference-config-redacted.json), [native geodata E2E](docs/reference-geodata-acceptance.json), [on-host E2E](docs/reference-onhost-acceptance.json), [внешний клиент](docs/reference-external-acceptance.json).
 
 ## Документация и участие
 

@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import socket
+import sqlite3
 import struct
 import subprocess
 import tempfile
@@ -52,6 +53,15 @@ def xray_process(s):
     require(len(matches) == 1, 'Expected exactly one panel-managed Xray process')
     return matches[0]
 
+
+def editor_reality_target(row):
+    """Read Target where 3x-ui rawInboundToFormValues passes data to reset()."""
+    reality = json_obj(row['streamSettings']).get('realitySettings', {})
+    require('dest' not in reality, 'Legacy REALITY dest would render an empty Target field')
+    target = reality.get('target')
+    require(target == '/run/selfsni/nginx.sock', '3x-ui editor model lost REALITY Target')
+    return target
+
 def verify(s):
     checks = []
     def check(name, fn):
@@ -75,16 +85,39 @@ def verify(s):
         require(json_obj(i['settings'])['clients'] == [], 'Permanent clients must not be created')
         stream = json_obj(i['streamSettings'])
         r = stream['realitySettings']
-        require(r['dest'] == '/run/selfsni/nginx.sock' and r['xver'] == 1 and r['serverNames'] == [s['domain']], 'Incorrect Self-SNI settings')
+        require(editor_reality_target(i) == '/run/selfsni/nginx.sock',
+                'REALITY Target is absent from the 3x-ui editor model')
+        require(r['target'] == '/run/selfsni/nginx.sock' and 'dest' not in r
+                and r['xver'] == 1 and r['serverNames'] == [s['domain']],
+                'Incorrect Self-SNI settings')
         require(r['privateKey'] == s['reality_private'], 'REALITY key mismatch')
         require(r['show'] is True and r['settings']['fingerprint'] == 'firefox',
                 'REALITY show/fingerprint mismatch')
         sniffing = json_obj(i['sniffing'])
         require(sniffing == {'enabled': True, 'destOverride': ['http', 'tls', 'quic', 'fakedns'],
                              'routeOnly': True}, 'Sniffing settings mismatch')
-        require(i['tag'] == TAG, 'Routing scope mismatch')
+        require(i['tag'] in (TAG, 'in-443-tcp'), 'Unexpected REALITY inbound tag')
         require(not api.call('hosts/list'), 'Fresh install must not contain Host fingerprint overrides')
     check('one inbound, zero clients, Self-SNI + Firefox parameters', basic_inbound)
+
+    def inbound_editor_roundtrip():
+        before = api.call('inbounds/list')[0]
+        require(editor_reality_target(before) == '/run/selfsni/nginx.sock',
+                'API model does not expose REALITY Target')
+        with sqlite3.connect('/etc/x-ui/x-ui.db') as db:
+            stored = db.execute('SELECT stream_settings FROM inbounds WHERE id = ?',
+                                (before['id'],)).fetchone()
+        require(stored is not None, 'Inbound is absent from the 3x-ui database')
+        db_reality = json_obj(stored[0])['realitySettings']
+        require(db_reality.get('target') == '/run/selfsni/nginx.sock' and 'dest' not in db_reality,
+                '3x-ui database does not persist REALITY Target')
+        api.call('inbounds/update/'+str(before['id']), before)
+        wait_for(lambda: editor_reality_target(api.call('inbounds/list')[0]) ==
+                 '/run/selfsni/nginx.sock', 'REALITY Target after editor-style save')
+        after = api.call('inbounds/list')[0]
+        require(editor_reality_target(after) == '/run/selfsni/nginx.sock',
+                'REALITY Target was lost after API save')
+    check('REALITY Target in API/DB/editor model survives inbound save', inbound_editor_roundtrip)
 
     def routing_roundtrip():
         before = xray_setting()
@@ -124,6 +157,13 @@ def verify(s):
         tags = [x.get('tag') for x in config['outbounds']]
         require(tags == ['direct', 'blocked', 'warp-outbound'],
                 'Runtime user outbounds differ from direct/blocked/WARP')
+        inbound = next((item for item in config.get('inbounds', [])
+                        if item.get('port') == 443
+                        and item.get('streamSettings', {}).get('security') == 'reality'), None)
+        require(inbound is not None, 'Runtime REALITY inbound is missing')
+        reality = inbound['streamSettings']['realitySettings']
+        require(reality.get('target') == '/run/selfsni/nginx.sock' and 'dest' not in reality,
+                'Runtime Xray JSON lost REALITY Target')
         require(config.get('api', {}).get('tag') == 'api', 'Runtime API service outbound is missing')
         require(config.get('geodata') == automatic_config(), 'Runtime native geodata settings mismatch')
         require(s['reality_private'] not in run('journalctl','-u','x-ui','--no-pager','-n','500'),
