@@ -13,7 +13,7 @@
 
 Одноразовый установщик разворачивает 3x-ui, HTTPS-заглушку частного облака, выборочную маршрутизацию через WARP и подписки для Happ/INCY. Конфигурации создаются автоматически, клиентов вы добавляете через панель.
 
-> **Статус: preview.** Кандидат на основе v0.3.2 прошёл clean install на Ubuntu 26.04.1 LTS amd64, новую регистрацию WARP, BBR/FQ, native Geodata Auto-Update, Target UI, Firefox/REALITY Vision, внешний клиент и реальную перезагрузку. В кандидате исправлен preflight для минимальных образов без `modinfo`; опубликованный тег v0.3.2 остаётся неизменным. Happ и INCY проверены пользователем на физическом iPhone. [Подробный отчёт →](docs/TESTING.md)
+> **Статус: preview.** Исправление BBR preflight для минимальных образов без `modinfo` выпущено в v0.3.3. Кандидат из PR #6 прошёл clean install на Ubuntu 26.04.1 LTS amd64, новую регистрацию WARP, BBR/FQ, native Geodata Auto-Update, Target UI, Firefox/REALITY Vision, внешний клиент и реальную перезагрузку. Этот E2E выполнен на кандидате PR #6, а не на опубликованном архиве v0.3.3. Happ и INCY проверены пользователем на физическом iPhone. [Подробный отчёт →](docs/TESTING.md)
 
 ## Что получится
 
@@ -37,7 +37,7 @@
 3. **Запустите установщик одной командой** от root:
 
    ```bash
-   bash <(curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' https://github.com/DaMistic727/Bob-auto-xray/releases/download/v0.3.2/install.sh)
+   bash <(curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' https://github.com/DaMistic727/Bob-auto-xray/releases/download/v0.3.3/install.sh)
    ```
 
    Он запросит FQDN и необязательный email Let's Encrypt. Bootstrap загружает **конкретный релиз** и проверяет закреплённый SHA256 архива до выполнения модулей.
@@ -82,7 +82,7 @@ flowchart LR
 |---|---|
 | v0.2.0 · Ubuntu 24.04 amd64 + существующий WARP | Проверены установка через `--adopt-warp`, внешний клиент и reboot |
 | v0.3.1 · Ubuntu 26.04.1 amd64, чистая ОС | Проверены установка всех VPN-компонентов, Target UI, новая регистрация WARP, внешний клиент и reboot |
-| v0.3.2-derived candidate · Ubuntu 26.04.1 amd64 | Проверены clean install, новая WARP-регистрация, BBR/FQ и TCP socket, Target UI, 26/26 on-host и 7/7 external checks до/после reboot |
+| v0.3.3 · кандидат PR #6 на Ubuntu 26.04.1 amd64 | Проверены clean install, новая WARP-регистрация, BBR/FQ и TCP socket, Target UI, 26/26 on-host и 7/7 external checks до/после reboot; опубликованный архив v0.3.3 отдельно не разворачивался |
 | Ubuntu 22.04; arm64 | Предусмотрены в коде; отдельное развёртывание не проверено |
 | Native Geodata Auto-Update | Проверены 4 assets, UTC→03:00 МСК, hot reload, ошибка, rollback и reboot |
 | Happ / INCY contracts | Проверены реальные HTTP-ответы, Base64/JSON и deeplink |
