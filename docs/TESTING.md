@@ -2,13 +2,32 @@
 
 ## v0.3.2: TCP BBR/FQ
 
-Новая функция покрыта локальными unit/mock и общими regression-тестами. Выполнено 36/36 Python tests, из них 14 проверяют BBR: успешное включение, идемпотентность, загрузку модуля на установочном preflight, built-in вариант, отсутствие поддержки, отказ записи, чужой persistent-конфликт, отказ от дублирования уже существующих настроек, rollback runtime/файлов, повторную проверку persistence, строгий read-only `--preflight-only`, `noqueue` как допустимую диагностику интерфейса и restricted container.
+Выполнен полный clean-install E2E на новой Ubuntu 26.04.1 LTS amd64 в KVM. Исходной точкой был тег `v0.3.2` (`b0894a3`), однако до provisioning аудит выявил edge case для минимальных образов: без `modinfo` preflight мог не распознать существующий `tcp_bbr.ko*`. На этой VPS проблема не воспроизвелась, потому что `kmod` уже присутствовал. Кандидат исправлен до установки: read-only probe проверяет дерево модулей запущенного ядра, а provisioning устанавливает `kmod` до возможного `modprobe`. Добавлен regression без мутаций системы.
 
-Acceptance `TCP BBR congestion control and FQ persistence` проверяет реальные runtime-значения, управляемый sysctl-файл, наличие BBR среди доступных алгоритмов, отсутствие явного persistent-конфликта и новый подключённый TCP-сокет через `TCP_CONGESTION`. Отдельный новый сокет явно выбирает другой доступный алгоритм, подтверждая, что системный default не принуждает каждое приложение. Qdisc default-route интерфейса записывается как диагностика; `noqueue`, `mq` и особенности virtio не подменяются вызовом `tc qdisc replace`.
+Локально прошли 37/37 Python tests, из них 15 проверяют BBR. `--preflight-only` сохранил исходные `cubic`, `fq_codel`, незагруженный `tcp_bbr` и не создал управляемых файлов. Полная установка запускалась без `--adopt-warp`, самостоятельно создала WARP-регистрацию и завершилась `HEALTHY_LOCAL` после 26/26 проверок.
 
-Новая одноразовая VPS не предоставлена. Поэтому полный clean install v0.3.2, фактическое применение BBR на VPS и сохранение BBR/FQ после реального reboot **не заявляются как выполненные**. Проверенный reboot ниже относится к v0.3.1 и подтверждает отсутствие изменений в VPN-архитектуре до добавления BBR.
+BBR проверен независимо от общего acceptance. До установки были доступны `reno cubic`, runtime использовал `cubic`, а default qdisc был `fq_codel`. После установки и после реального reboot доступны `reno cubic bbr`, runtime использует `bbr`, `net.core.default_qdisc=fq`, модуль `tcp_bbr` загружен и закреплён. Новый подключённый TCP-сокет использует BBR, явный override выбирает `reno`. Управляемые файлы — `/etc/sysctl.d/99-zz-bob-auto-xray-bbr.conf` и `/etc/modules-load.d/99-bob-auto-xray-bbr.conf`; чужих конфликтов и duplicate-настроек нет. Повторное применение сохранило содержимое файлов и runtime без изменений.
 
-На существующей рабочей Ubuntu 26.04.1 выполнена только read-only диагностика. Kernel `7.0.0-38-generic` в KVM предоставляет `reno cubic bbr`; текущий default и новый подключённый loopback TCP-сокет используют BBR, `default_qdisc=fq`. Эти значения были ранее настроены посторонними строками в `/etc/sysctl.conf`, поэтому v0.3.2 на этот сервер не применялся и корректно классифицировал бы такую конфигурацию как чужой duplicate. Фактический root qdisc `ens3` — `pfifo_fast`, что подтверждает необходимость показывать interface qdisc отдельно от sysctl default. Этот read-only снимок доказывает совместимость запущенного ядра с BBR, но не установку или reboot persistence v0.3.2.
+Во время reboot Ubuntu перешла с kernel `7.0.0-30-generic` на `7.0.0-38-generic`; BBR/FQ и модульная конфигурация сохранились. Фактический root qdisc интерфейса `ens3` — `pfifo_fast`; это отдельно зафиксированная диагностика устройства. `tc qdisc replace` не применялся, и измерений ускорения VPN не проводилось.
+
+| Проверка | Результат |
+|---|---|
+| Clean Ubuntu 26 preflight | PASS, read-only |
+| Fresh WARP registration | PASS |
+| Automatic BBR installation | PASS |
+| TCP socket uses BBR | PASS |
+| FQ default qdisc | PASS |
+| REALITY Target UI | PASS, save/reopen до и после reboot |
+| Firefox REALITY Vision | PASS |
+| DIRECT/WARP/RU routing | PASS |
+| Geodata Auto-Update | PASS, hot reload/failure/rollback |
+| Certbot / nginx / PHP | PASS |
+| Reboot persistence | PASS |
+| External Mac E2E | PASS, 7/7 до и после reboot |
+
+On-host E2E прошёл 26/26 до и 26/26 после reboot. Внешний официальный Xray 26.10.10 для macOS arm64 прошёл 7/7 до и после reboot. Временные клиенты удалены, постоянных клиентов осталось `0`. REALITY Target равен `/run/selfsni/nginx.sock` в API, SQLite DB, реальной веб-форме и runtime JSON; `dest` отсутствует. После штатного UI-save и повторного открытия Target сохранился. [Полное обезличенное evidence v0.3.2 →](reference-v032-e2e.json)
+
+Опубликованный immutable tag `v0.3.2` служил базой, но полный provisioning выполнялся кандидатом с исправлением из текущего PR, как требовал найденный до установки edge case. Поэтому результаты относятся к v0.3.2-derived кандидату и не приписываются неизменённым байтам опубликованного архива.
 
 ## iOS Happ/INCY: пользовательский E2E
 
@@ -101,6 +120,6 @@ v0.2.0 проверялся на Ubuntu 24.04.5 LTS amd64 с уже сущест
 - Ubuntu 22.04 и arm64 VPS не проверялись отдельным clean install.
 - iOS Happ/INCY проверены пользователем на физическом iPhone; Android не проверялся.
 - DNS leaks, отдельные UDP/QUIC-сценарии и точное соответствие каждого клиентского правила не измерялись.
-- Полный clean install v0.3.2 и BBR/FQ после реального reboot VPS не проверялись.
+- Полный прогон выполнен на кандидате от `v0.3.2` с исправлением минимального BBR preflight из текущего PR; неизменённый опубликованный архив после этого исправления отдельно не разворачивался.
 - Подключение с подтверждённого российского source IP и UDP через WARP SOCKS отдельно не проверялись.
 - Классификация GeoIP/GeoSite зависит от upstream; установщик и E2E проверяют digest/структуру и все используемые категории.

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Minimal-image BBR preflight распознаёт `tcp_bbr.ko*` в дереве модулей запущенного ядра, даже если команда `modinfo` ещё отсутствует; probe остаётся read-only, а `kmod` устанавливается до возможного `modprobe`.
+- Добавлен regression для preflight без `modinfo`; локально проходят 37/37 тестов, включая 15 BBR-сценариев.
+- На одноразовой Ubuntu 26.04.1 amd64 проверен v0.3.2-derived кандидат: clean install с новой WARP-регистрацией, BBR/FQ, Target UI, geodata, 26/26 on-host и 7/7 external checks до и после реального reboot.
+
 ## v0.3.2 — 2026-10-18
 
 - Добавлена автоматическая настройка стандартного Linux TCP BBR и `fq` через отдельный атомарно записываемый sysctl-файл.

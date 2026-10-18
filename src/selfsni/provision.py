@@ -120,7 +120,9 @@ def preflight(args):
     excluded = set(ssh_ports) | {80,443,40000,62789,11111}
     panel_port = free_port(excluded)
     sub_port = free_port(excluded | {panel_port})
-    bbr_report = bbr.preflight(allow_modprobe=not args.preflight_only)
+    # Keep all preflight modes read-only. kmod is installed below before
+    # configure() may need modprobe on a minimal Ubuntu image.
+    bbr_report = bbr.preflight()
     return dict(domain=domain, ipv4=public, ubuntu=info['VERSION_ID'], codename=info['VERSION_CODENAME'],
                 arch='amd64' if platform.machine() == 'x86_64' else 'arm64',
                 ssh_ports=sorted(ssh_ports), panel_port=panel_port, sub_port=sub_port,

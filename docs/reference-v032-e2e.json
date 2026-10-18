@@ -1,0 +1,152 @@
+{
+  "date": "2026-10-18",
+  "scope": "redacted v0.3.2-derived clean-install, reboot, and external E2E evidence",
+  "candidate": {
+    "baseTag": "v0.3.2",
+    "baseCommit": "b0894a3ed3a65e1e73a0659ef218b2f9a3d9d882",
+    "sourceState": "v0.3.2 plus the minimal-image BBR preflight fix in this pull request",
+    "archiveSha256": "468db19aba69c0298de75f7359608a60c8080581c797fb9b743f5e443afd3af9",
+    "releasePublished": false
+  },
+  "environment": {
+    "os": "Ubuntu 26.04.1 LTS amd64",
+    "virtualization": "kvm",
+    "kernelBeforeReboot": "7.0.0-30-generic",
+    "kernelAfterReboot": "7.0.0-38-generic",
+    "domain": "<redacted>",
+    "publicIpv4": "<redacted>"
+  },
+  "cleanBaseline": {
+    "priorBobComponentsAbsent": true,
+    "priorWarpRegistrationAbsent": true,
+    "availableCongestionControl": [
+      "reno",
+      "cubic"
+    ],
+    "runtimeCongestionControl": "cubic",
+    "defaultQdisc": "fq_codel",
+    "tcpBbrModuleLoaded": false,
+    "foreignBbrAssignments": []
+  },
+  "preflight": {
+    "passed": true,
+    "readOnly": true,
+    "runtimeCongestionControlBeforeAndAfter": "cubic",
+    "defaultQdiscBeforeAndAfter": "fq_codel",
+    "tcpBbrModuleLoadedBeforeAndAfter": false,
+    "managedFilesCreated": false
+  },
+  "cleanInstall": {
+    "passed": true,
+    "status": "HEALTHY_LOCAL",
+    "adoptWarp": false,
+    "onHostChecks": "26/26",
+    "xui": "3.10.2",
+    "xray": "26.10.10 701af60"
+  },
+  "minimalImageBbrFix": {
+    "reproducedOnVps": false,
+    "vpsHadKmodBeforeInstall": true,
+    "sourceAuditFinding": "Without modinfo, preflight could report unknown even when the running kernel module tree contains tcp_bbr.",
+    "fix": "Read-only tcp_bbr.ko* lookup under the running kernel module tree; provisioning installs kmod before configure may call modprobe.",
+    "regressionTest": "test_missing_modinfo_uses_module_files_without_mutation",
+    "localBbrTests": "15/15"
+  },
+  "tcpBbr": {
+    "availableCongestionControl": [
+      "reno",
+      "cubic",
+      "bbr"
+    ],
+    "runtimeCongestionControl": "bbr",
+    "defaultQdisc": "fq",
+    "module": "tcp_bbr loaded and persisted",
+    "sysctlConfig": "/etc/sysctl.d/99-zz-bob-auto-xray-bbr.conf",
+    "moduleConfig": "/etc/modules-load.d/99-bob-auto-xray-bbr.conf",
+    "connectedSocketCongestionControl": "bbr",
+    "explicitSocketOverride": "reno",
+    "defaultRouteInterface": "ens3",
+    "interfaceRootQdisc": "pfifo_fast",
+    "foreignConflicts": [],
+    "foreignDuplicates": [],
+    "idempotentReapply": true,
+    "postRebootPassed": true
+  },
+  "realityTarget": {
+    "api": {
+      "target": "/run/selfsni/nginx.sock",
+      "destPresent": false
+    },
+    "database": {
+      "target": "/run/selfsni/nginx.sock",
+      "destPresent": false
+    },
+    "webEditor": {
+      "target": "/run/selfsni/nginx.sock",
+      "savedAndReopened": true,
+      "verifiedAfterReboot": true
+    },
+    "runtimeXray": {
+      "target": "/run/selfsni/nginx.sock",
+      "destPresent": false,
+      "xver": 1,
+      "show": true
+    }
+  },
+  "warp": {
+    "registeredDuringInstall": true,
+    "connectedAfterReboot": true,
+    "listener": "127.0.0.1:40000",
+    "systemDirectTrace": "warp=off",
+    "publicSocksUnavailable": true
+  },
+  "geodata": {
+    "cron": "0 0 * * *",
+    "processTimezone": "Etc/UTC",
+    "moscowSchedule": "03:00 Europe/Moscow",
+    "outbound": "direct",
+    "files": [
+      "geoip.dat",
+      "geoip_RU.dat",
+      "geosite.dat",
+      "geosite_RU.dat"
+    ],
+    "hotReloadWithoutPidChange": true,
+    "httpFailurePreservedAssets": true,
+    "invalidPayloadRolledBack": true,
+    "productionSettingsRestored": true,
+    "postRebootPassed": true
+  },
+  "networkE2e": {
+    "onHostBeforeReboot": "26/26",
+    "onHostAfterReboot": "26/26",
+    "externalMacBeforeReboot": "7/7",
+    "externalMacAfterReboot": "7/7",
+    "firefoxRealityVision": true,
+    "realityFallbackProxyV1UnixSocketNginx": true,
+    "directWarpAndRuRouting": true,
+    "happAndIncySubscriptions": true
+  },
+  "reboot": {
+    "performed": true,
+    "bootIdChanged": true,
+    "servicesActiveAndEnabled": [
+      "x-ui",
+      "nginx",
+      "warp-svc",
+      "fail2ban",
+      "php8.5-fpm",
+      "certbot.timer"
+    ]
+  },
+  "cleanup": {
+    "permanentClients": 0,
+    "temporaryVlessClientsRemoved": true,
+    "productionGeodataScheduleRestored": true
+  },
+  "limitations": [
+    "The immutable published v0.3.2 tag was the source baseline, but the full provisioning run used the candidate containing this pull request's minimal-image preflight fix.",
+    "Ubuntu 22.04, arm64 VPS, Android clients, DNS leak measurement, and separate UDP/QUIC coverage were not tested.",
+    "No throughput or latency improvement claim was measured for BBR."
+  ]
+}

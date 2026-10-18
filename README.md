@@ -13,7 +13,7 @@
 
 Одноразовый установщик разворачивает 3x-ui, HTTPS-заглушку частного облака, выборочную маршрутизацию через WARP и подписки для Happ/INCY. Конфигурации создаются автоматически, клиентов вы добавляете через панель.
 
-> **Статус: preview.** Базовый полный clean install v0.3.1, новая регистрация WARP, native Geodata Auto-Update, Firefox/REALITY Vision, внешний клиент и реальная перезагрузка проверены на Ubuntu 26.04.1 LTS amd64. Happ и INCY проверены пользователем на физическом iPhone. BBR в v0.3.2 покрыт локальными и mock-тестами; отдельный clean install и reboot именно v0.3.2 ещё не выполнялись. [Подробный отчёт →](docs/TESTING.md)
+> **Статус: preview.** Кандидат на основе v0.3.2 прошёл clean install на Ubuntu 26.04.1 LTS amd64, новую регистрацию WARP, BBR/FQ, native Geodata Auto-Update, Target UI, Firefox/REALITY Vision, внешний клиент и реальную перезагрузку. В кандидате исправлен preflight для минимальных образов без `modinfo`; опубликованный тег v0.3.2 остаётся неизменным. Happ и INCY проверены пользователем на физическом iPhone. [Подробный отчёт →](docs/TESTING.md)
 
 ## Что получится
 
@@ -82,14 +82,14 @@ flowchart LR
 |---|---|
 | v0.2.0 · Ubuntu 24.04 amd64 + существующий WARP | Проверены установка через `--adopt-warp`, внешний клиент и reboot |
 | v0.3.1 · Ubuntu 26.04.1 amd64, чистая ОС | Проверены установка всех VPN-компонентов, Target UI, новая регистрация WARP, внешний клиент и reboot |
-| v0.3.2 · TCP BBR/FQ | 14 mock-сценариев и общая регрессия; clean install и реальный reboot v0.3.2 пока не выполнены |
+| v0.3.2-derived candidate · Ubuntu 26.04.1 amd64 | Проверены clean install, новая WARP-регистрация, BBR/FQ и TCP socket, Target UI, 26/26 on-host и 7/7 external checks до/после reboot |
 | Ubuntu 22.04; arm64 | Предусмотрены в коде; отдельное развёртывание не проверено |
 | Native Geodata Auto-Update | Проверены 4 assets, UTC→03:00 МСК, hot reload, ошибка, rollback и reboot |
 | Happ / INCY contracts | Проверены реальные HTTP-ответы, Base64/JSON и deeplink |
 | iOS Happ/INCY | **User-verified E2E: VPN connection, applied routing and WARP confirmed.** Физический iPhone, 18.10.2026 |
 | Android | Пока не проверен |
 
-CI выполняет статические проверки, unit/bootstrap-тесты и воспроизводимую сборку. Он **не заменяет** развёртывание на VPS. Подробные подтверждения: [тестирование](docs/TESTING.md), [REALITY Target API/DB/editor/runtime](docs/reference-target-acceptance.json), [обезличенный API/runtime snapshot](docs/reference-config-redacted.json), [native geodata E2E](docs/reference-geodata-acceptance.json), [on-host E2E](docs/reference-onhost-acceptance.json), [внешний клиент](docs/reference-external-acceptance.json). Ранние результаты Ubuntu 24.04 сохранены отдельно в [истории](docs/history/README.md).
+CI выполняет статические проверки, unit/bootstrap-тесты и воспроизводимую сборку. Он **не заменяет** развёртывание на VPS. Подробные подтверждения: [тестирование](docs/TESTING.md), [v0.3.2 clean install + BBR + reboot](docs/reference-v032-e2e.json), [REALITY Target API/DB/editor/runtime](docs/reference-target-acceptance.json), [обезличенный API/runtime snapshot](docs/reference-config-redacted.json), [native geodata E2E](docs/reference-geodata-acceptance.json), [on-host E2E](docs/reference-onhost-acceptance.json), [внешний клиент](docs/reference-external-acceptance.json). Ранние результаты Ubuntu 24.04 сохранены отдельно в [истории](docs/history/README.md).
 
 ## Документация и участие
 
