@@ -1,6 +1,6 @@
 # Архитектура и происхождение правил
 
-Xray слушает `0.0.0.0:443`, VLESS TCP REALITY. Сервис 3x-ui v3.10.2 управляет Xray; собственных постоянных демонов установщика нет. Клиенты добавляются вручную с Vision. Все созданные серверные правила ограничены `inboundTag: inbound-443`; правило API панели и штатные inbounds сохранены. География источника соединения никогда не фильтруется.
+Xray слушает `0.0.0.0:443`, VLESS TCP REALITY. Сервис 3x-ui v3.10.2 управляет Xray; собственных постоянных демонов установщика нет. Клиенты добавляются вручную с Vision. Правила назначения применяются ко всем пользовательским inbound, поэтому добавленные через панель inbound получают ту же защиту. Служебное правило API сохраняется первым. География источника соединения никогда не фильтруется.
 
 REALITY `dest=/run/selfsni/nginx.sock`, `xver=1`. nginx принимает исходный TLS с PROXY v1 (`ssl http2 proxy_protocol`), завершает TLS и передаёт только корень сайта и случайный auth endpoint в PHP-FPM. Публичного второго порта заглушки нет. В Xray 26.10.10 RAW и TCP — совместимые имена транспорта. Проверка обычного HTTPS через TCP/443 одновременно проверяет TLS passthrough, Unix socket и PROXY protocol: nginx без корректного префикса отвергает соединение.
 
@@ -24,17 +24,21 @@ WARP adapter повторяет официальный APT-репозитори�
 
 В v3.10.2 upstream уже исправил конфликт #6273: для INCY собственный профиль находится в теле raw/Base64 subscription, а Happ Routing header удаляется. Happ получает свой Routing header. Никаких patches upstream и лишнего subscription proxy нет. Тесты проверяют именно эти разные контракты; для INCY отсутствие Routing является требуемым результатом, а не ошибкой. Реальные мобильные приложения проверяются отдельно от HTTP-контракта.
 
-Сервер использует закреплённые `v2ray/happ/{geoip,geosite}.dat` с категориями `geoip:ru` и `geosite:category-ru` (не несуществующее `geosite:ru`). Порядок:
+Серверные GeoSite/GeoIP берутся из закреплённого официального архива 3x-ui. Архив содержит основной набор Loyalsoldier и RU-набор runetfreedom; SHA256 каждого `.dat` записан в `versions.lock.json`, а установщик разбирает protobuf и проверяет наличие всех реально используемых категорий до настройки панели. Малые файлы DigneZzZ остаются только в клиентских профилях Happ/INCY.
 
-1. Штатные служебные правила панели (включая API).
-2. BLOCK `geosite:category-ru`, доменные суффиксы `.ru`, `.su`, `.xn--p1ai`.
-3. BLOCK `geoip:ru` для целевых IPv4/IPv6.
-4. WARP: домены `release/ai.list` и выбранные IP-check services.
-5. DIRECT для остального разрешённого трафика.
+Штатные теги Basic UI — `direct` и `blocked`; отдельный дублирующий `block` не создаётся. Пользовательские outbounds имеют ровно такой порядок: `direct`, `blocked`, `warp-outbound`. Правила:
 
-В `ip-check.list` upstream есть также push-пробы и российские порталы. Через WARP отправляются только `api.ipify.org`, `checkip.amazonaws.com`, `ifconfig.me`; явно добавлены запрошенные `ipinfo.io`, `ip-api.com`, `ipify.org`. `gstatic.com`, `mtalk.google.com`, Google/Microsoft/Cloudflare целиком не направляются через WARP. Все записи AI доступны для проверки в `vendor/routing/ai.list`.
+1. Штатное служебное правило `api`.
+2. `blocked`: `geoip:private`, `ext:geoip_RU.dat:ru`, `geoip:ua`.
+3. `blocked`: протокол `bittorrent`.
+4. `blocked`: `ext:geosite_RU.dat:category-ads-all`, `ext:geosite_RU.dat:ru-available-only-inside`, суффиксы `.ru`, `.su`, `.xn--p1ai`.
+5. `warp-outbound`: `geosite:category-ai-!cn`, `geosite:category-ip-geo-detect`.
 
-`IPOnDemand` принципиален: Xray проверяет resolved destination IP до позднего WARP domain match. `IPIfNonMatch` может вообще пропустить ранний RU IP rule, если позднее совпадёт доменный. DNS Xray использует DoH через собственный системный путь; серверные блокировки не касаются Certbot, SSH, DNS системы, WARP daemon или панели. При недоступности WARP соответствующие назначения не переключаются молча на DIRECT.
+Терминальное правило DIRECT отсутствует: Xray использует первый outbound (`direct`) для трафика, который не совпал с правилами. Такой вид совпадает с Basic UI, переживает сохранение через API без появления дублей и оставляет служебный inbound панели работоспособным.
+
+`IPOnDemand` принципиален: Xray разрешает домен тогда, когда раннему IP-правилу нужен адрес. Поэтому иностранное имя, которое разрешается в российский IP, блокируется до более позднего GeoSite WARP. `IPIfNonMatch` может пропустить раннюю IP-проверку, если позднее совпадёт доменное правило. DNS Xray использует DoH через системный путь; серверные блокировки не касаются Certbot, SSH, системного DNS, WARP daemon или панели. При недоступности WARP соответствующие назначения не переключаются молча на DIRECT.
+
+REALITY хранится с `show: true` и Firefox uTLS fingerprint. Sniffing включает `http`, `tls`, `quic`, `fakedns`; итоговый `routeOnly: true` использует sniffed имя для выбора маршрута и сохраняет запрошенный адрес назначения. Контрольный SOCKS5+TLS тест с раздельными IP и SNI подтвердил различие режимов: при `false` Xray переписывает dial target, при `true` сохраняет исходный IP. Firefox также фиксируется в выдаваемых VLESS URI и во временных E2E-клиентах.
 
 ## Защита и данные портала
 

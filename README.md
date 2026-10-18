@@ -13,7 +13,7 @@
 
 Одноразовый установщик разворачивает 3x-ui, HTTPS-заглушку частного облака, выборочную маршрутизацию через WARP и подписки для Happ/INCY. Конфигурации создаются автоматически, клиентов вы добавляете через панель.
 
-> **Статус: initial preview.** Полный запуск, внешний Vision-клиент и реальная перезагрузка проверены на Ubuntu 24.04 amd64 с существующим WARP. Другие ОС/архитектуры и мобильные приложения пока не прошли отдельные e2e-тесты. [Подробный отчёт →](docs/TESTING.md)
+> **Статус: preview.** Полный запуск, Firefox/REALITY Vision, маршрутизация, внешний клиент и реальная перезагрузка проверены на Ubuntu 24.04 amd64 с существующим WARP. Другие ОС/архитектуры и мобильные приложения пока не прошли отдельные e2e-тесты. [Подробный отчёт →](docs/TESTING.md)
 
 ## Что получится
 
@@ -23,8 +23,8 @@
 | **REALITY** | TCP/443, Self-SNI, Vision, Unix socket nginx, PROXY protocol v1 |
 | **Заглушка** | Уникальный облачный login portal, PHP-FPM, CSRF; данные формы не сохраняются |
 | **TLS** | Certbot HTTP-01 webroot, автоматическое продление для всех TLS-сервисов |
-| **WARP** | SOCKS5 только на loopback; AI/IP-check через WARP, остальное DIRECT |
-| **Маршрутизация** | RU-назначения блокируются на сервере; входящие клиенты географически не фильтруются |
+| **WARP** | SOCKS5 только на loopback; компактные GeoSite AI/IP-check через WARP |
+| **Маршрутизация** | Basic UI `blocked`, RU/UA/private/BitTorrent блокируются; `IPOnDemand`, остальное DIRECT |
 | **Happ / INCY** | Отдельные профили и способы доставки; правила из [DigneZzZ/routing](https://github.com/DigneZzZ/routing) |
 | **Защита** | UFW с сохранением SSH, штатная интеграция Fail2ban 3x-ui |
 
@@ -35,10 +35,10 @@
 3. **Запустите установщик одной командой** от root:
 
    ```bash
-   bash <(curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' https://github.com/DaMistic727/Bob-auto-xray/releases/download/v0.1.1/install.sh)
+   bash <(curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' https://github.com/DaMistic727/Bob-auto-xray/releases/download/v0.2.0/install.sh)
    ```
 
-   Он запросит FQDN и необязательный email Let's Encrypt. Bootstrap загружает **конкретный релиз** и проверяет закреплённый SHA256 архива до выполнения модулей. [Модель доверия и ручная проверка →](docs/RELEASE.md)
+   Он запросит FQDN и необязательный email Let's Encrypt. Bootstrap загружает **конкретный релиз** и проверяет закреплённый SHA256 архива до выполнения модулей. До публикации v0.2.0 используйте установку из исходников по [инструкции релиза](docs/RELEASE.md).
 
 4. **Сохраните HTTPS-ссылку, логин и пароль**, которые появятся после успешных проверок. На VPS результат хранится в root-only `/var/lib/selfsni/state.json`.
 5. **Добавляйте клиентов через 3x-ui**, привязывая их к созданному inbound и выбирая flow `xtls-rprx-vision`. Подписки и клиентская маршрутизация уже настроены.
@@ -67,8 +67,8 @@ flowchart LR
     REALITY -->|обычный TLS + PROXY v1| Socket[Unix socket]
     Socket --> Portal[nginx TLS + PHP portal]
     REALITY -->|VLESS Vision| Rules{Серверные правила}
-    Rules -->|RU-назначения| Block[BLOCK]
-    Rules -->|AI / IP-check| WARP[WARP SOCKS5 · loopback]
+    Rules -->|RU / UA / private / BitTorrent| Block[blocked · Basic UI]
+    Rules -->|GeoSite AI / IP-check| WARP[WARP SOCKS5 · loopback]
     Rules -->|остальное| Direct[DIRECT]
 ```
 
@@ -84,7 +84,7 @@ flowchart LR
 | Happ / INCY | Проверены реальные HTTP-ответы, Base64/JSON и deeplink |
 | Мобильные приложения | Импорт и работа на устройствах пока не проверены |
 
-CI выполняет статические проверки, unit/bootstrap-тесты и воспроизводимую сборку. Он **не заменяет** развёртывание на VPS. Подробные подтверждения: [тестирование](docs/TESTING.md), [после reboot](docs/onhost-after-reboot.json), [внешний клиент](docs/external-acceptance.json).
+CI выполняет статические проверки, unit/bootstrap-тесты и воспроизводимую сборку. Он **не заменяет** развёртывание на VPS. Подробные подтверждения: [тестирование](docs/TESTING.md), [обезличенный API/runtime snapshot](docs/reference-config-redacted.json), [on-host E2E](docs/reference-onhost-acceptance.json), [внешний клиент](docs/reference-external-acceptance.json).
 
 ## Документация и участие
 

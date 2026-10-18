@@ -47,7 +47,7 @@ try:
         port=free_port({40000})
         config={'log':{'loglevel':'warning'},'inbounds':[{'listen':'127.0.0.1','port':port,'protocol':'socks','settings':{'auth':'noauth'}}],
             'outbounds':[{'protocol':'vless','settings':{'vnext':[{'address':s['ipv4'],'port':443,'users':[{'id':s['client']['id'],'flow':'xtls-rprx-vision','encryption':'none'}]}]},
-            'streamSettings':{'network':'tcp','security':'reality','realitySettings':{'serverName':s['domain'],'fingerprint':'chrome','publicKey':s['reality_public'],'shortId':s['short_id'],'spiderX':'/'}}}]}
+            'streamSettings':{'network':'tcp','security':'reality','realitySettings':{'serverName':s['domain'],'fingerprint':'firefox','publicKey':s['reality_public'],'shortId':s['short_id'],'spiderX':'/'}}}]}
         path=Path(d)/'client.json';save(path,config)
         proc=subprocess.Popen([a.xray,'run','-config',str(path)],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         try:
@@ -69,11 +69,11 @@ try:
                 return sum(int(x.get('value',0)) for x in obj.get('stat',[]) if x.get('name','').startswith('outbound>>>warp-outbound>>>'))
             require(count(after)>count(before),'AI traffic did not increment WARP outbound counters')
             report['checks'].append('OpenAI HTTP exchange increments live WARP outbound byte counters')
-            for url in ['https://yandex.ru','https://77.88.8.8']:
+            for url in ['https://yandex.ru','https://77.88.8.8','https://77.88.8.8.nip.io']:
                 try: fetch(url)
                 except InstallError: pass
                 else: raise InstallError('Russian destination reachable through VPN')
-            report['checks'].append('RU domain and IP blocked over real external VLESS tunnel')
+            report['checks'].append('RU domain, RU IP, and foreign-name-to-RU-IP blocked over real external VLESS tunnel')
             try:
                 with socket.create_connection((s['ipv4'],40000),timeout=3) as sock:
                     sock.settimeout(3)

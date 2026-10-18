@@ -9,13 +9,17 @@ from unittest.mock import patch
 
 from selfsni.core import InstallError, fqdn, verify_bundle, extract
 from selfsni.portal import generate
-from selfsni.routing import deeplink, profile, server_template, warp_domains, inbound, TAG
+from selfsni.geodata import REQUIRED, categories, verify_server_geodata
+from selfsni.routing import (BLOCKED_DOMAINS, BLOCKED_IPS, WARP_DOMAINS, deeplink,
+                             profile, server_template, inbound, TAG)
 from selfsni.acceptance import verify_sub_response
 from selfsni.provision import os_info
 
 class InstallerTests(unittest.TestCase):
     def test_bundle_checksums(self):
-        self.assertEqual(verify_bundle()['xui_version'],'v3.10.2')
+        lock=verify_bundle()
+        self.assertEqual(lock['xui_version'],'v3.10.2')
+        self.assertEqual(set(lock['server_geodata']['files']), set(REQUIRED))
 
     def test_profiles_and_http_contract(self):
         for kind in ['happ','incy']:
@@ -23,14 +27,18 @@ class InstallerTests(unittest.TestCase):
             self.assertEqual(json.loads(base64.b64decode(link.split('/onadd/')[1])),profile(kind))
             self.assertIn('geoip:ru',profile(kind)['DirectIp'])
             self.assertIn('@a2241b8',profile(kind)['Geoipurl'])
-            text='vless://example\n'+(link+'\n' if kind=='incy' else '')
-            headers={'routing':link,'routing-enable':'true'} if kind=='happ' else {'routing-enable':'true'}
+            text='vless://id@example.com:443?security=reality&fp=firefox\n'+(link+'\n' if kind=='incy' else '')
+            headers=({'routing':link,'routing-enable':'true','tun-type':'xray',
+                      'socks-auth-mode':'auto','http-auth-mode':'auto'}
+                     if kind=='happ' else {'routing-enable':'true'})
             self.assertTrue(verify_sub_response(kind,200,headers,base64.b64encode(text.encode())))
         with self.assertRaises(InstallError):
             verify_sub_response('incy',200,{'routing':deeplink('happ')},b'vless://example')
 
     def test_route_precedence_and_scope(self):
-        original={'inbounds':[{'tag':'api'}],'routing':{'rules':[{'inboundTag':['api'],'outboundTag':'api'}]},
+        original={'inbounds':[{'tag':'api'}],'routing':{'rules':[
+                      {'inboundTag':['api'],'outboundTag':'api'},
+                      {'type':'field','ip':['geoip:private'],'outboundTag':'blocked'}]},
                   'outbounds':[{'tag':'direct','protocol':'freedom'},{'tag':'blocked','protocol':'blackhole'}]}
         before=copy.deepcopy(original)
         result=server_template(original)
@@ -38,12 +46,42 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(result['inbounds'],before['inbounds'])
         self.assertEqual(result['routing']['rules'][0],before['routing']['rules'][0])
         rules=result['routing']['rules'][1:]
-        self.assertEqual([x['outboundTag'] for x in rules],['block','block','warp-outbound','direct'])
-        self.assertTrue(all(x['inboundTag']==[TAG] and 'source' not in x for x in rules))
+        self.assertEqual([x['outboundTag'] for x in rules],
+                         ['blocked','blocked','blocked','warp-outbound'])
+        self.assertEqual(rules[0]['ip'], BLOCKED_IPS)
+        self.assertEqual(rules[1]['protocol'], ['bittorrent'])
+        self.assertEqual(rules[2]['domain'], BLOCKED_DOMAINS)
+        self.assertEqual(rules[3]['domain'], WARP_DOMAINS)
+        self.assertTrue(all('source' not in x and 'inboundTag' not in x for x in rules))
         self.assertEqual(result['routing']['domainStrategy'],'IPOnDemand')
-        self.assertNotIn('domain:gstatic.com',warp_domains())
-        self.assertIn('domain:chatgpt.com',warp_domains())
-        self.assertIn('domain:ipinfo.io',warp_domains())
+        self.assertEqual([x['tag'] for x in result['outbounds']],
+                         ['direct','blocked','warp-outbound'])
+        self.assertNotIn('block', [x['tag'] for x in result['outbounds']])
+        self.assertFalse(any(x.get('outboundTag') == 'direct' for x in rules))
+        self.assertEqual(server_template(result), result)
+
+    def test_server_geodata_categories(self):
+        def varint(value):
+            out=bytearray()
+            while value > 0x7f:
+                out.append((value & 0x7f) | 0x80)
+                value >>= 7
+            out.append(value)
+            return bytes(out)
+        def field(number, value):
+            return varint((number << 3) | 2) + varint(len(value)) + value
+        def database(names):
+            return b''.join(field(1, field(1, name.upper().encode())) for name in names)
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d)
+            for name, expected in REQUIRED.items():
+                (root/name).write_bytes(database(expected))
+            found=verify_server_geodata(root)
+            self.assertIn('category-ai-!cn',found['geosite.dat'])
+            self.assertIn('category-ip-geo-detect',found['geosite.dat'])
+            self.assertIn('category-ads-all',found['geosite_RU.dat'])
+            self.assertIn('ru-available-only-inside',found['geosite_RU.dat'])
+            self.assertIn('ru',categories(root/'geoip_RU.dat'))
 
     def test_portal_uniqueness_and_credential_privacy(self):
         with tempfile.TemporaryDirectory() as d:
@@ -72,7 +110,15 @@ class InstallerTests(unittest.TestCase):
     def test_reality_zero_clients(self):
         i=inbound('test.example','priv','pub','aabb')
         self.assertEqual(json.loads(i['settings'])['clients'],[])
-        self.assertEqual(json.loads(i['streamSettings'])['realitySettings']['xver'],1)
+        stream=json.loads(i['streamSettings'])
+        reality=stream['realitySettings']
+        self.assertEqual(reality['xver'],1)
+        self.assertTrue(reality['show'])
+        self.assertEqual(reality['settings']['fingerprint'],'firefox')
+        sniffing=json.loads(i['sniffing'])
+        self.assertEqual(sniffing['destOverride'],['http','tls','quic','fakedns'])
+        self.assertTrue(sniffing['routeOnly'])
+        self.assertFalse(json.loads(inbound('test.example','priv','pub','aabb',False)['sniffing'])['routeOnly'])
         self.assertEqual(i['tag'],TAG)
 
     def test_offline_installer_denies_unknown_download(self):

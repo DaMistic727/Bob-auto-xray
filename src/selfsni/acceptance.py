@@ -1,12 +1,15 @@
 """Real on-host acceptance. Temporary users are created ONLY with --e2e."""
 import argparse
 import base64
+import copy
 import json
 import hashlib
 import ssl
 import os
 from pathlib import Path
 import re
+import socket
+import struct
 import subprocess
 import tempfile
 import time
@@ -15,7 +18,9 @@ import uuid
 
 from .api import LocalTLS, Panel, request
 from .core import json_obj, InstallError, require, run, save, token, free_port, wait_for
-from .routing import TAG, profile
+from .geodata import verify_server_geodata
+from .routing import (BLOCKED_DOMAINS, BLOCKED_IPS, WARP_DOMAINS, TAG, profile,
+                      server_template)
 
 
 def check_warp():
@@ -41,6 +46,11 @@ def verify(s):
     def expect(value, message):
         require(value, message)
     api = Panel(s)
+    def xray_setting():
+        view = api.call('xray/', {}, method='POST')
+        view = json_obj(view)
+        return json_obj(view['xraySetting'])
+
     def basic_inbound():
         ins = api.call('inbounds/list')
         require(len(ins) == 1 and ins[0]['port'] == 443 and ins[0]['enable'], 'Expected one REALITY inbound')
@@ -50,10 +60,51 @@ def verify(s):
         r = stream['realitySettings']
         require(r['dest'] == '/run/selfsni/nginx.sock' and r['xver'] == 1 and r['serverNames'] == [s['domain']], 'Incorrect Self-SNI settings')
         require(r['privateKey'] == s['reality_private'], 'REALITY key mismatch')
+        require(r['show'] is True and r['settings']['fingerprint'] == 'firefox',
+                'REALITY show/fingerprint mismatch')
+        sniffing = json_obj(i['sniffing'])
+        require(sniffing == {'enabled': True, 'destOverride': ['http', 'tls', 'quic', 'fakedns'],
+                             'routeOnly': True}, 'Sniffing settings mismatch')
         require(i['tag'] == TAG, 'Routing scope mismatch')
-    check('one inbound, zero clients, Self-SNI parameters', basic_inbound)
+        require(not api.call('hosts/list'), 'Fresh install must not contain Host fingerprint overrides')
+    check('one inbound, zero clients, Self-SNI + Firefox parameters', basic_inbound)
+
+    def routing_roundtrip():
+        before = xray_setting()
+        require(server_template(before) == before, 'Stored Xray template is not canonical')
+        tags = [x.get('tag') for x in before['outbounds']]
+        require(tags[:3] == ['direct', 'blocked', 'warp-outbound'], 'Unexpected outbound order')
+        require(len(tags) == len(set(tags)) and 'block' not in tags, 'Duplicate/legacy outbound present')
+        rules = before['routing']['rules']
+        require(rules[0].get('outboundTag') == 'api', 'API service rule lost precedence')
+        require(rules[1:] == [
+            {'type': 'field', 'ip': BLOCKED_IPS, 'outboundTag': 'blocked'},
+            {'type': 'field', 'protocol': ['bittorrent'], 'outboundTag': 'blocked'},
+            {'type': 'field', 'domain': BLOCKED_DOMAINS, 'outboundTag': 'blocked'},
+            {'type': 'field', 'domain': WARP_DOMAINS, 'outboundTag': 'warp-outbound'},
+        ], 'Basic/WARP rules differ or are duplicated')
+        require(before['routing']['domainStrategy'] == 'IPOnDemand', 'Unsafe routing domain strategy')
+        api.call('xray/update', {'xraySetting': json.dumps(before)}, form=True)
+        wait_for(lambda: request(s['domain'], s['panel_port'], s['panel_path'])[0] == 200,
+                 'panel after Xray settings round-trip')
+        after = xray_setting()
+        require(after['routing'] == before['routing'] and after['outbounds'] == before['outbounds'],
+                'Xray settings changed after panel API round-trip')
+    check('Basic UI shape + panel API save round-trip', routing_roundtrip)
+
+    check('Installed GeoSite/GeoIP categories',
+          lambda: verify_server_geodata('/usr/local/x-ui/bin'))
     check('nginx configuration',lambda: run('nginx','-t'))
     check('Xray configuration',lambda: run(s['xray_bin'],'run','-test','-config','/usr/local/x-ui/bin/config.json'))
+    def runtime_shape():
+        config = json.loads(Path('/usr/local/x-ui/bin/config.json').read_text())
+        tags = [x.get('tag') for x in config['outbounds']]
+        require(tags == ['direct', 'blocked', 'warp-outbound'],
+                'Runtime user outbounds differ from direct/blocked/WARP')
+        require(config.get('api', {}).get('tag') == 'api', 'Runtime API service outbound is missing')
+        require(s['reality_private'] not in run('journalctl','-u','x-ui','--no-pager','-n','500'),
+                'REALITY private key leaked into x-ui journal')
+    check('Runtime outbound set + safe REALITY diagnostics', runtime_shape)
     check('HTTPS panel certificate and response', lambda: expect(request(s['domain'],s['panel_port'],s['panel_path'])[0] == 200,'Panel unavailable'))
     def credential_login():
         require(s['username'] != 'admin' and len(s['password']) >= 32 and len(s['panel_path']) >= 48, 'Weak bootstrap credentials')
@@ -116,20 +167,35 @@ def verify(s):
     check('WARP SOCKS trace + direct system trace', check_warp)
     def presets():
         settings = api.call('setting/all',{},method='POST')
+        require(settings.get('subHappTunType') == 'xray', 'Happ TUN type was not persisted')
+        require(settings.get('subHappLocalProxyAuth') == 'auto', 'Happ local proxy auth was not persisted')
+        require(settings.get('subHappTunMode', '') in ('', 'system', 'gvisor'), 'Unsupported Happ TUN mode')
         for kind, key in [('happ','subRoutingRules'),('incy','subIncyRoutingRules')]:
             link = settings[key]
             require(link.startswith(kind+'://routing/onadd/'), 'Wrong subscription deeplink')
             p = json.loads(base64.b64decode(link.split('/onadd/')[1],validate=True))
             require(p == profile(kind), 'Stored routing profile differs')
-    check('Happ/INCY stored profile roundtrip',presets)
+    check('Happ/INCY settings and stored profile round-trip',presets)
     def routes():
-        cases = [('yandex.ru','', 'block'),('test.su','', 'block'),('пример.рф'.encode('idna').decode(),'','block'),
-                 ('','77.88.8.8','block'),('','2a02:6b8::1','block'),('chatgpt.com','','warp-outbound'),
-                 ('api.ipify.org','','warp-outbound'),('example.com','','direct')]
-        for domain, ip, expected in cases:
-            result = api.call('xray/routeTest',dict(domain=domain,ip=ip,port=443,network='tcp',inboundTag=TAG),form=True)
-            require(result.get('outboundTag') == expected, 'Unexpected destination route: ' + (domain or ip))
-    check('Live Xray routing API: RU, AI, IP-check, DIRECT',routes)
+        cases = [
+            ({'domain':'yandex.ru'}, 'blocked'),
+            ({'domain':'test.su'}, 'blocked'),
+            ({'domain':'пример.рф'.encode('idna').decode()}, 'blocked'),
+            ({'ip':'77.88.8.8'}, 'blocked'),
+            ({'ip':'2a02:6b8::1'}, 'blocked'),
+            ({'domain':'77.88.8.8.nip.io'}, 'blocked'),
+            ({'domain':'chatgpt.com'}, 'warp-outbound'),
+            ({'domain':'api.ipify.org'}, 'warp-outbound'),
+            ({'domain':'example.com'}, ''),
+            ({'domain':'example.com', 'protocol':'bittorrent'}, 'blocked'),
+        ]
+        for target, expected in cases:
+            data = dict(domain='', ip='', protocol='', port=443, network='tcp', inboundTag=TAG)
+            data.update(target)
+            result = api.call('xray/routeTest', data, form=True)
+            actual = result.get('outboundTag', '')
+            require(actual == expected, 'Unexpected destination route: ' + str(target))
+    check('Live routing: RU/IP/DNS, BitTorrent, GeoSite WARP, default DIRECT',routes)
     for service in ['x-ui','nginx','warp-svc','fail2ban',s['php_service']]:
         check('systemd '+service,lambda service=service: (run('systemctl','is-active',service),run('systemctl','is-enabled',service)))
     check('UFW active',lambda:expect('Status: active' in run('ufw','status'),'UFW inactive'))
@@ -153,6 +219,8 @@ def verify_sub_response(kind, status, headers, body):
         require('incy://' not in text, 'INCY profile leaked to Happ')
     else:
         require('routing' not in headers, 'Happ header overrides INCY')
+        require('tun-type' not in headers and 'socks-auth-mode' not in headers,
+                'Happ application settings leaked to INCY')
         links = [x for x in text.splitlines() if x.startswith('incy://routing/onadd/')]
         require(len(links) == 1, 'INCY profile missing or duplicated')
         link = links[0]
@@ -160,6 +228,13 @@ def verify_sub_response(kind, status, headers, body):
     require(link.startswith(kind+'://routing/onadd/'),'Wrong deeplink scheme')
     p = json.loads(base64.b64decode(link.split('/onadd/')[1],validate=True))
     require(p == profile(kind),'Subscription profile mismatch')
+    vless = next((x for x in text.splitlines() if x.startswith('vless://')), '')
+    params = urllib.parse.parse_qs(urllib.parse.urlsplit(vless).query)
+    require(params.get('fp') == ['firefox'], 'Subscription VLESS fingerprint is not Firefox')
+    if kind == 'happ':
+        require(headers.get('tun-type') == 'xray', 'Happ TUN type header mismatch')
+        require(headers.get('socks-auth-mode') == 'auto' and headers.get('http-auth-mode') == 'auto',
+                'Happ local proxy auth headers mismatch')
     return True
 
 def e2e(s):
@@ -181,7 +256,7 @@ def e2e(s):
                 'outbounds':[{'protocol':'vless','settings':{'vnext':[{'address':s['ipv4'],'port':443,
                     'users':[{'id':client['id'],'flow':'xtls-rprx-vision','encryption':'none'}]}]},
                     'streamSettings':{'network':'tcp','security':'reality','realitySettings':{
-                        'serverName':s['domain'],'fingerprint':'chrome','publicKey':s['reality_public'],'shortId':s['short_id'],'spiderX':'/'}}}]}
+                        'serverName':s['domain'],'fingerprint':'firefox','publicKey':s['reality_public'],'shortId':s['short_id'],'spiderX':'/'}}}]}
             path = Path(wd)/'client.json'
             save(path,config)
             process = subprocess.Popen([s['xray_bin'],'run','-config',str(path)],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
@@ -200,7 +275,62 @@ def e2e(s):
                         pass
                     else:
                         raise InstallError('RU destination was reachable through VLESS')
+
+                def set_route_only(value):
+                    current = copy.deepcopy(api.call('inbounds/list')[0])
+                    sniffing = json_obj(current['sniffing'])
+                    sniffing['routeOnly'] = value
+                    current['sniffing'] = json.dumps(sniffing)
+                    api.call('inbounds/update/'+str(current['id']), current)
+                    wait_for(lambda: bool(api.call('inbounds/list')), 'sniffing mode update')
+
+                def tls_to_ip_with_sni(ip, hostname):
+                    """Give SOCKS an IP while TLS exposes a different sniffable SNI."""
+                    def receive(sock, length):
+                        result = b''
+                        while len(result) < length:
+                            chunk = sock.recv(length - len(result))
+                            require(chunk, 'SOCKS5 closed during handshake')
+                            result += chunk
+                        return result
+                    with socket.create_connection(('127.0.0.1', port), timeout=10) as sock:
+                        sock.sendall(b'\x05\x01\x00')
+                        require(receive(sock, 2) == b'\x05\x00', 'SOCKS5 method rejected')
+                        sock.sendall(b'\x05\x01\x00\x01' + socket.inet_aton(ip) + struct.pack('!H', 443))
+                        reply = receive(sock, 4)
+                        require(reply[:2] == b'\x05\x00', 'SOCKS5 connect rejected')
+                        sizes = {1: 4, 4: 16}
+                        address_size = sizes.get(reply[3])
+                        if address_size is None:
+                            require(reply[3] == 3, 'Unknown SOCKS5 address type')
+                            address_size = receive(sock, 1)[0]
+                        receive(sock, address_size + 2)
+                        context = ssl.create_default_context()
+                        with context.wrap_socket(sock, server_hostname=hostname) as tls:
+                            tls.sendall(('HEAD / HTTP/1.1\r\nHost: '+hostname+'\r\nConnection: close\r\n\r\n').encode())
+                            return bool(tls.recv(64))
+
+                # Both modes must retain GeoSite routing. A controlled IP+SNI
+                # mismatch then proves the behavioral difference: false rewrites
+                # the dial target to the sniffed SNI, while true preserves the IP.
+                set_route_only(False)
+                require(bool(fetch('https://api.ipify.org')), 'WARP failed with routeOnly=false')
+                require(tls_to_ip_with_sni('8.8.8.8', 'example.com'),
+                        'routeOnly=false did not rewrite sniffed SNI')
+                set_route_only(True)
+                require(bool(fetch('https://api.ipify.org')), 'WARP failed with routeOnly=true')
+                try:
+                    tls_to_ip_with_sni('8.8.8.8', 'example.com')
+                except (ssl.SSLError, OSError):
+                    pass
+                else:
+                    raise InstallError('routeOnly=true unexpectedly rewrote destination')
             finally:
+                current = copy.deepcopy(api.call('inbounds/list')[0])
+                sniffing = json_obj(current['sniffing'])
+                sniffing['routeOnly'] = True
+                current['sniffing'] = json.dumps(sniffing)
+                api.call('inbounds/update/'+str(current['id']), current)
                 process.terminate()
                 try:
                     process.wait(timeout=10)
@@ -211,7 +341,8 @@ def e2e(s):
         api.call('clients/del/'+client['email'], {})
         require(json_obj(api.call('inbounds/list')[0]['settings'])['clients'] == [], 'Temporary-client cleanup failed')
     return {'subscriptions':'real HTTP for Happ + INCY; Base64/JSON/deeplinks verified',
-            'reality':'real Vision connection from second Xray process on same VPS',
+            'reality':'real Vision connection with Firefox fingerprint from second Xray process on same VPS',
+            'sniffing':'GeoSite routing passed with routeOnly false/true; final true preserves the requested IP against SNI rewriting',
             'routing':'DIRECT example/trace + WARP IP-check + RU blocked',
             'cleanup':'zero clients restored', 'external_client':'not covered by on-host test'}
 

@@ -32,6 +32,17 @@
     "profiles/incy.json": "8ccaf86ce2855baedb798c6c5b58efa230a5b589e49616ba53d6b40add553081",
     "profiles/happ.json": "8ccaf86ce2855baedb798c6c5b58efa230a5b589e49616ba53d6b40add553081"
   },
+  "server_geodata": {
+    "source": "MHSanaei/3x-ui v3.10.2 release archive",
+    "upstream_main": "Loyalsoldier/v2ray-rules-dat",
+    "upstream_ru": "runetfreedom/russia-v2ray-rules-dat",
+    "files": {
+      "geosite.dat": "c5a73fbd415bb0506ecf8fa574caadc6f54a71d9308c265e97da49e4cebf8466",
+      "geoip.dat": "116cc0f03d48991962f7f9cdbbcf53d45d89777f9c3cd1a663210853e5df6093",
+      "geosite_RU.dat": "76fdbe01687a6cc7683b50c38ceea84941458e8371d215918daf555665a537cd",
+      "geoip_RU.dat": "e31714917fb9207e456251c784d88e90ab9a691e0764f4c05016b32bc073cfa2"
+    }
+  },
   "bundled_xray_version": "26.10.10",
   "system_packages": "Ubuntu and Cloudflare signed APT repositories; actual versions in deployment state/report"
 }
