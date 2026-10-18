@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Приватное сообщение об уязвимости
+    url: https://github.com/DaMistic727/Bob-auto-xray/security/advisories/new
+    about: Credentials и exploitable детали не публикуйте в открытых Issues.

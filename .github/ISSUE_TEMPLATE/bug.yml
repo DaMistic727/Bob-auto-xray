@@ -1,0 +1,43 @@
+name: Ошибка
+description: Сообщить о воспроизводимой ошибке установщика
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: "Не прикладывайте credentials, private keys, state/DB и реальные ссылки подписок. Для уязвимостей используйте SECURITY.md."
+  - type: input
+    id: version
+    attributes:
+      label: Версия релиза или commit
+      placeholder: v0.1.0
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: ОС, версия и архитектура VPS
+      placeholder: Ubuntu 24.04 amd64
+    validations:
+      required: true
+  - type: dropdown
+    id: warp
+    attributes:
+      label: Сценарий WARP
+      options:
+        - Новая установка
+        - Существующий WARP с --adopt-warp
+        - Ошибка до настройки WARP
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Как воспроизвести
+      description: Команда, этап установки, ожидаемый и фактический результат; адрес сервера замените примером.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Очищенная диагностика
+      description: Только необходимые строки ошибки без секретов и личных адресов.
+      render: text

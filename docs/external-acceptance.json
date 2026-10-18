@@ -1,0 +1,15 @@
+{
+  "scope": "external Mac client \u2192 public VPS TCP/443",
+  "checks": [
+    "happ external subscription: HTTPS + Base64/JSON/deeplink",
+    "incy external subscription: HTTPS + Base64/JSON/deeplink",
+    "VLESS REALITY Vision: real external connection",
+    "Ordinary traffic DIRECT, IP-check egress differs from VPS",
+    "OpenAI HTTP exchange increments live WARP outbound byte counters",
+    "RU domain and IP blocked over real external VLESS tunnel",
+    "WARP SOCKS5 negotiation unavailable externally"
+  ],
+  "cleanup": "temporary client removed",
+  "date": "2026-10-18",
+  "run_context": "Repeated after verified VPS reboot; deployment identifiers redacted"
+}

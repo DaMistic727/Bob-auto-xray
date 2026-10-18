@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="340" viewBox="0 0 1200 340" role="img" aria-labelledby="title desc">
+<title id="title">Bob Auto Xray — Self-SNI, automated.</title><desc id="desc">VLESS REALITY Vision, a private cloud portal, selective WARP routing and ready-to-use subscriptions.</desc>
+<defs><linearGradient id="bg" x2="1" y2="1"><stop stop-color="#101b2d"/><stop offset="1" stop-color="#172c3b"/></linearGradient><linearGradient id="mark" x2="1" y2="1"><stop stop-color="#73e7cf"/><stop offset="1" stop-color="#66b9ff"/></linearGradient></defs>
+<rect width="1200" height="340" rx="22" fill="url(#bg)"/>
+<g fill="none" stroke="#315367" opacity=".45"><circle cx="1010" cy="170" r="220"/><circle cx="1010" cy="170" r="170"/><circle cx="1010" cy="170" r="120"/></g>
+<rect x="52" y="49" width="58" height="58" rx="16" fill="url(#mark)"/>
+<g stroke="#16313d" stroke-width="3" fill="none" stroke-linejoin="round"><path d="m66 71 15-8 15 8-15 8Z m-15 0v16l15 8 15-8V71 M81 79v16"/></g>
+<text x="130" y="78" fill="#f1f7ff" font-family="system-ui,sans-serif" font-size="22" font-weight="650">BOB AUTO XRAY</text><text x="131" y="101" fill="#92afc2" font-family="system-ui,sans-serif" font-size="12" letter-spacing="2">ONE-SHOT SERVER PROVISIONING</text>
+<text x="52" y="180" fill="#f5faff" font-family="system-ui,sans-serif" font-size="52" font-weight="700" letter-spacing="-2">Self-SNI, automated.</text>
+<text x="54" y="218" fill="#a9c2d2" font-family="system-ui,sans-serif" font-size="18">REALITY Vision · Selective WARP · Happ + INCY</text>
+<g font-family="system-ui,sans-serif" font-size="12" fill="#a9eada"><rect x="53" y="261" width="149" height="30" rx="15" fill="#22443f"/><text x="71" y="281">Versioned + verified</text><rect x="214" y="261" width="136" height="30" rx="15" fill="#223b50"/><text x="232" y="281" fill="#a4d2fa">No resident agent</text></g>
+<g transform="translate(848 98)" font-family="system-ui,sans-serif" font-size="13"><path d="M0 65h64m130 0h37M128 90v47" stroke="#68d9cb" stroke-width="2" fill="none"/><circle cy="65" r="7" fill="#73e7cf"/><rect x="64" y="36" width="130" height="56" rx="12" fill="#213d4f" stroke="#508997"/><text x="83" y="70" fill="#e4f8ff">Xray REALITY</text><rect x="231" y="36" width="62" height="56" rx="12" fill="#234940" stroke="#5b9d88"/><text x="242" y="70" fill="#d9ffeb">WARP</text><rect x="64" y="137" width="130" height="42" rx="10" fill="#243a51" stroke="#4a7294"/><text x="87" y="163" fill="#dbeaff">nginx · TLS</text><text x="69" y="18" fill="#8fb5c7">:443</text></g>
+</svg>

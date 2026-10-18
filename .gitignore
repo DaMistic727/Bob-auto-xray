@@ -1,0 +1,22 @@
+research/
+dist/
+__pycache__/
+*.pyc
+.env
+*.pem
+*state.json
+/external-acceptance.json
+
+# Local deployment output and editor files
+*.db
+*.sqlite
+*.sqlite3
+*.key
+*.p12
+.env.*
+!.env.example
+.DS_Store
+.vscode/
+.idea/
+/deployment-result.txt
+/credentials*

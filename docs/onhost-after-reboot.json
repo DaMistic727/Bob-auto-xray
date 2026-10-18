@@ -1,0 +1,92 @@
+{
+  "scope": "on-host; no external client/reboot claims",
+  "checks": [
+    {
+      "name": "one inbound, zero clients, Self-SNI parameters",
+      "passed": true
+    },
+    {
+      "name": "nginx configuration",
+      "passed": true
+    },
+    {
+      "name": "Xray configuration",
+      "passed": true
+    },
+    {
+      "name": "HTTPS panel certificate and response",
+      "passed": true
+    },
+    {
+      "name": "Generated credentials authenticate with HTTPS session and CSRF",
+      "passed": true
+    },
+    {
+      "name": "Sensitive state, DB and runtime configuration are root-only",
+      "passed": true
+    },
+    {
+      "name": "All three TLS listeners use the current live certificate",
+      "passed": true
+    },
+    {
+      "name": "REALITY fallback, PROXY v1, portal GET/POST/CSRF",
+      "passed": true
+    },
+    {
+      "name": "Portal submitted identity absent from sessions and nginx logs",
+      "passed": true
+    },
+    {
+      "name": "WARP SOCKS trace + direct system trace",
+      "passed": true
+    },
+    {
+      "name": "Happ/INCY stored profile roundtrip",
+      "passed": true
+    },
+    {
+      "name": "Live Xray routing API: RU, AI, IP-check, DIRECT",
+      "passed": true
+    },
+    {
+      "name": "systemd x-ui",
+      "passed": true
+    },
+    {
+      "name": "systemd nginx",
+      "passed": true
+    },
+    {
+      "name": "systemd warp-svc",
+      "passed": true
+    },
+    {
+      "name": "systemd fail2ban",
+      "passed": true
+    },
+    {
+      "name": "systemd php8.3-fpm",
+      "passed": true
+    },
+    {
+      "name": "UFW active",
+      "passed": true
+    },
+    {
+      "name": "Fail2ban jails",
+      "passed": true
+    },
+    {
+      "name": "Certbot timer",
+      "passed": true
+    }
+  ],
+  "e2e": {
+    "subscriptions": "real HTTP for Happ + INCY; Base64/JSON/deeplinks verified",
+    "reality": "real Vision connection from second Xray process on same VPS",
+    "routing": "DIRECT example/trace + WARP IP-check + RU blocked",
+    "cleanup": "zero clients restored",
+    "external_client": "not covered by on-host test"
+  }
+}

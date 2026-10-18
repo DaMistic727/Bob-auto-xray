@@ -1,0 +1,20 @@
+{
+  "date": "2026-10-18",
+  "host": "redacted",
+  "boot_id_before": "redacted-before",
+  "boot_id_after": "redacted-after",
+  "boot_id_changed": true,
+  "ssh_reconnected": true,
+  "services": [
+    "x-ui",
+    "nginx",
+    "warp-svc",
+    "fail2ban",
+    "php8.3-fpm"
+  ],
+  "all_services_active_without_manual_start": true,
+  "onhost_checks_passed": 20,
+  "onhost_e2e": "passed; temporary client removed",
+  "evidence": "onhost-after-reboot.json",
+  "publication_note": "Deployment identifiers redacted; measured pass/fail results retained."
+}
