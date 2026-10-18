@@ -34,7 +34,9 @@ bootstrap_sha = hashlib.sha256(installer.read_bytes()).hexdigest()
 
 3x-ui + VLESS TCP REALITY Vision Self-SNI, nginx/PHP portal, selective WARP, native Geodata Auto-Update, TCP BBR с FQ и отдельные профили Happ/INCY.
 
-Кандидат на основе v0.3.2 прошёл clean install Ubuntu 26.04.1 amd64, новую регистрацию WARP, BBR/FQ, REALITY Target в API/DB/web editor/runtime, geodata hot reload/rollback, внешний Vision-клиент и reboot. Исправление preflight для минимальных образов без modinfo покрыто regression-тестом. Опубликованный tag v0.3.2 остаётся неизменным; evidence относится к кандидату с этим исправлением. Happ/INCY проверены пользователем на физическом iPhone; Android, DNS leaks и отдельные UDP/QUIC-сценарии требуют проверки.
+Исправлен BBR preflight для минимальных образов без modinfo: read-only probe распознаёт tcp_bbr в дереве модулей запущенного ядра, а kmod устанавливается до возможного modprobe. Исправление покрыто regression-тестом.
+
+Кандидат из PR #6 прошёл clean install Ubuntu 26.04.1 amd64, новую регистрацию WARP, BBR/FQ, REALITY Target в API/DB/web editor/runtime, geodata hot reload/rollback, внешний Vision-клиент и reboot: 26/26 on-host и 7/7 external checks до и после перезагрузки. Этот E2E выполнен на кандидате PR #6, а не на опубликованном архиве {a.tag}. Happ/INCY проверены пользователем на физическом iPhone; Android, DNS leaks и отдельные UDP/QUIC-сценарии требуют проверки.
 
 ## Установка от root на чистой VPS
 

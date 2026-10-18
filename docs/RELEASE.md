@@ -5,7 +5,7 @@
 ## Versioned bootstrap
 
 ```bash
-bash <(curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' https://github.com/DaMistic727/Bob-auto-xray/releases/download/v0.3.2/install.sh)
+bash <(curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' https://github.com/DaMistic727/Bob-auto-xray/releases/download/v0.3.3/install.sh)
 ```
 
 Эта команда запускается от root на чистой поддерживаемой VPS. Она использует bootstrap **конкретного релиза**, а не плавающей ветки. Опубликованный `install.sh` содержит URL и SHA256 своего payload archive. Проверка digest выполняется до распаковки и исполнения модулей; archive traversal, symlinks и devices запрещены.
@@ -13,8 +13,8 @@ bash <(curl --fail --silent --show-error --location --proto '=https' --proto-red
 Bootstrap получен по HTTPS от GitHub. Встроенный SHA256 проверяет соответствие архива этому bootstrap, но не является отдельной подписью владельца. Доверие к самому bootstrap зависит от источника его получения и GitHub-аккаунта. Для предварительного просмотра и ручной проверки:
 
 ```bash
-curl --fail --location --proto '=https' --proto-redir '=https' -o install.sh https://github.com/DaMistic727/Bob-auto-xray/releases/download/v0.3.2/install.sh
-curl --fail --location --proto '=https' --proto-redir '=https' -o SHA256SUMS https://github.com/DaMistic727/Bob-auto-xray/releases/download/v0.3.2/SHA256SUMS
+curl --fail --location --proto '=https' --proto-redir '=https' -o install.sh https://github.com/DaMistic727/Bob-auto-xray/releases/download/v0.3.3/install.sh
+curl --fail --location --proto '=https' --proto-redir '=https' -o SHA256SUMS https://github.com/DaMistic727/Bob-auto-xray/releases/download/v0.3.3/SHA256SUMS
 # Сравните SHA256 с доверенным значением релиза; просмотр кода не требует root.
 sha256sum install.sh
 less install.sh
@@ -25,10 +25,10 @@ SHA256SUMS, полученный с того же источника, помог
 
 ## Локальный архив
 
-Скачайте `selfsni-0.3.2.tar.gz`, проверьте его SHA256, распакуйте в `/root`:
+Скачайте `selfsni-0.3.3.tar.gz`, проверьте его SHA256, распакуйте в `/root`:
 
 ```bash
-tar -xzf selfsni-0.3.2.tar.gz -C /root
+tar -xzf selfsni-0.3.3.tar.gz -C /root
 bash /root/selfsni/install.sh
 ```
 
