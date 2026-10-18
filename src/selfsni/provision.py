@@ -15,7 +15,7 @@ import time
 from .api import Panel, request
 from .core import (ROOT, InstallError, require, run, write, save, token, free_port,
                    fqdn, download, verify_bundle, extract, wait_for, digest)
-from .geodata import verify_server_geodata
+from .geodata import GEODATA_TIMEZONE, verify_server_geodata
 from .portal import generate
 from .routing import deeplink, inbound, server_template
 
@@ -137,11 +137,18 @@ def firewall(s, public=False):
     run('ufw', 'default', 'allow', 'outgoing')
     run('ufw', '--force', 'enable')
 
+def install_apt_key(source, target):
+    run('gpg', '--batch', '--yes', '--dearmor', '--output', target, source)
+    # The installer runs under umask 077, while APT verifies repositories as
+    # the unprivileged _apt user. Signing keys are public and must be readable.
+    Path(target).chmod(0o644)
+
+
 def install_warp(s, lock, work):
     stage('WARP: validate/adapt VPS-Server-Menu proxy configuration')
     if not s['adopt_warp']:
         key = '/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg'
-        run('gpg', '--batch', '--yes', '--dearmor', '--output', key, ROOT / 'vendor/cloudflare-pubkey.gpg')
+        install_apt_key(ROOT / 'vendor/cloudflare-pubkey.gpg', key)
         write('/etc/apt/sources.list.d/cloudflare-client.list',
               f'deb [arch={s["arch"]} signed-by={key}] https://pkg.cloudflareclient.com/ {s["codename"]} main\n', 0o644)
         run('apt-get', 'update', timeout=300)
@@ -251,7 +258,8 @@ def panel(s, lock, work):
         '-listenIP','0.0.0.0')
     write('/etc/systemd/system/x-ui.service.d/20-selfsni.conf',
           '[Unit]\nAfter=nginx.service warp-svc.service network-online.target\nWants=nginx.service warp-svc.service network-online.target\n'
-          '[Service]\nExecStartPre=/usr/bin/test -S /run/selfsni/nginx.sock\n', 0o644)
+          '[Service]\nEnvironment=TZ=' + GEODATA_TIMEZONE + '\n'
+          'ExecStartPre=/usr/bin/test -S /run/selfsni/nginx.sock\n', 0o644)
     run('systemctl','daemon-reload')
     run('systemctl','restart','x-ui')
     wait_for(lambda: request(s['domain'], s['panel_port'], s['panel_path'])[0] == 200, 'HTTPS panel')

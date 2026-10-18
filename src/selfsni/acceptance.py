@@ -17,8 +17,10 @@ import urllib.parse
 import uuid
 
 from .api import LocalTLS, Panel, request
-from .core import json_obj, InstallError, require, run, save, token, free_port, wait_for
-from .geodata import verify_server_geodata
+from .core import (digest, json_obj, InstallError, require, run, save, token,
+                   free_port, wait_for)
+from .geodata import (GEODATA_ASSETS, GEODATA_CRON, GEODATA_TIMEZONE,
+                      automatic_config, verify_server_geodata)
 from .routing import (BLOCKED_DOMAINS, BLOCKED_IPS, WARP_DOMAINS, TAG, profile,
                       server_template)
 
@@ -34,6 +36,21 @@ def check_warp():
     direct = run('curl','-fsS','--max-time','30','https://www.cloudflare.com/cdn-cgi/trace')
     require('warp=off' in direct, 'System traffic is unexpectedly tunneled')
     return True
+
+
+def xray_process(s):
+    target = Path(s['xray_bin']).resolve()
+    matches = []
+    for proc in Path('/proc').iterdir():
+        if not proc.name.isdigit():
+            continue
+        try:
+            if (proc / 'exe').resolve() == target:
+                matches.append(proc)
+        except (FileNotFoundError, PermissionError):
+            pass
+    require(len(matches) == 1, 'Expected exactly one panel-managed Xray process')
+    return matches[0]
 
 def verify(s):
     checks = []
@@ -84,13 +101,19 @@ def verify(s):
             {'type': 'field', 'domain': WARP_DOMAINS, 'outboundTag': 'warp-outbound'},
         ], 'Basic/WARP rules differ or are duplicated')
         require(before['routing']['domainStrategy'] == 'IPOnDemand', 'Unsafe routing domain strategy')
+        require(before.get('geodata') == automatic_config(), 'Native geodata configuration mismatch')
+        view = json_obj(api.call('xray/', {}, method='POST'))
+        standard = view.get('geodataSources', [])
+        require(all(asset in standard for asset in GEODATA_ASSETS),
+                'Configured geodata assets are not visible as standard 3x-ui sources')
         api.call('xray/update', {'xraySetting': json.dumps(before)}, form=True)
         wait_for(lambda: request(s['domain'], s['panel_port'], s['panel_path'])[0] == 200,
                  'panel after Xray settings round-trip')
         after = xray_setting()
-        require(after['routing'] == before['routing'] and after['outbounds'] == before['outbounds'],
+        require(after['routing'] == before['routing'] and after['outbounds'] == before['outbounds']
+                and after.get('geodata') == before.get('geodata'),
                 'Xray settings changed after panel API round-trip')
-    check('Basic UI shape + panel API save round-trip', routing_roundtrip)
+    check('Basic UI + native geodata panel API save round-trip', routing_roundtrip)
 
     check('Installed GeoSite/GeoIP categories',
           lambda: verify_server_geodata('/usr/local/x-ui/bin'))
@@ -102,9 +125,19 @@ def verify(s):
         require(tags == ['direct', 'blocked', 'warp-outbound'],
                 'Runtime user outbounds differ from direct/blocked/WARP')
         require(config.get('api', {}).get('tag') == 'api', 'Runtime API service outbound is missing')
+        require(config.get('geodata') == automatic_config(), 'Runtime native geodata settings mismatch')
         require(s['reality_private'] not in run('journalctl','-u','x-ui','--no-pager','-n','500'),
                 'REALITY private key leaked into x-ui journal')
     check('Runtime outbound set + safe REALITY diagnostics', runtime_shape)
+    def geodata_timezone():
+        unit_env = run('systemctl','show','x-ui','--property=Environment','--value').split()
+        require('TZ='+GEODATA_TIMEZONE in unit_env, 'x-ui service does not pin the geodata timezone')
+        proc = xray_process(s)
+        process_env = (proc/'environ').read_bytes().split(b'\0')
+        require(('TZ='+GEODATA_TIMEZONE).encode() in process_env,
+                'Xray did not inherit the pinned UTC timezone')
+        require(GEODATA_CRON == '0 0 * * *', '03:00 Moscow cron mapping changed')
+    check('Native geodata process timezone and 03:00 Europe/Moscow schedule', geodata_timezone)
     check('HTTPS panel certificate and response', lambda: expect(request(s['domain'],s['panel_port'],s['panel_path'])[0] == 200,'Panel unavailable'))
     def credential_login():
         require(s['username'] != 'admin' and len(s['password']) >= 32 and len(s['panel_path']) >= 48, 'Weak bootstrap credentials')
@@ -202,6 +235,83 @@ def verify(s):
     check('Fail2ban jails',lambda:(run('fail2ban-client','status','sshd'),run('fail2ban-client','status','3x-ipl')))
     check('Certbot timer',lambda:run('systemctl','is-enabled','certbot.timer'))
     return {'scope':'on-host; no external client/reboot claims', 'checks':checks}
+
+
+def geodata_e2e(s):
+    """Exercise Xray's native scheduled download, hot reload, failure, and rollback."""
+    api = Panel(s)
+    root = Path('/usr/local/x-ui/bin')
+    paths = [root/asset['file'] for asset in GEODATA_ASSETS]
+
+    def template():
+        view = json_obj(api.call('xray/', {}, method='POST'))
+        return json_obj(view['xraySetting'])
+
+    def apply(config):
+        api.call('xray/update', {'xraySetting': json.dumps(config)}, form=True)
+        run('systemctl','restart','x-ui')
+        wait_for(lambda: request(s['domain'],s['panel_port'],s['panel_path'])[0] == 200,
+                 'panel after geodata configuration restart')
+
+    def state():
+        return {path.name: (digest(path), path.stat().st_mtime_ns) for path in paths}
+
+    def journal_since(start):
+        return run('journalctl','-u','x-ui','--no-pager','--since','@'+str(int(start)))
+
+    original = template()
+    require(original.get('geodata') == automatic_config(), 'Geodata E2E requires production settings')
+    report = {}
+    try:
+        live = copy.deepcopy(original)
+        live['geodata'] = automatic_config('* * * * *')
+        apply(live)
+        before = state()
+        pid = xray_process(s).name
+        wait_for(lambda: all(state()[name][1] > value[1] for name, value in before.items()),
+                 'native geodata download tick', attempts=50)
+        require(xray_process(s).name == pid, 'Native geodata reload restarted Xray')
+        verify_server_geodata(root)
+        report['hotReload'] = 'four upstream assets downloaded and reloaded without PID change'
+
+        failed = copy.deepcopy(original)
+        failed['geodata'] = automatic_config('* * * * *', [{
+            'url': ('https://github.com/Loyalsoldier/v2ray-rules-dat/'
+                    'releases/latest/download/selfsni-not-found.dat'),
+            'file': 'geosite.dat',
+        }])
+        apply(failed)
+        before = state()
+        pid = xray_process(s).name
+        started = time.time()
+        wait_for(lambda: 'scheduled geodata reload failed' in journal_since(started),
+                 'native geodata download failure', attempts=50)
+        require(state() == before, 'Failed geodata download changed installed assets')
+        require(xray_process(s).name == pid, 'Failed geodata download restarted Xray')
+        report['downloadFailure'] = 'HTTP error left every installed asset unchanged'
+
+        rollback = copy.deepcopy(original)
+        rollback['geodata'] = automatic_config('* * * * *', [{
+            'url': 'https://example.com/',
+            'file': 'geosite.dat',
+        }])
+        apply(rollback)
+        before = state()
+        pid = xray_process(s).name
+        started = time.time()
+        wait_for(lambda: 'rolling back' in journal_since(started),
+                 'native geodata rollback', attempts=50)
+        require(state() == before, 'Invalid geodata was not rolled back atomically')
+        require(xray_process(s).name == pid, 'Geodata rollback restarted Xray')
+        verify_server_geodata(root)
+        report['rollback'] = 'invalid 200 response failed reload and restored the original file'
+    finally:
+        apply(original)
+        require(template().get('geodata') == automatic_config(),
+                'Production geodata schedule was not restored')
+        verify_server_geodata(root)
+    report['restored'] = 'daily 03:00 Europe/Moscow settings and required categories'
+    return report
 
 def decode_subscription(body):
     try:
@@ -349,11 +459,15 @@ def e2e(s):
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--e2e',action='store_true',help='Disposable VPS ONLY: temporarily create/remove one test client')
+    parser.add_argument('--geodata-e2e',action='store_true',
+                        help='Disposable VPS ONLY: exercise native scheduled geodata updates and rollback')
     args=parser.parse_args()
     s=json.loads(Path('/var/lib/selfsni/state.json').read_text())
     report=verify(s)
     if args.e2e:
         report['e2e']=e2e(s)
+    if args.geodata_e2e:
+        report['geodataE2E']=geodata_e2e(s)
     save('/var/lib/selfsni/acceptance.json',report)
     print(json.dumps(report,indent=2))
     require(all(x['passed'] for x in report['checks']),'Acceptance checks failed')

@@ -4,7 +4,7 @@
   <a href="https://github.com/DaMistic727/Bob-auto-xray/actions/workflows/ci.yml"><img src="https://github.com/DaMistic727/Bob-auto-xray/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/DaMistic727/Bob-auto-xray/releases"><img src="https://img.shields.io/github/v/release/DaMistic727/Bob-auto-xray?include_prereleases&amp;color=2b9e88" alt="Release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue" alt="GPL-3.0"></a>
-  <img src="https://img.shields.io/badge/tested-Ubuntu%2024.04%20amd64-e95420" alt="Tested on Ubuntu 24.04 amd64">
+  <img src="https://img.shields.io/badge/tested-Ubuntu%2026.04%20amd64-e95420" alt="Tested on Ubuntu 26.04 amd64">
 </p>
 
 # Bob Auto Xray
@@ -13,7 +13,7 @@
 
 Одноразовый установщик разворачивает 3x-ui, HTTPS-заглушку частного облака, выборочную маршрутизацию через WARP и подписки для Happ/INCY. Конфигурации создаются автоматически, клиентов вы добавляете через панель.
 
-> **Статус: preview.** Полный запуск, Firefox/REALITY Vision, маршрутизация, внешний клиент и реальная перезагрузка проверены на Ubuntu 24.04 amd64 с существующим WARP. Другие ОС/архитектуры и мобильные приложения пока не прошли отдельные e2e-тесты. [Подробный отчёт →](docs/TESTING.md)
+> **Статус: preview.** Полный clean install, новая регистрация WARP, native Geodata Auto-Update, Firefox/REALITY Vision, внешний клиент и реальная перезагрузка проверены на Ubuntu 26.04.1 LTS amd64. Другие ОС/архитектуры и мобильные приложения пока не прошли отдельные e2e-тесты. [Подробный отчёт →](docs/TESTING.md)
 
 ## Что получится
 
@@ -25,20 +25,21 @@
 | **TLS** | Certbot HTTP-01 webroot, автоматическое продление для всех TLS-сервисов |
 | **WARP** | SOCKS5 только на loopback; компактные GeoSite AI/IP-check через WARP |
 | **Маршрутизация** | Basic UI `blocked`, RU/UA/private/BitTorrent блокируются; `IPOnDemand`, остальное DIRECT |
+| **Geodata** | Штатный Xray hot reload четырёх файлов ежедневно в 03:00 МСК через `direct`, с rollback |
 | **Happ / INCY** | Отдельные профили и способы доставки; правила из [DigneZzZ/routing](https://github.com/DigneZzZ/routing) |
 | **Защита** | UFW с сохранением SSH, штатная интеграция Fail2ban 3x-ui |
 
 ## Быстрый старт
 
 1. **Создайте DNS A-запись** своего FQDN на IPv4 VPS, без CDN proxy. Если IPv6 не настроен, удалите AAAA.
-2. **Подготовьте чистую VPS** с root-доступом и открытыми у провайдера TCP/80 и TCP/443. Проверенная ОС — Ubuntu 24.04 amd64; официальный пакет WARP должен существовать для выбранной платформы.
+2. **Подготовьте чистую VPS** с root-доступом и открытыми у провайдера TCP/80 и TCP/443. Проверенная ОС — Ubuntu 26.04 amd64; установщик использует официальный WARP-пакет именно для codename VPS.
 3. **Запустите установщик одной командой** от root:
 
    ```bash
-   bash <(curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' https://github.com/DaMistic727/Bob-auto-xray/releases/download/v0.2.0/install.sh)
+   bash <(curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' https://github.com/DaMistic727/Bob-auto-xray/releases/download/v0.3.0/install.sh)
    ```
 
-   Он запросит FQDN и необязательный email Let's Encrypt. Bootstrap загружает **конкретный релиз** и проверяет закреплённый SHA256 архива до выполнения модулей. До публикации v0.2.0 используйте установку из исходников по [инструкции релиза](docs/RELEASE.md).
+   Он запросит FQDN и необязательный email Let's Encrypt. Bootstrap загружает **конкретный релиз** и проверяет закреплённый SHA256 архива до выполнения модулей.
 
 4. **Сохраните HTTPS-ссылку, логин и пароль**, которые появятся после успешных проверок. На VPS результат хранится в root-only `/var/lib/selfsni/state.json`.
 5. **Добавляйте клиентов через 3x-ui**, привязывая их к созданному inbound и выбирая flow `xtls-rprx-vision`. Подписки и клиентская маршрутизация уже настроены.
@@ -78,13 +79,14 @@ flowchart LR
 
 | Платформа / сценарий | Статус |
 |---|---|
-| Ubuntu 24.04 amd64 + существующий WARP | Проверены установка, внешний клиент и reboot |
-| Ubuntu 22.04 / 26.04; arm64 | Предусмотрены в коде; отдельное развёртывание не проверено |
-| Новая установка WARP | Реализована; отдельная чистая VPS ещё нужна для e2e |
+| v0.2.0 · Ubuntu 24.04 amd64 + существующий WARP | Проверены установка через `--adopt-warp`, внешний клиент и reboot |
+| v0.3.0 · Ubuntu 26.04.1 amd64, чистая ОС | Проверены установка всех компонентов, новая регистрация WARP, внешний клиент и reboot |
+| Ubuntu 22.04; arm64 | Предусмотрены в коде; отдельное развёртывание не проверено |
+| Native Geodata Auto-Update | Проверены 4 assets, UTC→03:00 МСК, hot reload, ошибка, rollback и reboot |
 | Happ / INCY | Проверены реальные HTTP-ответы, Base64/JSON и deeplink |
 | Мобильные приложения | Импорт и работа на устройствах пока не проверены |
 
-CI выполняет статические проверки, unit/bootstrap-тесты и воспроизводимую сборку. Он **не заменяет** развёртывание на VPS. Подробные подтверждения: [тестирование](docs/TESTING.md), [обезличенный API/runtime snapshot](docs/reference-config-redacted.json), [on-host E2E](docs/reference-onhost-acceptance.json), [внешний клиент](docs/reference-external-acceptance.json).
+CI выполняет статические проверки, unit/bootstrap-тесты и воспроизводимую сборку. Он **не заменяет** развёртывание на VPS. Подробные подтверждения: [тестирование](docs/TESTING.md), [обезличенный API/runtime snapshot](docs/reference-config-redacted.json), [native geodata E2E](docs/reference-geodata-acceptance.json), [on-host E2E](docs/reference-onhost-acceptance.json), [внешний клиент](docs/reference-external-acceptance.json).
 
 ## Документация и участие
 
