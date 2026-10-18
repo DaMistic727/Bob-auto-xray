@@ -32,9 +32,9 @@ bootstrap_sha = hashlib.sha256(installer.read_bytes()).hexdigest()
 (root / 'dist/SHA256SUMS').write_text(f'{checksum}  {archive.name}\n{bootstrap_sha}  install.sh\n')
 (root / 'dist/release-notes.md').write_text(f'''Preview-релиз Bob Auto Xray {a.tag}.
 
-3x-ui + VLESS TCP REALITY Vision Self-SNI, nginx/PHP portal, selective WARP, native Geodata Auto-Update и отдельные профили Happ/INCY.
+3x-ui + VLESS TCP REALITY Vision Self-SNI, nginx/PHP portal, selective WARP, native Geodata Auto-Update, TCP BBR с FQ и отдельные профили Happ/INCY.
 
-Проверены clean install Ubuntu 26.04.1 amd64, REALITY Target в API/DB/web editor/runtime, новая регистрация WARP, geodata hot reload/rollback, внешний Vision-клиент и reboot. Ubuntu 22.04, arm64 VPS и мобильные приложения требуют отдельных e2e-проверок.
+Для VPN-основы v0.3.1 проверены clean install Ubuntu 26.04.1 amd64, REALITY Target в API/DB/web editor/runtime, новая регистрация WARP, geodata hot reload/rollback, внешний Vision-клиент и reboot. BBR v0.3.2 покрыт 14 mock-сценариями и общей регрессией; clean install и reboot именно v0.3.2 на VPS пока не выполнялись. Happ/INCY проверены пользователем на физическом iPhone; Android, DNS leaks и отдельные UDP/QUIC-сценарии требуют проверки.
 
 ## Установка от root на чистой VPS
 

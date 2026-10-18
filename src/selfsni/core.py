@@ -8,6 +8,7 @@ import shutil
 import socket
 import subprocess
 import tarfile
+import tempfile
 import time
 import urllib.request
 
@@ -41,6 +42,29 @@ def write(path, content, mode=0o600):
     with os.fdopen(fd, 'w') as f:
         f.write(content)
     path.chmod(mode)
+
+def atomic_write(path, content, mode=0o600):
+    """Replace a regular file atomically without following a target symlink."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    require(not path.is_symlink(), f'Refusing symlink: {path}')
+    fd, temporary = tempfile.mkstemp(prefix='.' + path.name + '.', dir=path.parent)
+    try:
+        os.fchmod(fd, mode)
+        with os.fdopen(fd, 'w') as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temporary, path)
+        path.chmod(mode)
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
 
 def save(path, obj):
     write(path, json.dumps(obj, ensure_ascii=False, indent=2) + '\n')

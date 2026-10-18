@@ -13,6 +13,7 @@ import tempfile
 import time
 
 from .api import Panel, request
+from . import bbr
 from .core import (ROOT, InstallError, require, run, write, save, token, free_port,
                    fqdn, download, verify_bundle, extract, wait_for, digest)
 from .geodata import GEODATA_TIMEZONE, verify_server_geodata
@@ -59,7 +60,8 @@ def preflight(args):
               '/etc/systemd/system/nginx.service.d/selfsni.conf',
               '/etc/systemd/system/x-ui.service', '/usr/bin/x-ui',
               '/etc/fail2ban/jail.local', '/etc/fail2ban/jail.d/selfsni-ssh.local',
-              '/etc/apt/sources.list.d/cloudflare-client.list']:
+              '/etc/apt/sources.list.d/cloudflare-client.list', str(bbr.SYSCTL_CONFIG),
+              str(bbr.MODULE_CONFIG)]:
         # The existing official WARP repository is explicitly adopted with WARP.
         if args.adopt_warp and (p.endswith('/cloudflare-client.list') or p == '/root/VPS-Server-Menu'):
             continue
@@ -118,11 +120,13 @@ def preflight(args):
     excluded = set(ssh_ports) | {80,443,40000,62789,11111}
     panel_port = free_port(excluded)
     sub_port = free_port(excluded | {panel_port})
+    bbr_report = bbr.preflight(allow_modprobe=not args.preflight_only)
     return dict(domain=domain, ipv4=public, ubuntu=info['VERSION_ID'], codename=info['VERSION_CODENAME'],
                 arch='amd64' if platform.machine() == 'x86_64' else 'arm64',
                 ssh_ports=sorted(ssh_ports), panel_port=panel_port, sub_port=sub_port,
                 panel_path='/' + token() + '/', sub_path='/' + token() + '/',
                 username='u' + token(8), password=token(24), adopt_warp=args.adopt_warp,
+                bbr_preflight=bbr_report,
                 status='INSTALLING')
 
 def firewall(s, public=False):
@@ -364,7 +368,10 @@ def main():
             run('apt-get','update',timeout=300)
             run('apt-get','install','-y','nginx','certbot','php-fpm','php-cli','curl','openssl',
                 'ufw','fail2ban','nftables','python3','python3-systemd','gnupg','ca-certificates',
-                'dnsutils','bc','jq','qrencode','git',timeout=900)
+                'dnsutils','bc','jq','qrencode','git','iproute2','kmod',timeout=900)
+            stage('TCP BBR congestion control + FQ pacing')
+            s['bbr'] = bbr.configure()
+            save(STATE/'state.json',s)
             firewall(s)
             install_warp(s,lock,work)
             certificate(s,args.email)

@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.3.2 — 2026-10-18
+
+- Добавлена автоматическая настройка стандартного Linux TCP BBR и `fq` через отдельный атомарно записываемый sysctl-файл.
+- Read-only preflight проверяет ядро, доступные congestion controls, тип виртуализации и чужие persistent-конфликты; установка при необходимости загружает и сохраняет штатный `tcp_bbr` module.
+- Ошибка применения восстанавливает исходные runtime-значения и проектные файлы; повторное применение идемпотентно.
+- Acceptance проверяет runtime, persistence, доступность BBR, новый подключённый TCP-сокет, явный per-socket override и диагностирует qdisc внешнего интерфейса.
+- Добавлены 14 mock-регрессий BBR. Полный clean install и reboot v0.3.2 на одноразовой VPS пока не выполнялись.
+- Зафиксирован пользовательский E2E Happ/INCY на физическом iPhone: VPN connection, applied routing and WARP confirmed. Android, DNS leaks, UDP/QUIC и каждое отдельное клиентское правило остаются непроверенными.
+- Старые v0.1.0 evidence Ubuntu 24.04 перенесены в `docs/history/` без изменения содержимого.
+
 ## v0.3.1 — 2026-10-18
 
 - REALITY Unix socket теперь сохраняется как `realitySettings.target`, поэтому поле Target заполнено в редакторе 3x-ui v3.10.2.
