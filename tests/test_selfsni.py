@@ -214,7 +214,10 @@ class FailureTests(unittest.TestCase):
                 self.assertFalse(next_stage.called)
                 self.assertIn('FAILED',out.getvalue())
                 self.assertNotIn('INSTALLATION COMPLETED',out.getvalue())
-                self.assertTrue((state/'FAILED').exists())
+                saved = json.loads((state/'state.json').read_text())
+                self.assertEqual(saved['status'], 'FAILED')
+                self.assertEqual(saved['stage'], 'CERTIFICATE')
+                self.assertEqual(saved['failure'], 'Certbot validation failed')
 
     def test_archive_traversal_refused(self):
         import io,tarfile
