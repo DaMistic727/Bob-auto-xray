@@ -468,13 +468,13 @@ def main():
     parser.add_argument('--adopt-warp', action='store_true')
     parser.add_argument('--preflight-only', action='store_true')
     args = parser.parse_args()
-    if not args.domain:
-        version = (ROOT/'VERSION').read_text().strip()
-        interactive_wizard(args, version)
-    else:
-        args.domain = fqdn(args.domain)
     UI = InstallerUI()
     try:
+        if not args.domain:
+            version = (ROOT/'VERSION').read_text().strip()
+            interactive_wizard(args, version)
+        else:
+            args.domain = fqdn(args.domain)
         lock = verify_bundle()
         if args.preflight_only:
             UI.stage(1, 13, 'Проверка системы')

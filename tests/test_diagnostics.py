@@ -25,6 +25,15 @@ class DiagnosticTests(unittest.TestCase):
             self.assertNotIn('123e4567-e89b-12d3-a456-426614174000', content)
             self.assertEqual(log.stat().st_mode & 0o777, 0o600)
 
+    def test_real_subprocess_timeout_preserves_partial_stdout(self):
+        with self.assertRaises(CommandError) as caught:
+            run(sys.executable, '-c',
+                "import sys,time;sys.stdout.buffer.write(b'ready\\xff\\n');"
+                "sys.stdout.flush();time.sleep(10)", timeout=0.1)
+        self.assertTrue(caught.exception.timed_out)
+        self.assertIsInstance(caught.exception.output, str)
+        self.assertIn('ready', caught.exception.output)
+
 
 if __name__ == '__main__':
     unittest.main()

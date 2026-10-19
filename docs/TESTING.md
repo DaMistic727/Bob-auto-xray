@@ -2,7 +2,7 @@
 
 ## v0.3.4 candidate: installer recovery и VPS-Server-Menu
 
-Локально проходят 59 Python regression tests. Они проверяют APT lock timeout, ожидание фоновых apt/unattended процессов, ограниченный network retry, отдельные dependency/dpkg/systemd/timeout причины, запрет слепого повтора частичного install, root-only redacted log, сохранение credentials, installer flock, разрешённый retry Certbot, отказ resume после других поздних стадий, TTY/non-TTY/NO_COLOR и non-interactive WARP contract.
+Локально проходят 61 Python regression tests. Они проверяют APT lock timeout, сохранение уже выведенного stdout при реальном subprocess timeout, ожидание фоновых apt/unattended процессов, ограниченный network retry, отдельные dependency/dpkg/systemd/timeout причины, запрет слепого повтора частичного install, root-only redacted log, сохранение credentials, installer flock, разрешённый retry Certbot, отказ resume после других поздних стадий, корректный выход interactive wizard без traceback, TTY/non-TTY/NO_COLOR и non-interactive WARP contract.
 
 Read-only диагностика текущей Ubuntu 26.04.1 подтвердила точное пересечение: cloud-init запустил provider `apt-get dist-upgrade` в 05:01:19 и держал dpkg-транзакцию до 05:05:51; v0.3.3 начал свой пакетный этап в 05:01:31 и завершился `apt-get exited 100` в 05:01:36. Старый установщик не сохранил stderr, поэтому конкретная строка lock отсутствует, но одновременная активная dpkg-транзакция подтверждена APT/dpkg/journal. Это делает lock contention наиболее обоснованной причиной, без заявления о прямом stderr-доказательстве.
 

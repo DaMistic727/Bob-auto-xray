@@ -70,6 +70,11 @@ def require(condition, message):
     if not condition:
         raise InstallError(message)
 
+def _output_text(value):
+    if isinstance(value, bytes):
+        return value.decode('utf-8', errors='replace')
+    return value or ''
+
 def run(*args, timeout=180, env=None, input=None):
     # Never print commands: CLI arguments can contain generated credentials.
     try:
@@ -77,7 +82,8 @@ def run(*args, timeout=180, env=None, input=None):
                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                            timeout=timeout, env=env)
     except subprocess.TimeoutExpired as e:
-        output = (e.stdout or '') + (e.stderr or '')
+        # CPython may expose captured timeout output as bytes even with text=True.
+        output = _output_text(e.stdout) + _output_text(e.stderr)
         _log_command(args[0], 'timeout', output)
         raise CommandError(args[0], output=output, timed_out=True) from e
     except OSError as e:
