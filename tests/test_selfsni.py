@@ -193,6 +193,7 @@ class FailureTests(unittest.TestCase):
         from unittest.mock import MagicMock
         with tempfile.TemporaryDirectory() as d:
             state=Path(d)/'state'
+            apt=MagicMock()
             fixture={'domain':'test.example','ipv4':'192.0.2.1','ubuntu':'26.04','codename':'resolute',
                      'arch':'amd64','ssh_ports':[22],'panel_port':21000,'sub_port':22000,
                      'panel_path':'/panel/','sub_path':'/sub/','username':'user',
@@ -201,6 +202,7 @@ class FailureTests(unittest.TestCase):
                  patch.object(provision,'DIAGNOSTIC_LOG',Path(d)/'install.log'), \
                  patch.object(provision,'INSTALL_LOCK',Path(d)/'install.lock'), \
                  patch.object(provision,'preflight',return_value=fixture), \
+                 patch.object(provision,'AptRunner',return_value=apt), \
                  patch.object(provision,'run'), patch.object(provision,'firewall'), \
                  patch.object(provision.bbr,'configure',return_value={}), \
                  patch.object(provision,'install_warp'), \
