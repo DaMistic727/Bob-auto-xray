@@ -11,11 +11,60 @@ import tarfile
 import tempfile
 import time
 import urllib.request
+import re
 
 ROOT = Path(__file__).resolve().parents[2]
 
 class InstallError(RuntimeError):
     pass
+
+class CommandError(InstallError):
+    def __init__(self, command, returncode=None, output='', timed_out=False):
+        self.command = Path(str(command)).name
+        self.returncode = returncode
+        self.output = output or ''
+        self.timed_out = timed_out
+        detail = 'timed out' if timed_out else f'exited {returncode}'
+        super().__init__(f'{self.command} {detail}')
+
+_DIAGNOSTIC_LOG = None
+_SECRETS = set()
+
+def configure_diagnostics(path=None, secrets=()):
+    """Enable a root-only command transcript without recording command arguments."""
+    global _DIAGNOSTIC_LOG, _SECRETS
+    _DIAGNOSTIC_LOG = Path(path) if path else None
+    _SECRETS = {str(x) for x in secrets if x}
+    if _DIAGNOSTIC_LOG:
+        _DIAGNOSTIC_LOG.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(_DIAGNOSTIC_LOG, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        os.close(fd)
+        _DIAGNOSTIC_LOG.chmod(0o600)
+
+def register_secrets(*values):
+    _SECRETS.update(str(x) for x in values if x)
+
+def redact(value):
+    text = str(value)
+    for secret in sorted(_SECRETS, key=len, reverse=True):
+        text = text.replace(secret, '[REDACTED]')
+    text = re.sub(r'(?i)(password|token|private.?key|uuid)(\s*[:=]\s*)\S+',
+                  r'\1\2[REDACTED]', text)
+    text = re.sub(r'\b[0-9a-f]{8}-[0-9a-f-]{27,}\b', '[REDACTED-UUID]', text,
+                  flags=re.I)
+    text = re.sub(r'\b[A-Za-z0-9_-]{32,}\b', '[REDACTED-VALUE]', text)
+    return text
+
+def _log_command(command, returncode, output):
+    if not _DIAGNOSTIC_LOG:
+        return
+    stamp = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+    body = redact(output).rstrip()
+    with _DIAGNOSTIC_LOG.open('a') as log:
+        log.write(f'[{stamp}] {Path(str(command)).name} exit={returncode}\n')
+        if body:
+            log.write(body + '\n')
+    _DIAGNOSTIC_LOG.chmod(0o600)
 
 def require(condition, message):
     if not condition:
@@ -27,11 +76,16 @@ def run(*args, timeout=180, env=None, input=None):
         p = subprocess.run([str(a) for a in args], input=input, text=True,
                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                            timeout=timeout, env=env)
-    except (subprocess.TimeoutExpired, OSError) as e:
-        raise InstallError(f'{Path(str(args[0])).name}: {type(e).__name__}') from e
+    except subprocess.TimeoutExpired as e:
+        output = (e.stdout or '') + (e.stderr or '')
+        _log_command(args[0], 'timeout', output)
+        raise CommandError(args[0], output=output, timed_out=True) from e
+    except OSError as e:
+        _log_command(args[0], 'os-error', str(e))
+        raise CommandError(args[0], output=str(e)) from e
+    _log_command(args[0], p.returncode, p.stdout)
     if p.returncode:
-        # Output can contain keys, upstream install credentials or subscription IDs.
-        raise InstallError(f'{Path(str(args[0])).name} exited {p.returncode}')
+        raise CommandError(args[0], p.returncode, p.stdout)
     return p.stdout
 
 def write(path, content, mode=0o600):

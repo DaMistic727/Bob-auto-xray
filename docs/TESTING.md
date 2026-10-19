@@ -1,4 +1,16 @@
-# Отчёт о тестировании · 18 октября 2026
+# Отчёт о тестировании · 19 октября 2026
+
+## v0.3.4 candidate: installer recovery и VPS-Server-Menu
+
+Локально проходят 58 Python regression tests. Они проверяют APT lock timeout, ожидание фоновых apt/unattended процессов, ограниченный network retry, отдельные dependency/dpkg/systemd/timeout причины, запрет слепого повтора частичного install, root-only redacted log, сохранение credentials, installer flock, отказ resume после поздних стадий, TTY/non-TTY/NO_COLOR и non-interactive WARP contract.
+
+Read-only диагностика текущей Ubuntu 26.04.1 подтвердила точное пересечение: cloud-init запустил provider `apt-get dist-upgrade` в 05:01:19 и держал dpkg-транзакцию до 05:05:51; v0.3.3 начал свой пакетный этап в 05:01:31 и завершился `apt-get exited 100` в 05:01:36. Старый установщик не сохранил stderr, поэтому конкретная строка lock отсутствует, но одновременная активная dpkg-транзакция подтверждена APT/dpkg/journal. Это делает lock contention наиболее обоснованной причиной, без заявления о прямом stderr-доказательстве.
+
+На VPS отсутствуют nginx, Certbot, 3x-ui, VPS-Server-Menu, WARP и Fail2ban; UFW неактивен, `dpkg --audit` чист, TCP слушают только SSH и local resolver. Legacy state содержит только сгенерированные v0.3.3 параметры, `FAILED` и progress log. Установлено обновлённое ядро, система требует reboot. Для этой точной сигнатуры добавлена migration в новый `APT_UPDATE`; она не меняет legacy state до успешного read-only preflight и отказывается, если обнаружен любой управляемый путь.
+
+VPS-Server-Menu получил отдельный upstream PR с командами `server-menu warp install|health|xray-outbound`, JSON health и exit codes 0/2/3. Его offline mocks проверяют сохранение существующей регистрации, создание отсутствующей регистрации, proxy/port до connect, отсутствие автоматического WARPSCOUT, отсутствие cron, loopback-only listener и pinned install с сохранённым `.git` без `.bashrc`.
+
+Текущий lock Bob временно указывает на точный commit ветки upstream PR из fork автора. Перед готовностью v0.3.4 его необходимо заменить merge commit официального `Diman6267/VPS-Server-Menu` и новым codeload SHA256. Clean-install/resume/reboot E2E v0.3.4 ещё не выполнен; предыдущие доказательства v0.3.3 не приписываются новому архиву.
 
 ## v0.3.2: TCP BBR/FQ
 

@@ -21,6 +21,9 @@ class InstallerTests(unittest.TestCase):
     def test_bundle_checksums(self):
         lock=verify_bundle()
         self.assertEqual(lock['xui_version'],'v3.10.2')
+        self.assertEqual(lock['menu_commit'],'a84dfe03191e72c8853959ad47e5f816b0118b4b')
+        self.assertEqual(lock['downloads']['menu.tar.gz']['sha256'],
+                         'd0497cccd2ff93feb5dba18d453286de027cd09b05ca5febc57818ad27ad2aeb')
         self.assertEqual(set(lock['server_geodata']['files']), set(REQUIRED))
 
     def test_profiles_and_http_contract(self):
@@ -190,9 +193,16 @@ class FailureTests(unittest.TestCase):
         from unittest.mock import MagicMock
         with tempfile.TemporaryDirectory() as d:
             state=Path(d)/'state'
+            fixture={'domain':'test.example','ipv4':'192.0.2.1','ubuntu':'26.04','codename':'resolute',
+                     'arch':'amd64','ssh_ports':[22],'panel_port':21000,'sub_port':22000,
+                     'panel_path':'/panel/','sub_path':'/sub/','username':'user',
+                     'password':'password','adopt_warp':False,'bbr_preflight':{},'status':'INSTALLING'}
             with patch.object(provision,'STATE',state), patch.object(provision,'verify_bundle',return_value={}), \
-                 patch.object(provision,'preflight',return_value={'status':'INSTALLING'}), \
+                 patch.object(provision,'DIAGNOSTIC_LOG',Path(d)/'install.log'), \
+                 patch.object(provision,'INSTALL_LOCK',Path(d)/'install.lock'), \
+                 patch.object(provision,'preflight',return_value=fixture), \
                  patch.object(provision,'run'), patch.object(provision,'firewall'), \
+                 patch.object(provision.bbr,'configure',return_value={}), \
                  patch.object(provision,'install_warp'), \
                  patch.object(provision,'certificate',side_effect=InstallError('Certbot validation failed')), \
                  patch.object(provision,'decoy') as next_stage, \
@@ -215,6 +225,26 @@ class FailureTests(unittest.TestCase):
 
 
 class PreflightOwnershipTests(unittest.TestCase):
+    def test_preflight_only_creates_no_state_log_or_lock(self):
+        import selfsni.provision as provision
+        import contextlib,io
+        with tempfile.TemporaryDirectory() as d:
+            state=Path(d)/'state'; log=Path(d)/'install.log'; lock=Path(d)/'install.lock'
+            with patch.object(provision,'STATE',state), \
+                 patch.object(provision,'DIAGNOSTIC_LOG',log), \
+                 patch.object(provision,'INSTALL_LOCK',lock), \
+                 patch.object(provision,'verify_bundle',return_value={}), \
+                 patch.object(provision,'preflight',return_value={}) as check, \
+                 patch.object(provision,'InstallerLock') as installer_lock, \
+                 patch('sys.argv',['install','--domain','test.example','--preflight-only']), \
+                 contextlib.redirect_stdout(io.StringIO()):
+                provision.main()
+            check.assert_called_once()
+            installer_lock.assert_not_called()
+            self.assertFalse(state.exists())
+            self.assertFalse(log.exists())
+            self.assertFalse(lock.exists())
+
     def test_existing_state_is_not_modified_on_refusal(self):
         import selfsni.provision as provision
         import contextlib,io

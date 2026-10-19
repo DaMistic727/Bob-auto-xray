@@ -16,7 +16,7 @@ fi
 [[ $SELFSNI_RELEASE_SHA256 =~ ^[a-f0-9]{64}$ ]] || exit 2
 work=$(mktemp -d)
 trap 'rm -r -- "$work"' EXIT
-curl --fail --location --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 180 \
+curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 180 \
     "$SELFSNI_RELEASE_URL" -o "$work/release.tar.gz"
 printf '%s  %s\n' "$SELFSNI_RELEASE_SHA256" "$work/release.tar.gz" | sha256sum -c - >/dev/null
 python3 - "$work" <<'PY'
