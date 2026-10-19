@@ -214,7 +214,9 @@ class FailureTests(unittest.TestCase):
                 self.assertFalse(next_stage.called)
                 self.assertIn('FAILED',out.getvalue())
                 self.assertNotIn('INSTALLATION COMPLETED',out.getvalue())
-                saved = json.loads((state/'state.json').read_text())
+                state_file = state/'state.json'
+                self.assertTrue(state_file.exists(), out.getvalue())
+                saved = json.loads(state_file.read_text())
                 self.assertEqual(saved['status'], 'FAILED')
                 self.assertEqual(saved['stage'], 'CERTIFICATE')
                 self.assertEqual(saved['failure'], 'Certbot validation failed')
