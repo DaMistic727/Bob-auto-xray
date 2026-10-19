@@ -14,14 +14,22 @@ import time
 
 from .api import Panel, request
 from . import bbr
-from .core import (ROOT, InstallError, require, run, write, save, token, free_port,
+from .core import (ROOT, CommandError, InstallError, configure_diagnostics, redact,
+                   register_secrets, require, run, write, save, token, free_port,
                    fqdn, download, verify_bundle, extract, wait_for, digest)
+from .apt import AptRunner
+from .install_state import (InstallerLock, checkpoint, fail, initialize, load,
+                            upgrade_legacy_apt_failure, validate_resume)
+from .ui import InstallerUI, interactive_wizard
 from .geodata import GEODATA_TIMEZONE, verify_server_geodata
 from .portal import generate
 from .routing import deeplink, inbound, server_template
 
 STATE = Path('/var/lib/selfsni')
+DIAGNOSTIC_LOG = Path('/var/log/bob-auto-xray/install.log')
+INSTALL_LOCK = Path('/run/lock/bob-auto-xray-install.lock')
 LOG_ENABLED = False
+UI = None
 
 def stage(message):
     print('[selfsni] ' + message, flush=True)
@@ -47,27 +55,59 @@ def os_info(path='/etc/os-release'):
     require(platform.machine() in ('x86_64', 'aarch64'), 'Supported architectures: amd64, arm64')
     return values
 
-def preflight(args):
+CONTROLLED_PATHS = [
+    '/usr/local/x-ui', '/etc/x-ui', '/root/VPS-Server-Menu', '/etc/nginx',
+    '/etc/letsencrypt', '/var/www/selfsni', '/var/lib/selfsni-acme', '/run/selfsni',
+    '/etc/tmpfiles.d/selfsni.conf', '/etc/systemd/system/x-ui.service.d',
+    '/etc/systemd/system/nginx.service.d/selfsni.conf',
+    '/etc/systemd/system/x-ui.service', '/usr/bin/x-ui', '/etc/fail2ban/jail.local',
+    '/etc/fail2ban/jail.d/selfsni-ssh.local',
+    '/etc/apt/sources.list.d/cloudflare-client.list', str(bbr.SYSCTL_CONFIG),
+    str(bbr.MODULE_CONFIG),
+]
+
+
+def preflight(args, resume_state=None):
     require(os.geteuid() == 0, 'Run as root on the test/clean VPS')
     info = os_info()
     require(Path('/run/systemd/system').exists(), 'systemd is required')
     require(Path('/dev/net/tun').exists(), '/dev/net/tun is required for WARP')
     require(shutil.disk_usage('/').free >= 2 * 1024**3, 'At least 2 GiB free disk required')
-    for p in [str(STATE), '/usr/local/x-ui', '/etc/x-ui', '/root/VPS-Server-Menu',
-              '/etc/nginx', '/etc/letsencrypt', '/var/www/selfsni', '/var/lib/selfsni-acme',
-              '/run/selfsni', '/etc/tmpfiles.d/selfsni.conf',
-              '/etc/systemd/system/x-ui.service.d',
-              '/etc/systemd/system/nginx.service.d/selfsni.conf',
-              '/etc/systemd/system/x-ui.service', '/usr/bin/x-ui',
-              '/etc/fail2ban/jail.local', '/etc/fail2ban/jail.d/selfsni-ssh.local',
-              '/etc/apt/sources.list.d/cloudflare-client.list', str(bbr.SYSCTL_CONFIG),
-              str(bbr.MODULE_CONFIG)]:
+    for p in [str(STATE), *CONTROLLED_PATHS]:
+        if resume_state and p == str(STATE):
+            continue
+        if resume_state and resume_state.get('stage') in ('APT_INSTALL', 'WARP', 'CERTIFICATE') and \
+                p in resume_state.get('absent_paths', ()):
+            allowed_resume_paths = {'/etc/nginx', '/etc/letsencrypt'}
+            if resume_state.get('stage') in ('WARP', 'CERTIFICATE'):
+                allowed_resume_paths.update({'/root/VPS-Server-Menu',
+                    '/etc/apt/sources.list.d/cloudflare-client.list',
+                    str(bbr.SYSCTL_CONFIG), str(bbr.MODULE_CONFIG)})
+            if resume_state.get('stage') == 'CERTIFICATE':
+                allowed_resume_paths.add('/var/lib/selfsni-acme')
+            if p in allowed_resume_paths:
+                if p == '/etc/nginx':
+                    enabled = Path('/etc/nginx/sites-enabled')
+                    entries = list(enabled.iterdir()) if enabled.exists() else []
+                    expected = {'selfsni-http'} if resume_state.get('stage') == 'CERTIFICATE' else {'default'}
+                    require(all(x.name in expected for x in entries),
+                            'Чужая nginx-конфигурация обнаружена во время resume')
+                if p == '/etc/letsencrypt':
+                    le = Path('/etc/letsencrypt')
+                    foreign = [x for name in ('live', 'archive', 'renewal')
+                               for x in (le/name).glob('*')] if le.exists() else []
+                    require(not foreign,
+                            'Чужие Let’s Encrypt certificates обнаружены во время resume')
+                continue
         # The existing official WARP repository is explicitly adopted with WARP.
         if args.adopt_warp and (p.endswith('/cloudflare-client.list') or p == '/root/VPS-Server-Menu'):
             continue
         require(not Path(p).exists(), 'Existing installation/configuration: ' + p)
     warp_present = shutil.which('warp-cli') is not None
-    require(not warp_present or args.adopt_warp, 'Existing WARP: needs explicit --adopt-warp')
+    warp_resume = bool(resume_state and resume_state.get('stage') in ('WARP', 'CERTIFICATE'))
+    certificate_resume = bool(resume_state and resume_state.get('stage') == 'CERTIFICATE')
+    require(not warp_present or args.adopt_warp or warp_resume,
+            'Existing WARP: needs explicit --adopt-warp')
     require(not args.adopt_warp or warp_present, '--adopt-warp requires an existing installation')
     # Socket activation may expose ports absent from sshd_config; preserve both.
     ssh_ports = set()
@@ -86,12 +126,16 @@ def preflight(args):
         ssh_ports.add(args.ssh_port)
     require(bool(ssh_ports) and all(1 <= x <= 65535 for x in ssh_ports), 'Cannot detect SSH port')
     allowed = ssh_ports | {53}
-    if args.adopt_warp:
+    if args.adopt_warp or warp_resume:
         allowed.add(40000)
+    if certificate_resume:
+        allowed.add(80)
     for line in listeners.splitlines():
         port = int(line.split()[3].rsplit(':', 1)[1])
         require(port in allowed, f'Foreign TCP listener on port {port}')
     for port in [80,443,62789,11111]:
+        if certificate_resume and port == 80:
+            continue
         with socket.socket() as s:
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
@@ -103,7 +147,9 @@ def preflight(args):
             for line in Path('/etc/ufw', name).read_text().splitlines():
                 if line.startswith('-A ufw-user-input '):
                     match = re.fullmatch(r'-A ufw-user-input -p tcp --dport (\d+) -j ACCEPT', line)
-                    require(match is not None and int(match.group(1)) in ssh_ports, 'Existing non-SSH UFW rules')
+                    resume_ports = {80, 443} if warp_resume else set()
+                    require(match is not None and int(match.group(1)) in ssh_ports | resume_ports,
+                            'Existing non-SSH UFW rules')
     domain = fqdn(args.domain)
     addresses = {x[4][0] for x in socket.getaddrinfo(domain, 80, type=socket.SOCK_STREAM)}
     v4 = {x for x in addresses if ipaddress.ip_address(x).version == 4}
@@ -118,18 +164,33 @@ def preflight(args):
         public6 = run('curl', '-6fsS', '--connect-timeout', '10', '--max-time', '20', 'https://api6.ipify.org').strip()
         require(public6 in v6, 'AAAA IPv6 connectivity is not verified')
     excluded = set(ssh_ports) | {80,443,40000,62789,11111}
-    panel_port = free_port(excluded)
-    sub_port = free_port(excluded | {panel_port})
+    if resume_state:
+        panel_port = int(resume_state['panel_port'])
+        sub_port = int(resume_state['sub_port'])
+        require(panel_port not in excluded and sub_port not in excluded,
+                'Сохранённые порты конфликтуют с системными')
+    else:
+        panel_port = free_port(excluded)
+        sub_port = free_port(excluded | {panel_port})
     # Keep all preflight modes read-only. kmod is installed below before
     # configure() may need modprobe on a minimal Ubuntu image.
     bbr_report = bbr.preflight()
-    return dict(domain=domain, ipv4=public, ubuntu=info['VERSION_ID'], codename=info['VERSION_CODENAME'],
+    credentials = (dict(panel_path=resume_state['panel_path'], sub_path=resume_state['sub_path'],
+                        username=resume_state['username'], password=resume_state['password'])
+                   if resume_state else
+                   dict(panel_path='/' + token() + '/', sub_path='/' + token() + '/',
+                        username='u' + token(8), password=token(24)))
+    fresh = dict(domain=domain, ipv4=public, ubuntu=info['VERSION_ID'], codename=info['VERSION_CODENAME'],
                 arch='amd64' if platform.machine() == 'x86_64' else 'arm64',
                 ssh_ports=sorted(ssh_ports), panel_port=panel_port, sub_port=sub_port,
-                panel_path='/' + token() + '/', sub_path='/' + token() + '/',
-                username='u' + token(8), password=token(24), adopt_warp=args.adopt_warp,
-                bbr_preflight=bbr_report,
+                adopt_warp=args.adopt_warp, bbr_preflight=bbr_report, **credentials,
                 status='INSTALLING')
+    if resume_state:
+        preserved = ('panel_path', 'sub_path', 'username', 'password', 'panel_port', 'sub_port',
+                     'installation_id', 'schema', 'absent_paths', 'resume_count', 'stage',
+                     'last_completed_stage', 'legacy_resume')
+        fresh.update({key: resume_state[key] for key in preserved if key in resume_state})
+    return fresh
 
 def firewall(s, public=False):
     for port in s['ssh_ports']:
@@ -150,44 +211,91 @@ def install_apt_key(source, target):
     Path(target).chmod(0o644)
 
 
-def install_warp(s, lock, work):
-    stage('WARP: validate/adapt VPS-Server-Menu proxy configuration')
-    if not s['adopt_warp']:
-        key = '/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg'
-        install_apt_key(ROOT / 'vendor/cloudflare-pubkey.gpg', key)
-        write('/etc/apt/sources.list.d/cloudflare-client.list',
-              f'deb [arch={s["arch"]} signed-by={key}] https://pkg.cloudflareclient.com/ {s["codename"]} main\n', 0o644)
-        run('apt-get', 'update', timeout=300)
-        require('Candidate: (none)' not in run('apt-cache', 'policy', 'cloudflare-warp'),
-                'No official WARP package for this Ubuntu/architecture')
-        run('apt-get', 'install', '-y', 'cloudflare-warp', timeout=600)
-        run('systemctl', 'enable', '--now', 'warp-svc')
-        wait_for(lambda: run('warp-cli', '--accept-tos', 'registration', 'new') is not None, 'WARP registration')
-        for command in [('mode','proxy'), ('proxy','port','40000'), ('connect',)]:
-            run('warp-cli', '--accept-tos', *command)
+def _tree_manifest(root):
+    root = Path(root)
+    result = {}
+    for path in sorted(root.rglob('*')):
+        if '.git' in path.parts or not path.is_file():
+            continue
+        result[str(path.relative_to(root))] = digest(path)
+    return result
+
+
+def _health_json(output):
+    starts = [0] + [match.end() for match in re.finditer(r'\n(?=\{)', output)]
+    for start in reversed(starts):
+        try:
+            value = json.loads(output[start:])
+            if isinstance(value, dict) and 'status' in value:
+                return value
+        except json.JSONDecodeError:
+            pass
+    raise InstallError('VPS-Server-Menu вернул некорректный health JSON')
+
+
+def _menu_warp(*arguments):
+    try:
+        output = run('/usr/local/bin/server-menu', 'warp', *arguments, timeout=1200)
+    except CommandError as error:
+        health = _health_json(error.output) if '{' in error.output else None
+        if health:
+            raise InstallError(f'WARP {health["status"]}: {health.get("reason", "без причины")}') from error
+        raise
+    return _health_json(output)
+
+
+def install_menu(lock, work):
+    target = Path('/root/VPS-Server-Menu')
+    commit = lock['menu_commit']
+    if target.exists():
+        require((target/'.git').is_dir(), 'Existing VPS-Server-Menu is not a Git checkout')
+        require(run('git','-C',target,'rev-parse','HEAD').strip() == commit,
+                'Existing menu has a different revision')
+        require(not run('git','-c','core.filemode=false','-C',target,'diff','HEAD','--').strip(),
+                'Existing menu has local changes')
     else:
-        settings = run('warp-cli', '--accept-tos', 'settings')
-        require('proxy' in settings.lower(), 'Existing WARP is not in proxy mode')
-        run('systemctl', 'enable', 'warp-svc')
+        spec = lock['downloads']['menu.tar.gz']
+        archive = download(spec['url'], work / 'menu.tgz', spec['sha256'])
+        unpacked = work / 'menu-archive'
+        unpacked.mkdir()
+        extract(archive, unpacked)
+        source = next(unpacked.iterdir())
+        for path in source.iterdir():
+            if path.is_file() and (path.suffix == '.sh' or path.name in ('server-menu','ipv6-menu')):
+                destination = Path('/usr/local/bin') / path.name
+                require(not destination.exists() and not destination.is_symlink(),
+                        'Foreign menu command: ' + str(destination))
+        target.mkdir(mode=0o700)
+        repository = lock.get('menu_repository', 'https://github.com/Diman6267/VPS-Server-Menu.git')
+        run('git', '-C', target, 'init')
+        run('git', '-C', target, 'remote', 'add', 'origin', repository)
+        run('git', '-C', target, 'fetch', '--depth=1', 'origin', commit, timeout=300)
+        run('git', '-C', target, 'checkout', '--detach', 'FETCH_HEAD')
+        require(run('git','-C',target,'rev-parse','HEAD').strip() == commit,
+                'Fetched menu revision mismatch')
+        require(_tree_manifest(source) == _tree_manifest(target),
+                'Menu Git checkout differs from the SHA256-pinned archive')
+    run('bash', target/'install.sh', '--non-interactive', '--no-autostart',
+        '--source-dir', target, '--pinned-commit', commit, timeout=900)
+    require(Path('/usr/local/bin/server-menu').is_symlink(), 'server-menu link was not installed')
+
+
+def install_warp(s, lock, work):
+    stage('WARP: VPS-Server-Menu non-interactive API')
+    install_menu(lock, work)
+    if s['adopt_warp']:
+        health = _menu_warp('health', '--port', '40000', '--json')
+    else:
+        health = _menu_warp('install', '--port', '40000', '--json')
+        health = _menu_warp('health', '--port', '40000', '--json')
+    require(health.get('status') == 'HEALTHY',
+            f'WARP {health.get("status", "UNKNOWN")}: {health.get("reason", "без причины")}')
+    require(health.get('mode') == 'proxy' and health.get('port') == 40000,
+            'VPS-Server-Menu подтвердил неожиданный WARP mode/port')
+    # Independent functional acceptance confirms the actual routed SOCKS5 path.
     from .acceptance import check_warp
-    wait_for(check_warp, 'WARP SOCKS5 functional trace')
-    if Path('/root/VPS-Server-Menu').exists():
-        require(run('git','-C','/root/VPS-Server-Menu','rev-parse','HEAD').strip() == lock['menu_commit'], 'Existing menu has a different revision')
-        require(not run('git','-c','core.filemode=false','-C','/root/VPS-Server-Menu','diff','HEAD','--').strip(), 'Existing menu has local changes')
-        return
-    spec = lock['downloads']['menu.tar.gz']
-    archive = download(spec['url'], work / 'menu.tgz', spec['sha256'])
-    menu_dir = work / 'menu'
-    menu_dir.mkdir()
-    extract(archive, menu_dir)
-    source = next(menu_dir.iterdir())
-    shutil.copytree(source, '/root/VPS-Server-Menu')
-    for p in Path('/root/VPS-Server-Menu').iterdir():
-        if p.is_file() and (p.suffix == '.sh' or p.name in ('server-menu','ipv6-menu')):
-            p.chmod(0o755)
-            target = Path('/usr/local/bin') / p.name
-            require(not target.exists() and not target.is_symlink(), 'Foreign menu command: ' + str(target))
-            target.symlink_to(p)
+    check_warp()
+    s['warp_health'] = health
 
 def certificate(s, email):
     stage('nginx + Certbot HTTP-01 webroot')
@@ -198,10 +306,16 @@ def certificate(s, email):
     cfg = render('nginx-http.conf', {'DOMAIN': s['domain']}).replace('/var/lib/selfsni/acme','/var/lib/selfsni-acme')
     write('/etc/nginx/sites-available/selfsni-http', cfg, 0o644)
     default = Path('/etc/nginx/sites-enabled/default')
-    # This symlink was installed by apt in this run, not an existing configuration.
-    require(default.is_symlink(), 'Unexpected nginx default site')
-    default.unlink()
-    Path('/etc/nginx/sites-enabled/selfsni-http').symlink_to('/etc/nginx/sites-available/selfsni-http')
+    enabled = Path('/etc/nginx/sites-enabled/selfsni-http')
+    if default.exists() or default.is_symlink():
+        # This symlink was installed by apt in this run, not an existing configuration.
+        require(default.is_symlink(), 'Unexpected nginx default site')
+        default.unlink()
+    if enabled.exists() or enabled.is_symlink():
+        require(enabled.is_symlink() and enabled.resolve() == Path('/etc/nginx/sites-available/selfsni-http'),
+                'Unexpected Self-SNI HTTP site')
+    else:
+        enabled.symlink_to('/etc/nginx/sites-available/selfsni-http')
     run('nginx', '-t')
     run('systemctl', 'enable', '--now', 'nginx')
     run('systemctl', 'reload', 'nginx')
@@ -211,7 +325,13 @@ def certificate(s, email):
         cmd += ['--email', email]
     else:
         cmd += ['--register-unsafely-without-email']
-    run(*cmd, timeout=300)
+    try:
+        run(*cmd, timeout=300)
+    except CommandError as error:
+        details = [line.strip() for line in redact(error.output).splitlines()
+                   if re.search(r'(?i)(error|too many certificates|retry after|unauthorized|challenge)', line)]
+        suffix = ': ' + ' | '.join(details[-4:]) if details else ''
+        raise InstallError(f'Certbot exited {error.returncode}{suffix}') from error
     run('systemctl', 'enable', '--now', 'certbot.timer')
 
 def decoy(s):
@@ -273,6 +393,7 @@ def panel(s, lock, work):
     match = re.search(r'^apiToken:\s*(\S+)', output, re.M)
     require(match is not None, 'Official CLI API-token response changed')
     s['api_token'] = match.group(1)
+    register_secrets(s['api_token'])
     save(STATE/'state.json',s)
     configure_panel(s, lock)
 
@@ -312,6 +433,7 @@ def configure_panel(s, lock):
     s['reality_private'] = private.group(1)
     s['reality_public'] = public.group(1)
     s['short_id'] = token(8)
+    register_secrets(s['reality_private'], s['reality_public'], s['short_id'])
     save(STATE/'state.json',s)
     api.call('inbounds/add', inbound(s['domain'], s['reality_private'], s['reality_public'], s['short_id']))
     run('systemctl','restart','x-ui')
@@ -336,66 +458,124 @@ def renew_hook(s):
     run('certbot','renew','--dry-run','--run-deploy-hooks','--no-random-sleep-on-renew',timeout=600)
 
 def main():
-    global LOG_ENABLED
+    global LOG_ENABLED, UI
     owns_state = False
-    parser = argparse.ArgumentParser(description='One-shot VLESS REALITY Self-SNI installer')
+    state = None
+    parser = argparse.ArgumentParser(description='Bob Auto Xray VLESS REALITY Self-SNI installer')
     parser.add_argument('--domain')
     parser.add_argument('--email', default='')
     parser.add_argument('--ssh-port', type=int)
     parser.add_argument('--adopt-warp', action='store_true')
     parser.add_argument('--preflight-only', action='store_true')
     args = parser.parse_args()
-    if not args.domain:
-        with open('/dev/tty') as tty:
-            print('Server FQDN: ', end='', flush=True)
-            args.domain = tty.readline().strip()
-            print('Let’s Encrypt email (optional): ', end='', flush=True)
-            args.email = tty.readline().strip()
+    UI = InstallerUI()
     try:
+        if not args.domain:
+            version = (ROOT/'VERSION').read_text().strip()
+            interactive_wizard(args, version)
+        else:
+            args.domain = fqdn(args.domain)
         lock = verify_bundle()
-        stage('Preflight: OS, clean host, SSH, listeners, DNS, network')
-        s = preflight(args)
         if args.preflight_only:
+            UI.stage(1, 13, 'Проверка системы')
+            preflight(args)
+            UI.stage(1, 13, 'Проверка системы', 'ok')
             stage('PREFLIGHT PASSED; no configuration changed')
             return
-        STATE.mkdir(mode=0o700)
-        owns_state = True
-        LOG_ENABLED = True
-        os.umask(0o077)
-        save(STATE/'state.json',s)
-        with tempfile.TemporaryDirectory(prefix='selfsni-') as wd:
-            work = Path(wd)
-            stage('Install distribution packages')
-            os.environ['DEBIAN_FRONTEND'] = 'noninteractive'
-            run('apt-get','update',timeout=300)
-            run('apt-get','install','-y','nginx','certbot','php-fpm','php-cli','curl','openssl',
-                'ufw','fail2ban','nftables','python3','python3-systemd','gnupg','ca-certificates',
-                'dnsutils','bc','jq','qrencode','git','iproute2','kmod',timeout=900)
-            stage('TCP BBR congestion control + FQ pacing')
-            s['bbr'] = bbr.configure()
+        with InstallerLock(INSTALL_LOCK):
+            previous = load(STATE)
+            if previous:
+                previous = upgrade_legacy_apt_failure(previous, STATE, CONTROLLED_PATHS)
+                previous = validate_resume(previous, args.domain, args.adopt_warp)
+                require(not args.email or args.email == previous.get('email', ''),
+                        'Для продолжения используйте исходный Let’s Encrypt email')
+                args.email = previous.get('email', '')
+            UI.stage(1, 13, 'Проверка системы')
+            stage('Preflight: OS, ownership, SSH, listeners, DNS, network')
+            s = preflight(args, previous)
+            s['email'] = args.email
+            UI.stage(1, 13, 'Проверка системы', 'ok')
+            os.umask(0o077)
+            if previous:
+                s['status'] = 'INSTALLING'
+            else:
+                absent = [path for path in CONTROLLED_PATHS if not Path(path).exists()]
+                s = initialize(s, absent)
+                STATE.mkdir(mode=0o700)
+            owns_state = True
+            LOG_ENABLED = True
+            configure_diagnostics(DIAGNOSTIC_LOG, (s['username'], s['password'],
+                                                   s['panel_path'], s['sub_path']))
             save(STATE/'state.json',s)
-            firewall(s)
-            install_warp(s,lock,work)
-            certificate(s,args.email)
-            decoy(s)
-            panel(s,lock,work)
-            save(STATE/'state.json',s)
-            security(s)
-            renew_hook(s)
-            firewall(s,public=True)
-            from .acceptance import verify
-            report = verify(s)
-            save(STATE/'acceptance.json',report)
-            require(all(x['passed'] for x in report['checks']), 'Acceptance failed; inspect /var/lib/selfsni/acceptance.json')
-            s['status'] = 'HEALTHY_LOCAL'
-            s['versions'] = run('dpkg-query','-W','nginx','php-fpm','certbot','cloudflare-warp','fail2ban','ufw')
-            save(STATE/'state.json',s)
-            (STATE/'FAILED').unlink(missing_ok=True)
+            packages = ['nginx','certbot','php-fpm','php-cli','curl','openssl','ufw',
+                        'fail2ban','nftables','python3','python3-systemd','gnupg',
+                        'ca-certificates','dnsutils','bc','jq','qrencode','git','iproute2','kmod']
+            apt = AptRunner(run, notify=UI.note)
+            resume_target = s.get('stage')
+            apt_steps = [('APT_UPDATE', 2, 'Обновление индексов APT', apt.update),
+                         ('APT_UPGRADE', 3, 'Обновление Ubuntu', apt.upgrade),
+                         ('APT_INSTALL', 4, 'Установка зависимостей', lambda: apt.install(packages))]
+            resume_index = next((i for i, item in enumerate(apt_steps)
+                                 if item[0] == s.get('stage')), len(apt_steps))
+            for name, number, label, action in apt_steps[resume_index:]:
+                checkpoint(STATE, s, name)
+                UI.stage(number, 13, label)
+                action()
+                checkpoint(STATE, s, name, completed=True)
+                UI.stage(number, 13, label, 'ok')
+            if Path('/var/run/reboot-required').exists():
+                UI.note('Ubuntu сообщает о необходимости reboot; автоматическая перезагрузка отключена.')
+            with tempfile.TemporaryDirectory(prefix='selfsni-') as wd:
+                work = Path(wd)
+                if resume_target not in ('WARP', 'CERTIFICATE'):
+                    checkpoint(STATE, s, 'BBR'); UI.stage(5, 13, 'TCP BBR и FQ')
+                    s['bbr'] = bbr.configure(); checkpoint(STATE, s, 'BBR', True)
+                    checkpoint(STATE, s, 'FIREWALL'); UI.stage(6, 13, 'Firewall')
+                    firewall(s); checkpoint(STATE, s, 'FIREWALL', True)
+                if resume_target != 'CERTIFICATE':
+                    checkpoint(STATE, s, 'WARP'); UI.stage(7, 13, 'VPS-Server-Menu и WARP')
+                    install_warp(s,lock,work); checkpoint(STATE, s, 'WARP', True)
+                else:
+                    health = _menu_warp('health', '--port', '40000', '--json')
+                    require(health.get('status') == 'HEALTHY',
+                            f'WARP {health.get("status", "UNKNOWN")}: {health.get("reason", "без причины")}')
+                    from .acceptance import check_warp
+                    check_warp()
+                checkpoint(STATE, s, 'CERTIFICATE'); UI.stage(8, 13, 'Сертификат')
+                certificate(s,s['email']); checkpoint(STATE, s, 'CERTIFICATE', True)
+                checkpoint(STATE, s, 'NGINX_PORTAL'); UI.stage(9, 13, 'Self-SNI portal')
+                decoy(s); checkpoint(STATE, s, 'NGINX_PORTAL', True)
+                checkpoint(STATE, s, 'PANEL'); UI.stage(10, 13, '3x-ui')
+                panel(s,lock,work); checkpoint(STATE, s, 'PANEL', True)
+                checkpoint(STATE, s, 'SECURITY'); UI.stage(11, 13, 'Fail2ban и renew hook')
+                security(s); renew_hook(s); firewall(s,public=True)
+                checkpoint(STATE, s, 'SECURITY', True)
+                checkpoint(STATE, s, 'ACCEPTANCE'); UI.stage(12, 13, 'Acceptance checks')
+                from .acceptance import verify
+                report = verify(s)
+                save(STATE/'acceptance.json',report)
+                require(all(x['passed'] for x in report['checks']),
+                        'Acceptance failed; inspect /var/lib/selfsni/acceptance.json')
+                checkpoint(STATE, s, 'ACCEPTANCE', True)
+                s['status'] = 'HEALTHY_LOCAL'; s['stage'] = 'HEALTHY_LOCAL'
+                s['last_completed_stage'] = 'HEALTHY_LOCAL'
+                s.pop('failure', None)
+                s['versions'] = run('dpkg-query','-W','nginx','php-fpm','certbot',
+                                    'cloudflare-warp','fail2ban','ufw')
+                save(STATE/'state.json',s)
+                (STATE/'FAILED').unlink(missing_ok=True)
+                UI.stage(13, 13, 'Готово', 'ok')
         print(f'\nINSTALLATION COMPLETED · local acceptance passed\nPanel: https://{s["domain"]}:{s["panel_port"]}{s["panel_path"]}\nUsername: {s["username"]}\nPassword: {s["password"]}\nSubscription base: https://{s["domain"]}:{s["sub_port"]}{s["sub_path"]}\nClients: 0 · add clients with flow xtls-rprx-vision\nReport: /var/lib/selfsni/acceptance.json\nExternal client and reboot acceptance are separate required tests.')
     except (InstallError, OSError, ValueError, KeyError) as e:
-        stage('FAILED: ' + str(e))
+        message = redact(str(e))
+        stage('FAILED: ' + message)
         if owns_state:
-            write(STATE/'FAILED', str(e)+'\n')
+            current = locals().get('s', state)
+            if current:
+                fail(STATE, current, message)
+            write(STATE/'FAILED', message+'\n')
+        if UI:
+            UI.failure(message, DIAGNOSTIC_LOG if owns_state else 'не создан (preflight)')
         raise SystemExit(1)
 
 if __name__ == '__main__':

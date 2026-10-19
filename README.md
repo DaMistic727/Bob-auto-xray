@@ -15,6 +15,8 @@
 
 > **Статус: preview.** Исправление BBR preflight для минимальных образов без `modinfo` выпущено в v0.3.3. Кандидат из PR #6 прошёл clean install на Ubuntu 26.04.1 LTS amd64, новую регистрацию WARP, BBR/FQ, native Geodata Auto-Update, Target UI, Firefox/REALITY Vision, внешний клиент и реальную перезагрузку. Этот E2E выполнен на кандидате PR #6, а не на опубликованном архиве v0.3.3. Happ и INCY проверены пользователем на физическом iPhone. [Подробный отчёт →](docs/TESTING.md)
 
+> **v0.3.4 ещё не опубликован.** В ветке-кандидате перерабатываются APT, безопасное продолжение и интеграция VPS-Server-Menu. До нового VPS E2E используйте опубликованный v0.3.3.
+
 ## Что получится
 
 | Компонент | Результат |
@@ -40,7 +42,7 @@
    bash <(curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' https://github.com/DaMistic727/Bob-auto-xray/releases/download/v0.3.3/install.sh)
    ```
 
-   Он запросит FQDN и необязательный email Let's Encrypt. Bootstrap загружает **конкретный релиз** и проверяет закреплённый SHA256 архива до выполнения модулей.
+   Он запускает русскоязычный мастер FQDN/Let's Encrypt и показывает сводку перед изменениями. Bootstrap загружает **конкретный релиз** и проверяет закреплённый SHA256 архива до выполнения модулей.
 
 4. **Сохраните HTTPS-ссылку, логин и пароль**, которые появятся после успешных проверок. На VPS результат хранится в root-only `/var/lib/selfsni/state.json`.
 5. **Добавляйте клиентов через 3x-ui**, привязывая их к созданному inbound и выбирая flow `xtls-rprx-vision`. Подписки и клиентская маршрутизация уже настроены.
@@ -54,9 +56,11 @@
 bash /root/selfsni/install.sh --domain vpn.example.com --adopt-warp
 ```
 
-`--adopt-warp` явно разрешает использовать совместимый существующий WARP. Регистрация и режим не меняются; обязательны proxy mode, loopback listener и рабочий trace. Существующий VPS-Server-Menu принимается только на закреплённом commit без изменений содержимого файлов. Без этого флага обнаруженная установка WARP вызывает отказ.
+`--adopt-warp` явно разрешает использовать совместимый существующий WARP. Bob устанавливает закреплённый VPS-Server-Menu и вызывает только его официальный `server-menu warp health --port 40000 --json`; регистрация и настройки WARP не меняются. Обязательны active `warp-svc`, Connected, proxy mode, единственный loopback listener и Cloudflare trace с `warp=on`.
 
-Параметры: `--domain`, `--email`, `--ssh-port`, `--adopt-warp`, `--preflight-only`. На частично установленной или чужой конфигурации повторная установка по умолчанию запрещена.
+Параметры: `--domain`, `--email`, `--ssh-port`, `--adopt-warp`, `--preflight-only`. При non-interactive запуске `--domain` обязателен. `NO_COLOR=1` отключает ANSI-цвета. `--preflight-only` строго read-only.
+
+v0.3.4 хранит этап и installation ID в root-only state. После доказанного сбоя `APT_UPDATE`, `APT_UPGRADE`, `APT_INSTALL`, `WARP` или выдачи сертификата повтор той же команды продолжает установку, сохраняя порты и credentials. Перед повтором Certbot заново проверяются WARP и HTTP ownership. Узкий legacy-migration поддерживает только точный ранний `apt-get exited 100` из v0.3.3 при отсутствии любого управляемого пути; неизвестное старое состояние отклоняется. После более поздней стадии автоматическое продолжение запрещено. Полный redacted журнал команд находится в `/var/log/bob-auto-xray/install.log` с правами `0600`; одновременно работает только один установщик.
 
 </details>
 
