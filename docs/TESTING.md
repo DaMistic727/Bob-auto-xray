@@ -1,5 +1,13 @@
 # Отчёт о тестировании · 19 октября 2026
 
+## v0.3.4 UX release candidate
+
+На текущем кандидате локально прошли 70 Python regression tests под Python 3.12 и системным Python 3.9, `compileall`, `bash -n` и ShellCheck для bootstrap. В число новых регрессий входят мастер с уже заданным email, понятные ошибки и отмена, TTY/NO_COLOR progress, heartbeat длительной команды и загрузки с сохранением полного вывода, Ctrl+C, отсутствие curl progress table, классификация ACME rate limit и перевод подтверждённого UTC-времени в МСК. Python 3.10 в локальной среде отсутствует; матрица CI должна проверить 3.10 и 3.12. Репродуцируемость release assets и их SHA256 проверяются отдельно перед публикацией.
+
+PR #8 был объединён до завершения обязательного E2E, вопреки собственному описанию PR. Этот факт не означает готовность v0.3.4 к выпуску. Новый кандидат требует отдельного полного прогона с настоящим сертификатом Let’s Encrypt, внешним REALITY/Vision клиентом, WARP, подписками и проверкой после reboot. Известный exact-set rate limit препятствовал выдаче сертификата; повторную выдачу до подтверждённого ACME времени не запускали. До такого прогона тег и release assets не публикуются.
+
+Upstream [VPS-Server-Menu PR #6](https://github.com/Diman6267/VPS-Server-Menu/pull/6) остаётся открытым. Lock закрепляет commit `a84dfe03191e72c8853959ad47e5f816b0118b4b` собственного форка и SHA256 архива `d0497cccd2ff93feb5dba18d453286de027cd09b05ca5febc57818ad27ad2aeb`. Проверка функционального `HEALTHY` на VPS относится к этому закреплённому коду предыдущего кандидата; после изменений UX новый полный E2E ещё нужен.
+
 ## v0.3.4 candidate: installer recovery и VPS-Server-Menu
 
 Локально проходят 61 Python regression tests. Они проверяют APT lock timeout, сохранение уже выведенного stdout при реальном subprocess timeout, ожидание фоновых apt/unattended процессов, ограниченный network retry, отдельные dependency/dpkg/systemd/timeout причины, запрет слепого повтора частичного install, root-only redacted log, сохранение credentials, installer flock, разрешённый retry Certbot, отказ resume после других поздних стадий, корректный выход interactive wizard без traceback, TTY/non-TTY/NO_COLOR и non-interactive WARP contract.

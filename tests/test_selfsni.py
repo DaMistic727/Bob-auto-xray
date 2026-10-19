@@ -213,7 +213,7 @@ class FailureTests(unittest.TestCase):
                 with self.assertRaises(SystemExit) as result: provision.main()
                 self.assertEqual(result.exception.code,1)
                 self.assertFalse(next_stage.called)
-                self.assertIn('FAILED',out.getvalue())
+                self.assertIn('Причина: Certbot validation failed',out.getvalue())
                 self.assertNotIn('INSTALLATION COMPLETED',out.getvalue())
                 state_file = state/'state.json'
                 self.assertTrue(state_file.exists(), out.getvalue())

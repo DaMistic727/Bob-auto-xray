@@ -5,6 +5,9 @@
 - APT разделён на `update`, обычный `upgrade` и `install`: штатное ожидание dpkg lock до 10 минут, ограниченные повторы только временных ошибок репозитория и точная классификация lock/network/dependencies/dpkg/systemd/timeout.
 - Добавлены redacted diagnostic log 0600, installation lock и state machine с сохранением credentials. Подтверждённые сбои APT, частичная установка WARP и retry Certbot безопасно продолжаются той же командой; поздние неоднозначные стадии автоматически не возобновляются.
 - Добавлен русскоязычный TTY-мастер, ASCII/non-TTY fallback и `NO_COLOR`; release bootstrap больше не показывает progress bar curl.
+- Вопросы установки переписаны понятным языком, с примерами, предупреждением о системных изменениях и подтверждением. Указанные CLI-значения не спрашиваются повторно; сохранённая установка продолжает работу без повторного мастера.
+- Живой прогресс считает только завершённые этапы; длительные команды показывают время и индикатор активности, non-TTY вывод остаётся обычным текстом. Вывод команд сохраняется в root-only журнале, тайм-аут и Ctrl+C останавливают процесс.
+- Ошибки Certbot классифицируются по ответу ACME; подтверждённое время снятия лимита переводится из UTC в МСК без догадок. Состояние после сбоя сертификата сохраняется для resume.
 - WARP полностью делегирован закреплённому VPS-Server-Menu: Git checkout сохраняет `.git`, `.bashrc` не меняется, Bob использует официальный non-interactive install/health JSON API.
 - Строгий WARP health требует active service, Connected, proxy mode, порт 40000 только на loopback и trace `warp=on`. DEGRADED/DOWN останавливают установку; WARPSCOUT и 03:00 cron автоматически не запускаются.
 - Добавлены mock/regression тесты APT, resume/lock, secret redaction, UI и Bob↔VPS-Server-Menu contract. VPS E2E и публикация v0.3.4 ещё не выполнены.

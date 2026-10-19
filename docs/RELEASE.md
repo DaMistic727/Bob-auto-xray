@@ -53,6 +53,8 @@ python3 tools/release.py --tag "v$(cat VERSION)"
 
 Тег `v<VERSION>` запускает workflow **Release**: тесты → ShellCheck → сборка → проверка SHA256 → публикация preview. Изменять уже опубликованный тег/asset не следует; для исправлений выпускается новая версия.
 
+Для v0.3.4 тег нельзя создавать до успешного E2E именно этого кандидата: production Let’s Encrypt, внешний REALITY/Vision-клиент, WARP, подписки и проверка после reboot. Известный лимит повторной выдачи сертификата нужно дождаться; время следующей попытки берётся из ответа ACME. До E2E собранные `dist/` assets являются локальным release candidate, а не опубликованным релизом. Upstream VPS-Server-Menu PR #6 открыт; lock временно указывает на точный commit форка и SHA256, плавающий `main` не используется.
+
 ## Acceptance
 
 Локальные команды — в [CONTRIBUTING.md](../CONTRIBUTING.md). На одноразовой VPS с установленным проектом:

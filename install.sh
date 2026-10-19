@@ -16,9 +16,22 @@ fi
 [[ $SELFSNI_RELEASE_SHA256 =~ ^[a-f0-9]{64}$ ]] || exit 2
 work=$(mktemp -d)
 trap 'rm -r -- "$work"' EXIT
+printf 'Загрузка проверенного архива релиза...\n' >&2
 curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 180 \
-    "$SELFSNI_RELEASE_URL" -o "$work/release.tar.gz"
+    "$SELFSNI_RELEASE_URL" -o "$work/release.tar.gz" &
+download_pid=$!
+if [[ -t 2 ]]; then
+    ticks=0
+    while kill -0 "$download_pid" 2>/dev/null; do
+        printf '\rЗагрузка продолжается... %02d:%02d' "$((ticks / 60))" "$((ticks % 60))" >&2
+        sleep 1
+        ticks=$((ticks + 1))
+    done
+    printf '\r%50s\r' '' >&2
+fi
+wait "$download_pid"
 printf '%s  %s\n' "$SELFSNI_RELEASE_SHA256" "$work/release.tar.gz" | sha256sum -c - >/dev/null
+printf 'Архив загружен, SHA256 подтверждён.\n' >&2
 python3 - "$work" <<'PY'
 from pathlib import Path
 import sys, tarfile

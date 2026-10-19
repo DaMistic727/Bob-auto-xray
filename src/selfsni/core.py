@@ -9,9 +9,11 @@ import socket
 import subprocess
 import tarfile
 import tempfile
+import threading
 import time
 import urllib.request
 import re
+import signal
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -29,6 +31,15 @@ class CommandError(InstallError):
 
 _DIAGNOSTIC_LOG = None
 _SECRETS = set()
+_ACTIVITY = None
+
+def configure_activity(callback=None):
+    global _ACTIVITY
+    _ACTIVITY = callback
+
+def _pulse():
+    if _ACTIVITY:
+        _ACTIVITY()
 
 def configure_diagnostics(path=None, secrets=()):
     """Enable a root-only command transcript without recording command arguments."""
@@ -77,22 +88,50 @@ def _output_text(value):
 
 def run(*args, timeout=180, env=None, input=None):
     # Never print commands: CLI arguments can contain generated credentials.
+    command = [str(a) for a in args]
     try:
-        p = subprocess.run([str(a) for a in args], input=input, text=True,
-                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                           timeout=timeout, env=env)
-    except subprocess.TimeoutExpired as e:
-        # CPython may expose captured timeout output as bytes even with text=True.
-        output = _output_text(e.stdout) + _output_text(e.stderr)
-        _log_command(args[0], 'timeout', output)
-        raise CommandError(args[0], output=output, timed_out=True) from e
+        with tempfile.TemporaryFile() as transcript:
+            p = subprocess.Popen(command, stdin=subprocess.PIPE if input is not None else subprocess.DEVNULL,
+                                 stdout=transcript, stderr=subprocess.STDOUT, env=env,
+                                 start_new_session=True)
+            try:
+                if input is not None:
+                    p.stdin.write(input.encode() if isinstance(input, str) else input)
+                    p.stdin.close()
+                deadline = time.monotonic() + timeout
+                while p.poll() is None:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        try:
+                            os.killpg(p.pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                        p.wait()
+                        transcript.seek(0)
+                        output = transcript.read().decode('utf-8', errors='replace')
+                        _log_command(args[0], 'timeout', output)
+                        raise CommandError(args[0], output=output, timed_out=True)
+                    try:
+                        p.wait(timeout=min(1, remaining))
+                    except subprocess.TimeoutExpired:
+                        _pulse()
+            except BaseException:
+                if p.poll() is None:
+                    try:
+                        os.killpg(p.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    p.wait()
+                raise
+            transcript.seek(0)
+            output = transcript.read().decode('utf-8', errors='replace')
     except OSError as e:
         _log_command(args[0], 'os-error', str(e))
         raise CommandError(args[0], output=str(e)) from e
-    _log_command(args[0], p.returncode, p.stdout)
+    _log_command(args[0], p.returncode, output)
     if p.returncode:
-        raise CommandError(args[0], p.returncode, p.stdout)
-    return p.stdout
+        raise CommandError(args[0], p.returncode, output)
+    return output
 
 def write(path, content, mode=0o600):
     path = Path(path)
@@ -138,18 +177,50 @@ def digest(path):
 
 def download(url, path, sha256=None):
     require(url.startswith('https://'), 'HTTPS required')
-    for attempt in range(3):
+    done = threading.Event()
+    cancelled = threading.Event()
+    result = []
+
+    def fetch():
         try:
-            with urllib.request.urlopen(url, timeout=45) as response, open(path, 'wb') as f:
-                require(response.url.startswith('https://'), 'Insecure redirect')
-                shutil.copyfileobj(response, f)
-            break
-        except (OSError, TimeoutError):
-            if attempt == 2:
-                raise InstallError('Download failed: ' + url.split('?')[0])
-            time.sleep(2)
-    if sha256:
-        require(digest(path) == sha256, f'SHA256 mismatch: {Path(path).name}')
+            for attempt in range(3):
+                if cancelled.is_set():
+                    return
+                try:
+                    with urllib.request.urlopen(url, timeout=45) as response, open(path, 'wb') as f:
+                        require(response.url.startswith('https://'), 'Insecure redirect')
+                        while not cancelled.is_set():
+                            chunk = response.read(1024 * 1024)
+                            if not chunk:
+                                break
+                            if cancelled.is_set():
+                                return
+                            f.write(chunk)
+                    if cancelled.is_set():
+                        return
+                    if sha256:
+                        require(digest(path) == sha256, f'SHA256 mismatch: {Path(path).name}')
+                    return
+                except (OSError, TimeoutError) as error:
+                    if attempt == 2:
+                        raise InstallError('Не удалось загрузить: ' + url.split('?')[0]) from error
+                    cancelled.wait(2)
+        except Exception as error:
+            result.append(error)
+        finally:
+            done.set()
+
+    worker = threading.Thread(target=fetch, daemon=True)
+    worker.start()
+    try:
+        while not done.wait(1):
+            _pulse()
+    except BaseException:
+        cancelled.set()
+        Path(path).unlink(missing_ok=True)
+        raise
+    if result:
+        raise result[0]
     return Path(path)
 
 def verify_bundle():
@@ -172,17 +243,17 @@ def fqdn(value):
     try:
         value = value.strip().rstrip('.').encode('idna').decode('ascii').lower()
     except UnicodeError as e:
-        raise InstallError('Invalid domain') from e
+        raise InstallError('Некорректный домен') from e
     labels = value.split('.')
-    require(len(value) <= 253 and len(labels) > 1, 'Expected a public FQDN')
+    require(len(value) <= 253 and len(labels) > 1, 'Укажите полный домен, например vpn.example.com')
     for label in labels:
         require(1 <= len(label) <= 63 and label[0].isalnum() and label[-1].isalnum()
-                and all(c.isalnum() or c == '-' for c in label), 'Invalid domain')
+                and all(c.isalnum() or c == '-' for c in label), 'Некорректный домен')
     try:
         ipaddress.ip_address(value)
     except ValueError:
         return value
-    raise InstallError('Use an FQDN, not an IP address')
+    raise InstallError('Укажите домен, а не IP-адрес')
 
 def token(n=24):
     return secrets.token_hex(n)

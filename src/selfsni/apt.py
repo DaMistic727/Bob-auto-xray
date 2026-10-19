@@ -56,7 +56,7 @@ class AptError(InstallError):
         self.output = command_error.output
         self.detail = detail
         code = 'timeout' if command_error.timed_out else command_error.returncode
-        super().__init__(f'APT {operation} failed ({category}, exit {code}): {detail}')
+        super().__init__(f'Ошибка обновления пакетов ({operation}, {category}, код {code}): {detail}')
 
 
 def classify(error):
