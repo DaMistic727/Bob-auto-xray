@@ -201,6 +201,7 @@ class FailureTests(unittest.TestCase):
             with patch.object(provision,'STATE',state), patch.object(provision,'verify_bundle',return_value={}), \
                  patch.object(provision,'DIAGNOSTIC_LOG',Path(d)/'install.log'), \
                  patch.object(provision,'INSTALL_LOCK',Path(d)/'install.lock'), \
+                 patch.object(provision,'CONTROLLED_PATHS',[]), \
                  patch.object(provision,'preflight',return_value=fixture), \
                  patch.object(provision,'AptRunner',return_value=apt), \
                  patch.object(provision,'run'), patch.object(provision,'firewall'), \
