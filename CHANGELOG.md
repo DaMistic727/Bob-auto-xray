@@ -3,7 +3,7 @@
 ## v0.3.4 — Unreleased
 
 - APT разделён на `update`, обычный `upgrade` и `install`: штатное ожидание dpkg lock до 10 минут, ограниченные повторы только временных ошибок репозитория и точная классификация lock/network/dependencies/dpkg/systemd/timeout.
-- Добавлены redacted diagnostic log 0600, installation lock и state machine с сохранением credentials. Подтверждённые сбои APT и частичная установка WARP безопасно продолжаются той же командой; поздние неоднозначные стадии автоматически не возобновляются.
+- Добавлены redacted diagnostic log 0600, installation lock и state machine с сохранением credentials. Подтверждённые сбои APT, частичная установка WARP и retry Certbot безопасно продолжаются той же командой; поздние неоднозначные стадии автоматически не возобновляются.
 - Добавлен русскоязычный TTY-мастер, ASCII/non-TTY fallback и `NO_COLOR`; release bootstrap больше не показывает progress bar curl.
 - WARP полностью делегирован закреплённому VPS-Server-Menu: Git checkout сохраняет `.git`, `.bashrc` не меняется, Bob использует официальный non-interactive install/health JSON API.
 - Строгий WARP health требует active service, Connected, proxy mode, порт 40000 только на loopback и trace `warp=on`. DEGRADED/DOWN останавливают установку; WARPSCOUT и 03:00 cron автоматически не запускаются.

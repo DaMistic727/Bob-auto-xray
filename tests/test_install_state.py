@@ -40,6 +40,11 @@ class StateTests(unittest.TestCase):
         state.update(status='FAILED', stage='WARP')
         self.assertEqual(validate_resume(state, 'vpn.example.com', False)['stage'], 'WARP')
 
+    def test_certificate_retry_is_resumable(self):
+        state = initialize(values(), ['/etc/letsencrypt'])
+        state.update(status='FAILED', stage='CERTIFICATE', last_completed_stage='WARP')
+        self.assertEqual(validate_resume(state, 'vpn.example.com', False)['stage'], 'CERTIFICATE')
+
     def test_exact_legacy_v033_apt_failure_is_migrated_in_memory(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

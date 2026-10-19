@@ -76,18 +76,21 @@ def preflight(args, resume_state=None):
     for p in [str(STATE), *CONTROLLED_PATHS]:
         if resume_state and p == str(STATE):
             continue
-        if resume_state and resume_state.get('stage') in ('APT_INSTALL', 'WARP') and \
+        if resume_state and resume_state.get('stage') in ('APT_INSTALL', 'WARP', 'CERTIFICATE') and \
                 p in resume_state.get('absent_paths', ()):
             allowed_resume_paths = {'/etc/nginx', '/etc/letsencrypt'}
-            if resume_state.get('stage') == 'WARP':
+            if resume_state.get('stage') in ('WARP', 'CERTIFICATE'):
                 allowed_resume_paths.update({'/root/VPS-Server-Menu',
                     '/etc/apt/sources.list.d/cloudflare-client.list',
                     str(bbr.SYSCTL_CONFIG), str(bbr.MODULE_CONFIG)})
+            if resume_state.get('stage') == 'CERTIFICATE':
+                allowed_resume_paths.add('/var/lib/selfsni-acme')
             if p in allowed_resume_paths:
                 if p == '/etc/nginx':
                     enabled = Path('/etc/nginx/sites-enabled')
                     entries = list(enabled.iterdir()) if enabled.exists() else []
-                    require(all(x.name == 'default' for x in entries),
+                    expected = {'selfsni-http'} if resume_state.get('stage') == 'CERTIFICATE' else {'default'}
+                    require(all(x.name in expected for x in entries),
                             'Чужая nginx-конфигурация обнаружена во время resume')
                 if p == '/etc/letsencrypt':
                     le = Path('/etc/letsencrypt')
@@ -101,7 +104,8 @@ def preflight(args, resume_state=None):
             continue
         require(not Path(p).exists(), 'Existing installation/configuration: ' + p)
     warp_present = shutil.which('warp-cli') is not None
-    warp_resume = bool(resume_state and resume_state.get('stage') == 'WARP')
+    warp_resume = bool(resume_state and resume_state.get('stage') in ('WARP', 'CERTIFICATE'))
+    certificate_resume = bool(resume_state and resume_state.get('stage') == 'CERTIFICATE')
     require(not warp_present or args.adopt_warp or warp_resume,
             'Existing WARP: needs explicit --adopt-warp')
     require(not args.adopt_warp or warp_present, '--adopt-warp requires an existing installation')
@@ -124,10 +128,14 @@ def preflight(args, resume_state=None):
     allowed = ssh_ports | {53}
     if args.adopt_warp or warp_resume:
         allowed.add(40000)
+    if certificate_resume:
+        allowed.add(80)
     for line in listeners.splitlines():
         port = int(line.split()[3].rsplit(':', 1)[1])
         require(port in allowed, f'Foreign TCP listener on port {port}')
     for port in [80,443,62789,11111]:
+        if certificate_resume and port == 80:
+            continue
         with socket.socket() as s:
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
@@ -298,10 +306,16 @@ def certificate(s, email):
     cfg = render('nginx-http.conf', {'DOMAIN': s['domain']}).replace('/var/lib/selfsni/acme','/var/lib/selfsni-acme')
     write('/etc/nginx/sites-available/selfsni-http', cfg, 0o644)
     default = Path('/etc/nginx/sites-enabled/default')
-    # This symlink was installed by apt in this run, not an existing configuration.
-    require(default.is_symlink(), 'Unexpected nginx default site')
-    default.unlink()
-    Path('/etc/nginx/sites-enabled/selfsni-http').symlink_to('/etc/nginx/sites-available/selfsni-http')
+    enabled = Path('/etc/nginx/sites-enabled/selfsni-http')
+    if default.exists() or default.is_symlink():
+        # This symlink was installed by apt in this run, not an existing configuration.
+        require(default.is_symlink(), 'Unexpected nginx default site')
+        default.unlink()
+    if enabled.exists() or enabled.is_symlink():
+        require(enabled.is_symlink() and enabled.resolve() == Path('/etc/nginx/sites-available/selfsni-http'),
+                'Unexpected Self-SNI HTTP site')
+    else:
+        enabled.symlink_to('/etc/nginx/sites-available/selfsni-http')
     run('nginx', '-t')
     run('systemctl', 'enable', '--now', 'nginx')
     run('systemctl', 'reload', 'nginx')
@@ -311,7 +325,13 @@ def certificate(s, email):
         cmd += ['--email', email]
     else:
         cmd += ['--register-unsafely-without-email']
-    run(*cmd, timeout=300)
+    try:
+        run(*cmd, timeout=300)
+    except CommandError as error:
+        details = [line.strip() for line in redact(error.output).splitlines()
+                   if re.search(r'(?i)(error|too many certificates|retry after|unauthorized|challenge)', line)]
+        suffix = ': ' + ' | '.join(details[-4:]) if details else ''
+        raise InstallError(f'Certbot exited {error.returncode}{suffix}') from error
     run('systemctl', 'enable', '--now', 'certbot.timer')
 
 def decoy(s):
@@ -491,6 +511,7 @@ def main():
                         'fail2ban','nftables','python3','python3-systemd','gnupg',
                         'ca-certificates','dnsutils','bc','jq','qrencode','git','iproute2','kmod']
             apt = AptRunner(run, notify=UI.note)
+            resume_target = s.get('stage')
             apt_steps = [('APT_UPDATE', 2, 'Обновление индексов APT', apt.update),
                          ('APT_UPGRADE', 3, 'Обновление Ubuntu', apt.upgrade),
                          ('APT_INSTALL', 4, 'Установка зависимостей', lambda: apt.install(packages))]
@@ -506,13 +527,20 @@ def main():
                 UI.note('Ubuntu сообщает о необходимости reboot; автоматическая перезагрузка отключена.')
             with tempfile.TemporaryDirectory(prefix='selfsni-') as wd:
                 work = Path(wd)
-                if s.get('stage') != 'WARP':
+                if resume_target not in ('WARP', 'CERTIFICATE'):
                     checkpoint(STATE, s, 'BBR'); UI.stage(5, 13, 'TCP BBR и FQ')
                     s['bbr'] = bbr.configure(); checkpoint(STATE, s, 'BBR', True)
                     checkpoint(STATE, s, 'FIREWALL'); UI.stage(6, 13, 'Firewall')
                     firewall(s); checkpoint(STATE, s, 'FIREWALL', True)
-                checkpoint(STATE, s, 'WARP'); UI.stage(7, 13, 'VPS-Server-Menu и WARP')
-                install_warp(s,lock,work); checkpoint(STATE, s, 'WARP', True)
+                if resume_target != 'CERTIFICATE':
+                    checkpoint(STATE, s, 'WARP'); UI.stage(7, 13, 'VPS-Server-Menu и WARP')
+                    install_warp(s,lock,work); checkpoint(STATE, s, 'WARP', True)
+                else:
+                    health = _menu_warp('health', '--port', '40000', '--json')
+                    require(health.get('status') == 'HEALTHY',
+                            f'WARP {health.get("status", "UNKNOWN")}: {health.get("reason", "без причины")}')
+                    from .acceptance import check_warp
+                    check_warp()
                 checkpoint(STATE, s, 'CERTIFICATE'); UI.stage(8, 13, 'Сертификат')
                 certificate(s,s['email']); checkpoint(STATE, s, 'CERTIFICATE', True)
                 checkpoint(STATE, s, 'NGINX_PORTAL'); UI.stage(9, 13, 'Self-SNI portal')
