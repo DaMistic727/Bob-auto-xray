@@ -99,6 +99,29 @@ class InstallerUI:
         print(self._paint('31;1', f'\n✗ {label}'), file=self.stream)
         print(f'\nПричина: {error}\nЖурнал: {log_path}\n', file=self.stream, flush=True)
 
+    def success(self, state):
+        self._clear()
+        if self.unicode:
+            print('\n╭' + '─' * 46 + '╮\n│' + 'УСТАНОВКА ЗАВЕРШЕНА'.center(46) +
+                  '│\n╰' + '─' * 46 + '╯', file=self.stream)
+        else:
+            print('\nУСТАНОВКА ЗАВЕРШЕНА', file=self.stream)
+        checks = ('Сервер настроен', 'SSL-сертификат получен', '3x-ui работает',
+                  'WARP HEALTHY', 'Локальные проверки пройдены')
+        mark = '✓' if self.unicode else 'OK'
+        print('\n' + '\n'.join(f'{mark} {item}' for item in checks), file=self.stream)
+        print(f'\nПанель управления:\nhttps://{state["domain"]}:{state["panel_port"]}{state["panel_path"]}',
+              file=self.stream)
+        if self.tty:
+            print(f'\nЛогин:  {state["username"]}\nПароль: {state["password"]}', file=self.stream)
+        else:
+            print('\nРеквизиты сохранены в /var/lib/selfsni/state.json (доступ root).',
+                  file=self.stream)
+        print('\nСледующий шаг:\nОткройте панель 3x-ui и создайте первого VPN-клиента '
+              'с flow xtls-rprx-vision.\nПосле создания клиента используйте его ссылку '
+              'или подписку для подключения.\n\nОтчёт:\n/var/lib/selfsni/acceptance.json',
+              file=self.stream, flush=True)
+
 
 def _read(source, output, prompt):
     print(prompt, end='', file=output, flush=True)

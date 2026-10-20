@@ -86,6 +86,22 @@ class UiTests(unittest.TestCase):
         wizard.assert_not_called()
         self.assertIn('Продолжаем сохранённую установку', stream.getvalue())
 
+    def test_success_hides_subscription_and_non_tty_credentials(self):
+        state = dict(domain='vpn.example.com', panel_port=12345, panel_path='/panel/',
+                     username='private-user', password='private-password')
+        output = io.StringIO()
+        InstallerUI(output, tty=False).success(state)
+        text = output.getvalue()
+        self.assertIn('Панель управления:', text)
+        self.assertIn('создайте первого VPN-клиента', text)
+        self.assertNotIn('Подписки:', text)
+        self.assertNotIn('private-password', text)
+        class Utf8Stream(io.StringIO):
+            encoding = 'utf-8'
+        terminal = Utf8Stream()
+        InstallerUI(terminal, tty=True, env={'NO_COLOR': '1', 'TERM': 'xterm'}).success(state)
+        self.assertIn('private-password', terminal.getvalue())
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -43,6 +43,13 @@ class DiagnosticTests(unittest.TestCase):
         self.assertTrue(pulses)
         self.assertEqual(output.strip().splitlines(), ['before', 'after'])
 
+    def test_running_command_reports_intermediate_output(self):
+        chunks = []
+        output = run(sys.executable, '-c', "import time;print('Waiting for cache lock',flush=True);time.sleep(1.2);print('done')",
+                     timeout=3, on_output=chunks.append)
+        self.assertIn('Waiting for cache lock', ''.join(chunks))
+        self.assertIn('done', output)
+
     def test_interrupt_stops_command(self):
         configure_activity(lambda: (_ for _ in ()).throw(KeyboardInterrupt()))
         with self.assertRaises(KeyboardInterrupt):

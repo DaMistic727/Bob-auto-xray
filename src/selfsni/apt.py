@@ -97,18 +97,25 @@ class AptRunner:
     def _execute(self, operation, args, timeout=900):
         base = ['apt-get', '-o', f'DPkg::Lock::Timeout={self.lock_timeout}']
         attempts = self.network_retries if operation == 'update' else 1
-        busy = background_package_processes()
-        if busy:
-            self.notify('Пакетный менеджер занят, ожидаем завершения фонового обновления: ' +
-                        ', '.join(sorted(busy)))
         for attempt in range(1, attempts + 1):
+            lock_reported = False
+            recent_output = ''
+
+            def observe_output(chunk):
+                nonlocal lock_reported, recent_output
+                recent_output = (recent_output + chunk.lower())[-512:]
+                if not lock_reported and any(marker in recent_output for marker in LOCK_PATTERNS):
+                    self.notify('APT ожидает освобождения подтверждённой блокировки пакетов')
+                    lock_reported = True
+
             try:
                 return self.command(*base, *args, timeout=timeout,
-                                    env=dict(os.environ, DEBIAN_FRONTEND='noninteractive'))
+                                    env=dict(os.environ, DEBIAN_FRONTEND='noninteractive'),
+                                    on_output=observe_output)
             except CommandError as error:
                 category, detail = classify(error)
-                if category == 'lock':
-                    self.notify('Пакетный менеджер занят, ожидаем завершения фонового обновления')
+                if category == 'lock' and not lock_reported:
+                    self.notify('APT не дождался освобождения подтверждённой блокировки пакетов')
                 if category == 'network' and attempt < attempts:
                     self.notify(f'Временная ошибка сети; повтор {attempt + 1}/{attempts}')
                     self.sleep(min(2 ** attempt, 8))

@@ -86,7 +86,7 @@ def _output_text(value):
         return value.decode('utf-8', errors='replace')
     return value or ''
 
-def run(*args, timeout=180, env=None, input=None):
+def run(*args, timeout=180, env=None, input=None, on_output=None):
     # Never print commands: CLI arguments can contain generated credentials.
     command = [str(a) for a in args]
     try:
@@ -95,6 +95,7 @@ def run(*args, timeout=180, env=None, input=None):
                                  stdout=transcript, stderr=subprocess.STDOUT, env=env,
                                  start_new_session=True)
             try:
+                read_offset = 0
                 if input is not None:
                     p.stdin.write(input.encode() if isinstance(input, str) else input)
                     p.stdin.close()
@@ -114,6 +115,12 @@ def run(*args, timeout=180, env=None, input=None):
                     try:
                         p.wait(timeout=min(1, remaining))
                     except subprocess.TimeoutExpired:
+                        if on_output:
+                            transcript.seek(read_offset)
+                            chunk = transcript.read()
+                            read_offset = transcript.tell()
+                            if chunk:
+                                on_output(chunk.decode('utf-8', errors='replace'))
                         _pulse()
             except BaseException:
                 if p.poll() is None:

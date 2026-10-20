@@ -16,10 +16,11 @@ from .api import Panel, request
 from . import bbr
 from .core import (ROOT, CommandError, InstallError, configure_diagnostics, redact,
                    register_secrets, require, run, write, save, token, free_port,
-                   fqdn, download, verify_bundle, extract, wait_for, digest,
+                   fqdn, download, verify_bundle, wait_for, digest,
                    configure_activity)
 from .certbot_errors import explain as explain_certbot
 from .apt import AptRunner
+from .menu_upstream import check_official_menu
 from .install_state import (InstallerLock, checkpoint, fail, initialize, load,
                             upgrade_legacy_apt_failure, validate_resume)
 from .ui import InstallerUI, interactive_wizard
@@ -212,91 +213,11 @@ def install_apt_key(source, target):
     Path(target).chmod(0o644)
 
 
-def _tree_manifest(root):
-    root = Path(root)
-    result = {}
-    for path in sorted(root.rglob('*')):
-        if '.git' in path.parts or not path.is_file():
-            continue
-        result[str(path.relative_to(root))] = digest(path)
-    return result
-
-
-def _health_json(output):
-    starts = [0] + [match.end() for match in re.finditer(r'\n(?=\{)', output)]
-    for start in reversed(starts):
-        try:
-            value = json.loads(output[start:])
-            if isinstance(value, dict) and 'status' in value:
-                return value
-        except json.JSONDecodeError:
-            pass
-    raise InstallError('VPS-Server-Menu вернул некорректный health JSON')
-
-
-def _menu_warp(*arguments):
-    try:
-        output = run('/usr/local/bin/server-menu', 'warp', *arguments, timeout=1200)
-    except CommandError as error:
-        health = _health_json(error.output) if '{' in error.output else None
-        if health:
-            raise InstallError(f'WARP {health["status"]}: {health.get("reason", "без причины")}') from error
-        raise
-    return _health_json(output)
-
-
-def install_menu(lock, work):
-    target = Path('/root/VPS-Server-Menu')
-    commit = lock['menu_commit']
-    if target.exists():
-        require((target/'.git').is_dir(), 'Existing VPS-Server-Menu is not a Git checkout')
-        require(run('git','-C',target,'rev-parse','HEAD').strip() == commit,
-                'Existing menu has a different revision')
-        require(not run('git','-c','core.filemode=false','-C',target,'diff','HEAD','--').strip(),
-                'Existing menu has local changes')
-    else:
-        spec = lock['downloads']['menu.tar.gz']
-        archive = download(spec['url'], work / 'menu.tgz', spec['sha256'])
-        unpacked = work / 'menu-archive'
-        unpacked.mkdir()
-        extract(archive, unpacked)
-        source = next(unpacked.iterdir())
-        for path in source.iterdir():
-            if path.is_file() and (path.suffix == '.sh' or path.name in ('server-menu','ipv6-menu')):
-                destination = Path('/usr/local/bin') / path.name
-                require(not destination.exists() and not destination.is_symlink(),
-                        'Foreign menu command: ' + str(destination))
-        target.mkdir(mode=0o700)
-        repository = lock.get('menu_repository', 'https://github.com/Diman6267/VPS-Server-Menu.git')
-        run('git', '-C', target, 'init')
-        run('git', '-C', target, 'remote', 'add', 'origin', repository)
-        run('git', '-C', target, 'fetch', '--depth=1', 'origin', commit, timeout=300)
-        run('git', '-C', target, 'checkout', '--detach', 'FETCH_HEAD')
-        require(run('git','-C',target,'rev-parse','HEAD').strip() == commit,
-                'Fetched menu revision mismatch')
-        require(_tree_manifest(source) == _tree_manifest(target),
-                'Menu Git checkout differs from the SHA256-pinned archive')
-    run('bash', target/'install.sh', '--non-interactive', '--no-autostart',
-        '--source-dir', target, '--pinned-commit', commit, timeout=900)
-    require(Path('/usr/local/bin/server-menu').is_symlink(), 'server-menu link was not installed')
-
-
 def install_warp(s, lock, work):
-    stage('WARP: VPS-Server-Menu non-interactive API')
-    install_menu(lock, work)
-    if s['adopt_warp']:
-        health = _menu_warp('health', '--port', '40000', '--json')
-    else:
-        health = _menu_warp('install', '--port', '40000', '--json')
-        health = _menu_warp('health', '--port', '40000', '--json')
-    require(health.get('status') == 'HEALTHY',
-            f'WARP {health.get("status", "UNKNOWN")}: {health.get("reason", "без причины")}')
-    require(health.get('mode') == 'proxy' and health.get('port') == 40000,
-            'VPS-Server-Menu подтвердил неожиданный WARP mode/port')
-    # Independent functional acceptance confirms the actual routed SOCKS5 path.
-    from .acceptance import check_warp
-    check_warp()
-    s['warp_health'] = health
+    # The current official main has no safe unattended contract. This check
+    # runs before APT in main(); keep the stage guarded if called directly.
+    check_official_menu(lock)
+    raise InstallError('Автоматизация WARP официального меню ещё не поддерживается')
 
 def certificate(s, email):
     stage('nginx + Certbot HTTP-01 webroot')
@@ -482,6 +403,8 @@ def main():
         else:
             args.domain = fqdn(args.domain)
         lock = verify_bundle()
+        if not args.preflight_only:
+            check_official_menu(lock)
         if args.preflight_only:
             UI.stage(1, 13, 'Проверка системы')
             preflight(args)
@@ -547,11 +470,7 @@ def main():
                     install_warp(s,lock,work); checkpoint(STATE, s, 'WARP', True)
                     UI.stage(7, 13, 'VPS-Server-Menu и WARP', 'ok')
                 else:
-                    health = _menu_warp('health', '--port', '40000', '--json')
-                    require(health.get('status') == 'HEALTHY',
-                            f'WARP {health.get("status", "UNKNOWN")}: {health.get("reason", "без причины")}')
-                    from .acceptance import check_warp
-                    check_warp()
+                    raise InstallError('Проверка WARP через официальный non-interactive API пока недоступна')
                 checkpoint(STATE, s, 'CERTIFICATE'); UI.stage(8, 13, 'Получение SSL-сертификата')
                 certificate(s,s['email']); checkpoint(STATE, s, 'CERTIFICATE', True)
                 UI.stage(8, 13, 'Получение SSL-сертификата', 'ok')
@@ -582,7 +501,7 @@ def main():
                 (STATE/'FAILED').unlink(missing_ok=True)
                 UI.stage(13, 13, 'Готово', 'ok')
         configure_activity(None)
-        print(f'\nУСТАНОВКА ЗАВЕРШЕНА · локальные проверки пройдены\nПанель: https://{s["domain"]}:{s["panel_port"]}{s["panel_path"]}\nЛогин: {s["username"]}\nПароль: {s["password"]}\nПодписки: https://{s["domain"]}:{s["sub_port"]}{s["sub_path"]}\nКлиентов: 0 · добавьте их с flow xtls-rprx-vision\nОтчёт: /var/lib/selfsni/acceptance.json\nВнешний клиент и работа после перезагрузки проверяются отдельно.')
+        UI.success(s)
     except (InstallError, OSError, ValueError, KeyError, KeyboardInterrupt) as e:
         configure_activity(None)
         message = 'Установка прервана пользователем (Ctrl+C)' if isinstance(e, KeyboardInterrupt) else redact(str(e))
