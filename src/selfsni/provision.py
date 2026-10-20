@@ -16,8 +16,11 @@ from .api import Panel, request
 from . import bbr
 from .core import (ROOT, CommandError, InstallError, configure_diagnostics, redact,
                    register_secrets, require, run, write, save, token, free_port,
-                   fqdn, download, verify_bundle, extract, wait_for, digest)
+                   fqdn, download, verify_bundle, wait_for, digest,
+                   configure_activity)
+from .certbot_errors import explain as explain_certbot
 from .apt import AptRunner
+from .menu_upstream import check_official_menu
 from .install_state import (InstallerLock, checkpoint, fail, initialize, load,
                             upgrade_legacy_apt_failure, validate_resume)
 from .ui import InstallerUI, interactive_wizard
@@ -32,7 +35,6 @@ LOG_ENABLED = False
 UI = None
 
 def stage(message):
-    print('[selfsni] ' + message, flush=True)
     if LOG_ENABLED and STATE.exists():
         with (STATE / 'progress.log').open('a') as f:
             f.write(time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()) + ' ' + message + '\n')
@@ -211,91 +213,11 @@ def install_apt_key(source, target):
     Path(target).chmod(0o644)
 
 
-def _tree_manifest(root):
-    root = Path(root)
-    result = {}
-    for path in sorted(root.rglob('*')):
-        if '.git' in path.parts or not path.is_file():
-            continue
-        result[str(path.relative_to(root))] = digest(path)
-    return result
-
-
-def _health_json(output):
-    starts = [0] + [match.end() for match in re.finditer(r'\n(?=\{)', output)]
-    for start in reversed(starts):
-        try:
-            value = json.loads(output[start:])
-            if isinstance(value, dict) and 'status' in value:
-                return value
-        except json.JSONDecodeError:
-            pass
-    raise InstallError('VPS-Server-Menu вернул некорректный health JSON')
-
-
-def _menu_warp(*arguments):
-    try:
-        output = run('/usr/local/bin/server-menu', 'warp', *arguments, timeout=1200)
-    except CommandError as error:
-        health = _health_json(error.output) if '{' in error.output else None
-        if health:
-            raise InstallError(f'WARP {health["status"]}: {health.get("reason", "без причины")}') from error
-        raise
-    return _health_json(output)
-
-
-def install_menu(lock, work):
-    target = Path('/root/VPS-Server-Menu')
-    commit = lock['menu_commit']
-    if target.exists():
-        require((target/'.git').is_dir(), 'Existing VPS-Server-Menu is not a Git checkout')
-        require(run('git','-C',target,'rev-parse','HEAD').strip() == commit,
-                'Existing menu has a different revision')
-        require(not run('git','-c','core.filemode=false','-C',target,'diff','HEAD','--').strip(),
-                'Existing menu has local changes')
-    else:
-        spec = lock['downloads']['menu.tar.gz']
-        archive = download(spec['url'], work / 'menu.tgz', spec['sha256'])
-        unpacked = work / 'menu-archive'
-        unpacked.mkdir()
-        extract(archive, unpacked)
-        source = next(unpacked.iterdir())
-        for path in source.iterdir():
-            if path.is_file() and (path.suffix == '.sh' or path.name in ('server-menu','ipv6-menu')):
-                destination = Path('/usr/local/bin') / path.name
-                require(not destination.exists() and not destination.is_symlink(),
-                        'Foreign menu command: ' + str(destination))
-        target.mkdir(mode=0o700)
-        repository = lock.get('menu_repository', 'https://github.com/Diman6267/VPS-Server-Menu.git')
-        run('git', '-C', target, 'init')
-        run('git', '-C', target, 'remote', 'add', 'origin', repository)
-        run('git', '-C', target, 'fetch', '--depth=1', 'origin', commit, timeout=300)
-        run('git', '-C', target, 'checkout', '--detach', 'FETCH_HEAD')
-        require(run('git','-C',target,'rev-parse','HEAD').strip() == commit,
-                'Fetched menu revision mismatch')
-        require(_tree_manifest(source) == _tree_manifest(target),
-                'Menu Git checkout differs from the SHA256-pinned archive')
-    run('bash', target/'install.sh', '--non-interactive', '--no-autostart',
-        '--source-dir', target, '--pinned-commit', commit, timeout=900)
-    require(Path('/usr/local/bin/server-menu').is_symlink(), 'server-menu link was not installed')
-
-
 def install_warp(s, lock, work):
-    stage('WARP: VPS-Server-Menu non-interactive API')
-    install_menu(lock, work)
-    if s['adopt_warp']:
-        health = _menu_warp('health', '--port', '40000', '--json')
-    else:
-        health = _menu_warp('install', '--port', '40000', '--json')
-        health = _menu_warp('health', '--port', '40000', '--json')
-    require(health.get('status') == 'HEALTHY',
-            f'WARP {health.get("status", "UNKNOWN")}: {health.get("reason", "без причины")}')
-    require(health.get('mode') == 'proxy' and health.get('port') == 40000,
-            'VPS-Server-Menu подтвердил неожиданный WARP mode/port')
-    # Independent functional acceptance confirms the actual routed SOCKS5 path.
-    from .acceptance import check_warp
-    check_warp()
-    s['warp_health'] = health
+    # The current official main has no safe unattended contract. This check
+    # runs before APT in main(); keep the stage guarded if called directly.
+    check_official_menu(lock)
+    raise InstallError('Автоматизация WARP официального меню ещё не поддерживается')
 
 def certificate(s, email):
     stage('nginx + Certbot HTTP-01 webroot')
@@ -328,10 +250,9 @@ def certificate(s, email):
     try:
         run(*cmd, timeout=300)
     except CommandError as error:
-        details = [line.strip() for line in redact(error.output).splitlines()
-                   if re.search(r'(?i)(error|too many certificates|retry after|unauthorized|challenge)', line)]
-        suffix = ': ' + ' | '.join(details[-4:]) if details else ''
-        raise InstallError(f'Certbot exited {error.returncode}{suffix}') from error
+        raise InstallError('Не удалось получить SSL-сертификат.\n' + explain_certbot(error.output) +
+                           '\nНастройки предыдущих этапов сохранены. После устранения причины '
+                           'запустите установщик повторно для продолжения.') from error
     run('systemctl', 'enable', '--now', 'certbot.timer')
 
 def decoy(s):
@@ -461,7 +382,7 @@ def main():
     global LOG_ENABLED, UI
     owns_state = False
     state = None
-    parser = argparse.ArgumentParser(description='Bob Auto Xray VLESS REALITY Self-SNI installer')
+    parser = argparse.ArgumentParser(description='Bob Auto Xray: автоматическая настройка VPN-сервера')
     parser.add_argument('--domain')
     parser.add_argument('--email', default='')
     parser.add_argument('--ssh-port', type=int)
@@ -469,18 +390,26 @@ def main():
     parser.add_argument('--preflight-only', action='store_true')
     args = parser.parse_args()
     UI = InstallerUI()
+    configure_activity(UI.pulse)
     try:
+        resume_preview = load(STATE) if not args.preflight_only else None
+        if resume_preview and not args.domain:
+            args.domain = resume_preview['domain']
+            args.adopt_warp = resume_preview.get('adopt_warp', False)
+            UI.note(f'Продолжаем сохранённую установку для {args.domain}. Параметры будут использованы повторно.')
         if not args.domain:
             version = (ROOT/'VERSION').read_text().strip()
             interactive_wizard(args, version)
         else:
             args.domain = fqdn(args.domain)
         lock = verify_bundle()
+        if not args.preflight_only:
+            check_official_menu(lock)
         if args.preflight_only:
             UI.stage(1, 13, 'Проверка системы')
             preflight(args)
             UI.stage(1, 13, 'Проверка системы', 'ok')
-            stage('PREFLIGHT PASSED; no configuration changed')
+            UI.note('Проверка пройдена. Система не изменена.')
             return
         with InstallerLock(INSTALL_LOCK):
             previous = load(STATE)
@@ -490,6 +419,8 @@ def main():
                 require(not args.email or args.email == previous.get('email', ''),
                         'Для продолжения используйте исходный Let’s Encrypt email')
                 args.email = previous.get('email', '')
+                UI.completed = {'APT_UPDATE': 1, 'APT_UPGRADE': 2, 'APT_INSTALL': 3,
+                                'WARP': 6, 'CERTIFICATE': 7}.get(previous.get('stage'), 0)
             UI.stage(1, 13, 'Проверка системы')
             stage('Preflight: OS, ownership, SSH, listeners, DNS, network')
             s = preflight(args, previous)
@@ -512,7 +443,7 @@ def main():
                         'ca-certificates','dnsutils','bc','jq','qrencode','git','iproute2','kmod']
             apt = AptRunner(run, notify=UI.note)
             resume_target = s.get('stage')
-            apt_steps = [('APT_UPDATE', 2, 'Обновление индексов APT', apt.update),
+            apt_steps = [('APT_UPDATE', 2, 'Обновление списка пакетов', apt.update),
                          ('APT_UPGRADE', 3, 'Обновление Ubuntu', apt.upgrade),
                          ('APT_INSTALL', 4, 'Установка зависимостей', lambda: apt.install(packages))]
             resume_index = next((i for i, item in enumerate(apt_steps)
@@ -528,35 +459,39 @@ def main():
             with tempfile.TemporaryDirectory(prefix='selfsni-') as wd:
                 work = Path(wd)
                 if resume_target not in ('WARP', 'CERTIFICATE'):
-                    checkpoint(STATE, s, 'BBR'); UI.stage(5, 13, 'TCP BBR и FQ')
+                    checkpoint(STATE, s, 'BBR'); UI.stage(5, 13, 'Настройка TCP BBR и FQ')
                     s['bbr'] = bbr.configure(); checkpoint(STATE, s, 'BBR', True)
-                    checkpoint(STATE, s, 'FIREWALL'); UI.stage(6, 13, 'Firewall')
+                    UI.stage(5, 13, 'Настройка TCP BBR и FQ', 'ok')
+                    checkpoint(STATE, s, 'FIREWALL'); UI.stage(6, 13, 'Настройка сетевой защиты')
                     firewall(s); checkpoint(STATE, s, 'FIREWALL', True)
+                    UI.stage(6, 13, 'Настройка сетевой защиты', 'ok')
                 if resume_target != 'CERTIFICATE':
                     checkpoint(STATE, s, 'WARP'); UI.stage(7, 13, 'VPS-Server-Menu и WARP')
                     install_warp(s,lock,work); checkpoint(STATE, s, 'WARP', True)
+                    UI.stage(7, 13, 'VPS-Server-Menu и WARP', 'ok')
                 else:
-                    health = _menu_warp('health', '--port', '40000', '--json')
-                    require(health.get('status') == 'HEALTHY',
-                            f'WARP {health.get("status", "UNKNOWN")}: {health.get("reason", "без причины")}')
-                    from .acceptance import check_warp
-                    check_warp()
-                checkpoint(STATE, s, 'CERTIFICATE'); UI.stage(8, 13, 'Сертификат')
+                    raise InstallError('Проверка WARP через официальный non-interactive API пока недоступна')
+                checkpoint(STATE, s, 'CERTIFICATE'); UI.stage(8, 13, 'Получение SSL-сертификата')
                 certificate(s,s['email']); checkpoint(STATE, s, 'CERTIFICATE', True)
-                checkpoint(STATE, s, 'NGINX_PORTAL'); UI.stage(9, 13, 'Self-SNI portal')
+                UI.stage(8, 13, 'Получение SSL-сертификата', 'ok')
+                checkpoint(STATE, s, 'NGINX_PORTAL'); UI.stage(9, 13, 'Настройка nginx и страницы входа')
                 decoy(s); checkpoint(STATE, s, 'NGINX_PORTAL', True)
-                checkpoint(STATE, s, 'PANEL'); UI.stage(10, 13, '3x-ui')
+                UI.stage(9, 13, 'Настройка nginx и страницы входа', 'ok')
+                checkpoint(STATE, s, 'PANEL'); UI.stage(10, 13, 'Установка панели 3x-ui')
                 panel(s,lock,work); checkpoint(STATE, s, 'PANEL', True)
-                checkpoint(STATE, s, 'SECURITY'); UI.stage(11, 13, 'Fail2ban и renew hook')
+                UI.stage(10, 13, 'Установка панели 3x-ui', 'ok')
+                checkpoint(STATE, s, 'SECURITY'); UI.stage(11, 13, 'Защита и продление сертификата')
                 security(s); renew_hook(s); firewall(s,public=True)
                 checkpoint(STATE, s, 'SECURITY', True)
-                checkpoint(STATE, s, 'ACCEPTANCE'); UI.stage(12, 13, 'Acceptance checks')
+                UI.stage(11, 13, 'Защита и продление сертификата', 'ok')
+                checkpoint(STATE, s, 'ACCEPTANCE'); UI.stage(12, 13, 'Проверка результата')
                 from .acceptance import verify
                 report = verify(s)
                 save(STATE/'acceptance.json',report)
                 require(all(x['passed'] for x in report['checks']),
                         'Acceptance failed; inspect /var/lib/selfsni/acceptance.json')
                 checkpoint(STATE, s, 'ACCEPTANCE', True)
+                UI.stage(12, 13, 'Проверка результата', 'ok')
                 s['status'] = 'HEALTHY_LOCAL'; s['stage'] = 'HEALTHY_LOCAL'
                 s['last_completed_stage'] = 'HEALTHY_LOCAL'
                 s.pop('failure', None)
@@ -565,9 +500,11 @@ def main():
                 save(STATE/'state.json',s)
                 (STATE/'FAILED').unlink(missing_ok=True)
                 UI.stage(13, 13, 'Готово', 'ok')
-        print(f'\nINSTALLATION COMPLETED · local acceptance passed\nPanel: https://{s["domain"]}:{s["panel_port"]}{s["panel_path"]}\nUsername: {s["username"]}\nPassword: {s["password"]}\nSubscription base: https://{s["domain"]}:{s["sub_port"]}{s["sub_path"]}\nClients: 0 · add clients with flow xtls-rprx-vision\nReport: /var/lib/selfsni/acceptance.json\nExternal client and reboot acceptance are separate required tests.')
-    except (InstallError, OSError, ValueError, KeyError) as e:
-        message = redact(str(e))
+        configure_activity(None)
+        UI.success(s)
+    except (InstallError, OSError, ValueError, KeyError, KeyboardInterrupt) as e:
+        configure_activity(None)
+        message = 'Установка прервана пользователем (Ctrl+C)' if isinstance(e, KeyboardInterrupt) else redact(str(e))
         stage('FAILED: ' + message)
         if owns_state:
             current = locals().get('s', state)
@@ -576,7 +513,7 @@ def main():
             write(STATE/'FAILED', message+'\n')
         if UI:
             UI.failure(message, DIAGNOSTIC_LOG if owns_state else 'не создан (preflight)')
-        raise SystemExit(1)
+        raise SystemExit(130 if isinstance(e, KeyboardInterrupt) else 1)
 
 if __name__ == '__main__':
     main()

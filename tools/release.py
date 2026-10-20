@@ -34,9 +34,9 @@ bootstrap_sha = hashlib.sha256(installer.read_bytes()).hexdigest()
 
 3x-ui + VLESS TCP REALITY Vision Self-SNI, nginx/PHP portal, selective WARP, native Geodata Auto-Update, TCP BBR с FQ и отдельные профили Happ/INCY.
 
-Исправлен BBR preflight для минимальных образов без modinfo: read-only probe распознаёт tcp_bbr в дереве модулей запущенного ядра, а kmod устанавливается до возможного modprobe. Исправление покрыто regression-тестом.
+Установщик показывает русскоязычный мастер, прогресс по завершённым этапам и живой статус длительных команд. Диагностика Certbot объясняет типовые ошибки ACME и переводит подтверждённое время повтора из UTC в МСК. Сохранены безопасный resume, root-only журнал и SHA256-проверка архивов.
 
-Кандидат из PR #6 прошёл clean install Ubuntu 26.04.1 amd64, новую регистрацию WARP, BBR/FQ, REALITY Target в API/DB/web editor/runtime, geodata hot reload/rollback, внешний Vision-клиент и reboot: 26/26 on-host и 7/7 external checks до и после перезагрузки. Этот E2E выполнен на кандидате PR #6, а не на опубликованном архиве {a.tag}. Happ/INCY проверены пользователем на физическом iPhone; Android, DNS leaks и отдельные UDP/QUIC-сценарии требуют проверки.
+Релиз публикуется только после отдельного успешного E2E именно этого кандидата: настоящий сертификат Let’s Encrypt, внешний REALITY/Vision клиент, WARP, подписки и reboot. Подробные результаты должны быть внесены в docs/TESTING.md до создания тега.
 
 ## Установка от root на чистой VPS
 

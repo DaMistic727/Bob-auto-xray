@@ -32,7 +32,28 @@ class AptTests(unittest.TestCase):
             apt.install(['nginx'])
         self.assertEqual(caught.exception.category, 'lock')
         self.assertEqual(len(calls), 1)
-        self.assertTrue(any('занят' in x for x in notices))
+        self.assertEqual(len(notices), 1)
+        self.assertIn('блокировки', notices[0])
+
+    def test_background_process_without_lock_is_silent(self):
+        notices = []
+        apt, _ = self.runner(['ok'], notices)
+        with unittest.mock.patch('selfsni.apt.background_package_processes',
+                                 return_value={'unattended-upgr'}):
+            self.assertEqual(apt.update(), 'ok')
+        self.assertEqual(notices, [])
+
+    def test_real_lock_output_notifies_once_while_waiting(self):
+        notices = []
+        def command(*args, **kwargs):
+            self.assertIn('DPkg::Lock::Timeout=600', args)
+            callback = kwargs['on_output']
+            callback('Waiting for cache lock: Could not get lock /var/lib/dpkg/lock-frontend')
+            callback('Waiting for cache lock: Could not get lock /var/lib/dpkg/lock-frontend')
+            return 'done'
+        apt = AptRunner(command, notify=notices.append)
+        self.assertEqual(apt.update(), 'done')
+        self.assertEqual(len(notices), 1)
 
     def test_temporary_update_network_failure_retries(self):
         error = CommandError('apt-get', 100, 'Temporary failure resolving archive.ubuntu.com')

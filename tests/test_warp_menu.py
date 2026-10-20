@@ -1,42 +1,64 @@
+import io
 import tempfile
 import unittest
-from unittest.mock import call, patch
+from pathlib import Path
+from unittest.mock import patch
 
 from selfsni.core import InstallError
-from selfsni.provision import _health_json, install_warp
+from selfsni.menu_upstream import (OFFICIAL_INSTALLER, OFFICIAL_REPOSITORY,
+                                   UNSAFE_MAIN, check_official_menu)
 
 
-HEALTHY = {'status':'HEALTHY','reason':'ok','mode':'proxy','port':40000}
+LOCK = {'menu_repository': OFFICIAL_REPOSITORY, 'menu_branch': 'main',
+        'menu_installer_url': OFFICIAL_INSTALLER, 'downloads': {}}
 
 
-class WarpMenuIntegrationTests(unittest.TestCase):
-    def test_health_parser_accepts_preceding_install_output(self):
-        import json
-        self.assertEqual(_health_json('installing\n' + json.dumps(HEALTHY)), HEALTHY)
+class OfficialMenuTests(unittest.TestCase):
+    def test_current_official_main_is_rejected_before_mutation(self):
+        calls = []
+        def command(*args, **kwargs):
+            calls.append((args, kwargs))
+            return UNSAFE_MAIN + '\trefs/heads/main\n'
+        with self.assertRaisesRegex(InstallError, r'cron restart.*интерактивное'):
+            check_official_menu(LOCK, command)
+        self.assertEqual(calls[0][0], ('git', 'ls-remote', OFFICIAL_REPOSITORY,
+                                       'refs/heads/main'))
+        self.assertEqual(calls[0][1]['timeout'], 45)
 
-    def test_fresh_install_calls_official_cli_then_independent_acceptance(self):
-        state = {'adopt_warp':False}
-        with tempfile.TemporaryDirectory() as directory, \
-             patch('selfsni.provision.install_menu') as menu, \
-             patch('selfsni.provision._menu_warp', side_effect=[HEALTHY, HEALTHY]) as cli, \
-             patch('selfsni.acceptance.check_warp') as trace:
-            install_warp(state, {}, directory)
-        menu.assert_called_once()
-        self.assertEqual(cli.call_args_list, [
-            call('install','--port','40000','--json'),
-            call('health','--port','40000','--json')])
-        trace.assert_called_once()
-        self.assertEqual(state['warp_health']['status'], 'HEALTHY')
+    def test_fork_or_pinned_archive_is_rejected(self):
+        for changed in ({'menu_repository': 'https://github.com/other/menu.git'},
+                        {'menu_commit': 'a' * 40},
+                        {'downloads': {'menu.tar.gz': {'url': 'https://example.com'}}}):
+            with self.subTest(changed=changed):
+                lock = dict(LOCK, **changed)
+                with patch('selfsni.menu_upstream.run') as command, \
+                     self.assertRaisesRegex(InstallError, 'официальный main'):
+                    check_official_menu(lock, command)
+                command.assert_not_called()
 
-    def test_adopt_is_read_only_and_requires_healthy(self):
-        state = {'adopt_warp':True}
-        down = {'status':'DOWN','reason':'listener missing','mode':'proxy','port':40000}
-        with tempfile.TemporaryDirectory() as directory, \
-             patch('selfsni.provision.install_menu'), \
-             patch('selfsni.provision._menu_warp', return_value=down) as cli:
-            with self.assertRaises(InstallError):
-                install_warp(state, {}, directory)
-        cli.assert_called_once_with('health','--port','40000','--json')
+    def test_new_unknown_main_is_not_assumed_compatible(self):
+        with self.assertRaisesRegex(InstallError, 'ещё не проверен'):
+            check_official_menu(LOCK, lambda *args, **kwargs: 'b' * 40 + '\trefs/heads/main\n')
+
+    def test_provisioning_stops_before_state_or_apt(self):
+        import selfsni.provision as provision
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory) / 'state'
+            output = io.StringIO()
+            with patch.object(provision, 'STATE', state), \
+                 patch.object(provision, 'verify_bundle', return_value=LOCK), \
+                 patch.object(provision, 'check_official_menu',
+                              side_effect=InstallError('официальный main несовместим')), \
+                 patch.object(provision, 'AptRunner') as apt, \
+                 patch.object(provision, 'InstallerLock') as installer_lock, \
+                 patch('sys.argv', ['install', '--domain', 'vpn.example.com']), \
+                 patch('sys.stdout', output):
+                with self.assertRaises(SystemExit):
+                    provision.main()
+            self.assertFalse(state.exists())
+            apt.assert_not_called()
+            installer_lock.assert_not_called()
+            self.assertIn('официальный main несовместим', output.getvalue())
 
 
 if __name__ == '__main__':

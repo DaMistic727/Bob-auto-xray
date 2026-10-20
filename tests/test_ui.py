@@ -13,7 +13,7 @@ class UiTests(unittest.TestCase):
         ui.banner('0.3.4')
         ui.stage(1, 13, 'Проверка')
         text = stream.getvalue()
-        self.assertIn('+--------------------------------------------+', text)
+        self.assertIn('BOB AUTO XRAY', text)
         self.assertNotIn('\033[', text)
         self.assertNotIn('⟳', text)
 
@@ -31,7 +31,7 @@ class UiTests(unittest.TestCase):
         real_wizard = provision.interactive_wizard
 
         cases = (
-            ('not-a-fqdn\n', 'Expected a public FQDN'),
+            ('not-a-fqdn\n', 'Некорректный домен'),
             ('vpn.example.com\n\nn\n', 'Установка отменена пользователем'),
         )
         for answers, expected in cases:
@@ -49,6 +49,58 @@ class UiTests(unittest.TestCase):
                 self.assertEqual(caught.exception.code, 1)
                 self.assertIn(expected, stream.getvalue())
                 self.assertNotIn('Traceback', stream.getvalue())
+
+    def test_wizard_skips_supplied_email_and_confirms_changes(self):
+        from argparse import Namespace
+        from selfsni.ui import interactive_wizard
+        args = Namespace(domain=None, email='admin@example.com', adopt_warp=False)
+        output = io.StringIO()
+        interactive_wizard(args, '0.3.4', io.StringIO('vpn.example.com\n\n'), output)
+        self.assertEqual(args.domain, 'vpn.example.com')
+        self.assertNotIn('Email (необязательно) ›', output.getvalue())
+        self.assertIn('Будут обновлены системные пакеты', output.getvalue())
+
+    def test_progress_and_no_color_have_no_ansi(self):
+        class Utf8Stream(io.StringIO):
+            encoding = 'utf-8'
+        stream = Utf8Stream()
+        ui = InstallerUI(stream, tty=True, env={'NO_COLOR': '1', 'TERM': 'xterm'})
+        ui.stage(1, 13, 'Проверка')
+        ui.pulse()
+        ui.stage(1, 13, 'Проверка', 'ok')
+        ui.stage(2, 13, 'Загрузка')
+        self.assertIn('1/13', stream.getvalue())
+        self.assertIn('█', stream.getvalue())
+        self.assertNotIn('\033[', stream.getvalue())
+
+    def test_saved_domain_skips_wizard_on_resume(self):
+        import selfsni.provision as provision
+        stream = io.StringIO()
+        saved = {'domain': 'vpn.example.com', 'adopt_warp': False}
+        with patch.object(provision, 'load', return_value=saved), \
+             patch.object(provision, 'interactive_wizard') as wizard, \
+             patch.object(provision, 'verify_bundle', side_effect=provision.InstallError('test stop')), \
+             patch('sys.argv', ['install']), patch('sys.stdout', stream):
+            with self.assertRaises(SystemExit):
+                provision.main()
+        wizard.assert_not_called()
+        self.assertIn('Продолжаем сохранённую установку', stream.getvalue())
+
+    def test_success_hides_subscription_and_non_tty_credentials(self):
+        state = dict(domain='vpn.example.com', panel_port=12345, panel_path='/panel/',
+                     username='private-user', password='private-password')
+        output = io.StringIO()
+        InstallerUI(output, tty=False).success(state)
+        text = output.getvalue()
+        self.assertIn('Панель управления:', text)
+        self.assertIn('создайте первого VPN-клиента', text)
+        self.assertNotIn('Подписки:', text)
+        self.assertNotIn('private-password', text)
+        class Utf8Stream(io.StringIO):
+            encoding = 'utf-8'
+        terminal = Utf8Stream()
+        InstallerUI(terminal, tty=True, env={'NO_COLOR': '1', 'TERM': 'xterm'}).success(state)
+        self.assertIn('private-password', terminal.getvalue())
 
 
 if __name__ == '__main__':

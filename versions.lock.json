@@ -3,8 +3,9 @@
   "xui_version": "v3.10.2",
   "xui_commit": "608ef4e4010bf83e2e78328e08f77efc051ad4d7",
   "routing_commit": "a2241b8d6793ee3e5fb2d0eeb8fe9eac7cd79876",
-  "menu_commit": "a84dfe03191e72c8853959ad47e5f816b0118b4b",
-  "menu_repository": "https://github.com/DaMistic727/VPS-Server-Menu.git",
+  "menu_repository": "https://github.com/Diman6267/VPS-Server-Menu.git",
+  "menu_branch": "main",
+  "menu_installer_url": "https://raw.githubusercontent.com/Diman6267/VPS-Server-Menu/main/install.sh",
   "downloads": {
     "x-ui-linux-amd64.tar.gz": {
       "url": "https://github.com/MHSanaei/3x-ui/releases/download/v3.10.2/x-ui-linux-amd64.tar.gz",
@@ -13,10 +14,6 @@
     "x-ui-linux-arm64.tar.gz": {
       "url": "https://github.com/MHSanaei/3x-ui/releases/download/v3.10.2/x-ui-linux-arm64.tar.gz",
       "sha256": "a867c65ce52ad49f6504dd4c9c395337dc92ba57ae478da4f1b7ddb624014ed5"
-    },
-    "menu.tar.gz": {
-      "url": "https://codeload.github.com/DaMistic727/VPS-Server-Menu/tar.gz/a84dfe03191e72c8853959ad47e5f816b0118b4b",
-      "sha256": "d0497cccd2ff93feb5dba18d453286de027cd09b05ca5febc57818ad27ad2aeb"
     }
   },
   "files": {
