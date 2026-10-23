@@ -14,7 +14,6 @@ import sqlite3
 import struct
 import subprocess
 import tempfile
-import time
 import urllib.parse
 import uuid
 
@@ -327,8 +326,14 @@ def geodata_e2e(s, root=Path('/usr/local/x-ui/bin')):
     def state():
         return {path.name: (digest(path), path.stat().st_mtime_ns) for path in paths}
 
-    def journal_since(start):
-        return run('journalctl','-u','x-ui','--no-pager','--since','@'+str(int(start)))
+    def journal_cursor():
+        output = run('journalctl','-u','x-ui','--no-pager','-n','1','--show-cursor')
+        match = re.search(r'(?m)^-- cursor: (\S+)$', output)
+        require(match is not None, 'Could not record x-ui journal cursor')
+        return match.group(1)
+
+    def journal_after(cursor):
+        return run('journalctl','-u','x-ui','--no-pager','--after-cursor',cursor)
 
     original = template()
     require(original.get('geodata') == automatic_config(), 'Geodata E2E requires production settings')
@@ -358,8 +363,8 @@ def geodata_e2e(s, root=Path('/usr/local/x-ui/bin')):
         apply(failed)
         before = state()
         pid = xray_process(s).name
-        started = time.time()
-        wait_for(lambda: 'scheduled geodata reload failed' in journal_since(started),
+        cursor = journal_cursor()
+        wait_for(lambda: 'scheduled geodata reload failed' in journal_after(cursor),
                  'native geodata download failure', attempts=50)
         require(state() == before, 'Failed geodata download changed installed assets')
         require(xray_process(s).name == pid, 'Failed geodata download restarted Xray')
@@ -368,13 +373,16 @@ def geodata_e2e(s, root=Path('/usr/local/x-ui/bin')):
         rollback = copy.deepcopy(original)
         rollback['geodata'] = automatic_config('* * * * *', [{
             'url': 'https://example.com/',
-            'file': 'geosite.dat',
+            # skip mode does not create a matcher for geosite.dat; use the
+            # GeoSite file referenced by its blocked-domain rules.
+            'file': 'geosite_RU.dat',
         }])
         apply(rollback)
         before = state()
         pid = xray_process(s).name
-        started = time.time()
-        wait_for(lambda: 'rolling back' in journal_since(started),
+        cursor = journal_cursor()
+        wait_for(lambda: 'failed to reload geodata after downloading assets, rolling back'
+                 in journal_after(cursor),
                  'native geodata rollback', attempts=50)
         require(state() == before, 'Invalid geodata was not rolled back atomically')
         require(xray_process(s).name == pid, 'Geodata rollback restarted Xray')
@@ -388,6 +396,8 @@ def geodata_e2e(s, root=Path('/usr/local/x-ui/bin')):
                 os.replace(backup/path.name, path)
             backup.rmdir()
             run('systemctl', 'restart', 'x-ui')
+            wait_for(lambda: request(s['domain'],s['panel_port'],s['panel_path'])[0] == 200,
+                     'panel after geodata asset restoration')
         require(template().get('geodata') == automatic_config(),
                 'Production geodata schedule was not restored')
         verify_server_geodata(root)

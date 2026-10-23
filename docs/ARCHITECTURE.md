@@ -52,7 +52,7 @@ sysctl net.core.default_qdisc
 
 Systemd drop-in задаёт `TZ=Etc/UTC` для `x-ui` и дочернего Xray, а cron `0 0 * * *` означает 00:00 UTC = 03:00 Europe/Moscow. На Xray 26.10.21 конфигурация native GeoData прошла acceptance после замены бинарного файла; фактический очередной ежедневный запуск cron для этой версии отдельно не проверен. Системный timezone сервера не меняется.
 
-Native updater сначала загружает все assets во временные файлы, затем атомарно заменяет цели и вызывает reload registries. Ошибка скачивания не меняет установленные файлы; ошибка reload возвращает прежние файлы. Acceptance проверяет оба пути, hot reload без смены PID и повторно валидирует используемые категории.
+Native updater сначала загружает все assets во временные файлы, затем атомарно заменяет цели и вызывает reload registries. Ошибка скачивания не меняет установленные файлы; ошибка reload возвращает прежние файлы. Reload перечитывает только GeoData, на которые ссылаются активные matchers: в режиме skip `geosite.dat` не задействован правилами, а `geosite_RU.dat` задействован. Поэтому проверка rollback подменяет последний. Acceptance проверяет оба пути, hot reload без смены PID и повторно валидирует используемые категории.
 
 Штатные теги Basic UI — `direct` и `blocked`; отдельный дублирующий `block` не создаётся. В install/adopt порядок пользовательских outbounds — `direct`, `blocked`, `warp-outbound`; в skip — только `direct`, `blocked`. Правила:
 

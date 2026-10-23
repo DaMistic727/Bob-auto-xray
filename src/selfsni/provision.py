@@ -248,7 +248,6 @@ def adopt_warp(s):
 
 def certificate(s, email):
     stage('nginx + Certbot HTTP-01 webroot')
-    Path('/var/lib/selfsni/acme/.well-known/acme-challenge').mkdir(parents=True)
     # STATE contains no traversable secrets; give nginx access only via a dedicated webroot.
     run('install', '-d', '-m', '755', '/var/lib/selfsni-acme')
     # Keep private installer state 0700; use the public webroot in rendered config.

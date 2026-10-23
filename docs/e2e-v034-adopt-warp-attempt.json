@@ -1,0 +1,30 @@
+{
+  "scope": "disposable Ubuntu 26.04.1 amd64 with official Cloudflare WARP installed before Bob",
+  "warpPackage": "cloudflare-warp 2026.8.2115.0 from official signed resolute APT repository",
+  "beforeBob": {
+    "warpStatus": "Connected",
+    "operationMode": "proxy",
+    "proxyPort": 40000,
+    "loopbackListener": true,
+    "cloudflareTrace": "warp=on"
+  },
+  "bobPreflightExit": 0,
+  "bobInstallExit": 1,
+  "lastCompletedStage": "WARP",
+  "state": "FAILED/CERTIFICATE",
+  "afterAttempt": {
+    "registrationFileSha256Unchanged": true,
+    "configurationFileSha256Unchanged": true,
+    "settingsFileSha256Unchanged": true,
+    "warpPackageVersionUnchanged": true,
+    "warpServicePidUnchanged": true,
+    "warpServiceStartTimeUnchanged": true,
+    "warpServiceRestartCountUnchanged": true,
+    "cloudflareTrace": "warp=on"
+  },
+  "failure": {
+    "category": "Let's Encrypt duplicate certificate rate limit",
+    "retryAfter": "2026-10-24 05:21:32 Europe/Moscow",
+    "note": "Full adopt installation and acceptance were not completed by this attempt."
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "scope": "disposable Ubuntu 26.04.1 amd64; no-WARP clean install with controlled command faults",
+  "aptUpdateFault": {
+    "method": "temporary apt-get PATH shim in installer process only",
+    "commandExit": 100,
+    "installerExit": 1,
+    "category": "network",
+    "state": "FAILED/APT_UPDATE",
+    "lastCompletedStage": "PREFLIGHT",
+    "resumeCount": 0
+  },
+  "certbotFault": {
+    "method": "temporary certbot PATH shim in installer process only; removed before real certificate issuance",
+    "installerExit": 1,
+    "state": "FAILED/CERTIFICATE",
+    "lastCompletedStage": "WARP",
+    "resumeCount": 1
+  },
+  "initialCertificateResume": {
+    "result": "FAILED",
+    "cause": "unused private ACME directory already existed",
+    "state": "FAILED/CERTIFICATE",
+    "resumeCount": 2
+  },
+  "afterMinimalFix": {
+    "installerExit": 0,
+    "state": "HEALTHY_LOCAL/skip",
+    "resumeCount": 3,
+    "panelVersion": "v3.10.2",
+    "xrayVersion": "26.10.21",
+    "identityTupleSha256BeforeAndAfter": "0c410550a41eaf4f3f16003998055aabb2510308ae1e667048c44694afa7d567"
+  },
+  "limitation": "Command fault injection verified installer state and resume; actual repository outage and CA/DNS failure were not induced."
+}
