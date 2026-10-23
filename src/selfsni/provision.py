@@ -500,10 +500,14 @@ def main():
                                  if item[0] == s.get('stage')), len(apt_steps))
             for name, number, label, action in apt_steps[resume_index:]:
                 checkpoint(STATE, s, name)
-                UI.stage(number, 13, label)
-                action()
+                if name == 'APT_UPGRADE' and s['warp_mode'] == 'adopt':
+                    # A global upgrade may replace and restart the operator's WARP package.
+                    UI.stage(number, 13, 'Обновление Ubuntu пропущено для существующего WARP', 'skipped')
+                else:
+                    UI.stage(number, 13, label)
+                    action()
+                    UI.stage(number, 13, label, 'ok')
                 checkpoint(STATE, s, name, completed=True)
-                UI.stage(number, 13, label, 'ok')
             if Path('/var/run/reboot-required').exists():
                 UI.note('Ubuntu сообщает о необходимости reboot; автоматическая перезагрузка отключена.')
             with tempfile.TemporaryDirectory(prefix='selfsni-') as wd:

@@ -10,7 +10,7 @@ from selfsni.core import InstallError
 from selfsni.install_state import initialize, validate_resume, warp_mode
 from selfsni.routing import server_template
 from selfsni import provision
-from selfsni.ui import interactive_wizard
+from selfsni.ui import existing_warp, interactive_wizard
 
 
 def state(mode):
@@ -80,8 +80,32 @@ class WarpModeTests(unittest.TestCase):
         for answer, mode in [('\n', 'install'), ('2\n', 'adopt'), ('3\n', 'skip')]:
             args = Namespace(domain=None, email='admin@example.com',
                              warp_mode=None, adopt_warp=False)
-            interactive_wizard(args, 'test', io.StringIO('vpn.example.com\n' + answer + '\n'), io.StringIO())
+            with patch('selfsni.ui.existing_warp', return_value=True):
+                interactive_wizard(args, 'test', io.StringIO('vpn.example.com\n' + answer + '\n'), io.StringIO())
             self.assertEqual(args.warp_mode, mode)
+
+    def test_wizard_without_existing_warp_offers_skip_after_domain(self):
+        from argparse import Namespace
+        args = Namespace(domain=None, email='', warp_mode=None, adopt_warp=False)
+        output = io.StringIO()
+        with patch('selfsni.ui.existing_warp', return_value=False):
+            interactive_wizard(args, 'test', io.StringIO('vpn.example.com\n2\n\n\n'), output)
+        self.assertEqual(args.warp_mode, 'skip')
+        shown = output.getvalue()
+        self.assertNotIn('Использовать существующий WARP', shown)
+        self.assertLess(shown.index('Домен сервера ›'), shown.index('Режим WARP'))
+        self.assertLess(shown.index('Режим WARP'), shown.index('Email (необязательно) ›'))
+
+    def test_existing_warp_detection_is_read_only(self):
+        with patch('selfsni.ui.shutil.which', return_value=None), \
+             patch('selfsni.ui.subprocess.run') as command:
+            self.assertFalse(existing_warp())
+            command.assert_not_called()
+        with patch('selfsni.ui.shutil.which', return_value='/usr/bin/warp-cli'), \
+             patch('selfsni.ui.subprocess.run', return_value=type('Result', (), {'returncode': 0})()) as command:
+            self.assertTrue(existing_warp())
+            self.assertEqual(command.call_args.args[0],
+                             ['systemctl', 'is-active', '--quiet', 'warp-svc'])
 
     def test_cli_flags_are_mutually_exclusive(self):
         with patch('sys.argv', ['install', '--adopt-warp', '--no-warp']), \
@@ -187,6 +211,38 @@ class WarpModeTests(unittest.TestCase):
                 if resume:
                     self.assertEqual(result['installation_id'], saved['installation_id'])
                     self.assertEqual(result['password'], saved['password'])
+
+    def test_adopt_avoids_global_upgrade_and_warp_mutation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            apt = MagicMock()
+            with patch.object(provision, 'STATE', root/'state'), \
+                 patch.object(provision, 'DIAGNOSTIC_LOG', root/'install.log'), \
+                 patch.object(provision, 'INSTALL_LOCK', root/'install.lock'), \
+                 patch.object(provision, 'CONTROLLED_PATHS', []), \
+                 patch.object(provision, 'verify_bundle', return_value={}), \
+                 patch.object(provision, 'check_official_menu') as menu, \
+                 patch.object(provision, 'preflight', return_value=state('adopt')), \
+                 patch.object(provision, 'AptRunner', return_value=apt), \
+                 patch.object(provision, 'run'), \
+                 patch.object(provision, 'firewall'), \
+                 patch.object(provision.bbr, 'configure', return_value={}), \
+                 patch.object(provision, 'adopt_warp') as adopt, \
+                 patch.object(provision, 'install_warp') as install, \
+                 patch.object(provision, 'certificate', side_effect=InstallError('Certbot failed')), \
+                 patch('sys.argv', ['install', '--domain', 'vpn.example.com', '--adopt-warp']), \
+                 patch('sys.stdout', io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    provision.main()
+            apt.update.assert_called_once_with()
+            apt.upgrade.assert_not_called()
+            apt.install.assert_called_once()
+            adopt.assert_called_once()
+            install.assert_not_called()
+            menu.assert_not_called()
+            saved = json.loads((root/'state/state.json').read_text())
+            self.assertEqual(saved['stage'], 'CERTIFICATE')
+            self.assertEqual(saved['warp_mode'], 'adopt')
 
     def test_clean_skip_completes_without_warp_package_or_menu(self):
         import selfsni.acceptance as acceptance

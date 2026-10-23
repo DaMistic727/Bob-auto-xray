@@ -1,6 +1,7 @@
 import os
 import re
 import shutil
+import subprocess
 import sys
 import time
 
@@ -132,6 +133,17 @@ def _read(source, output, prompt):
     return value.strip()
 
 
+def existing_warp():
+    if shutil.which('warp-cli') is None:
+        return False
+    try:
+        return subprocess.run(['systemctl', 'is-active', '--quiet', 'warp-svc'],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                              timeout=5, check=False).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
 def interactive_wizard(args, version, input_stream=None, output=None):
     output = output or sys.stdout
     source = input_stream
@@ -156,8 +168,25 @@ def interactive_wizard(args, version, input_stream=None, output=None):
                 args.domain = fqdn(_read(source, output, 'Домен сервера › '))
             except InstallError as error:
                 raise InstallError('Некорректный домен. Введите адрес вида vpn.example.com, без https:// и пути.') from error
+        if not getattr(args, 'warp_mode', None):
+            choices = {'': 'install', '1': 'install'}
+            lines = ['1. Установить Cloudflare WARP (по умолчанию)']
+            if existing_warp():
+                lines.append('2. Использовать существующий WARP')
+                lines.append('3. Не использовать WARP')
+                choices.update({'2': 'adopt', '3': 'skip'})
+            else:
+                lines.append('2. Не использовать WARP')
+                choices['2'] = 'skip'
+            print('\nШАГ 2/4 — Cloudflare WARP\n' + '─' * 44 + '\n' +
+                  '\n'.join(lines) + '\n', file=output)
+            choice = _read(source, output, 'Режим WARP [' + '/'.join(k for k in choices if k) + '] › ')
+            if choice not in choices:
+                raise InstallError('Выберите один из предложенных режимов WARP')
+            args.warp_mode = choices[choice]
+        args.adopt_warp = args.warp_mode == 'adopt'
         if not args.email:
-            print('\nШАГ 2/4 — SSL-сертификат\n' + '─' * 44 + '\n'
+            print('\nШАГ 3/4 — SSL-сертификат\n' + '─' * 44 + '\n'
                   'Для защищённого соединения будет получен бесплатный\n'
                   'сертификат Let’s Encrypt. Email для уведомлений\n'
                   'необязателен: нажмите Enter, чтобы пропустить.\n'
@@ -165,16 +194,6 @@ def interactive_wizard(args, version, input_stream=None, output=None):
             args.email = _read(source, output, 'Email (необязательно) › ')
         if args.email and not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', args.email):
             raise InstallError('Некорректный email. Пример: admin@example.com')
-        if not getattr(args, 'warp_mode', None):
-            print('\nШАГ 3/4 — Cloudflare WARP\n' + '─' * 44 + '\n'
-                  '1. Установить Cloudflare WARP (по умолчанию)\n'
-                  '2. Использовать существующий WARP\n'
-                  '3. Не использовать WARP\n', file=output)
-            choice = _read(source, output, 'Режим WARP [1/2/3] › ')
-            if choice not in ('', '1', '2', '3'):
-                raise InstallError('Выберите режим WARP: 1, 2 или 3')
-            args.warp_mode = {'': 'install', '1': 'install', '2': 'adopt', '3': 'skip'}[choice]
-        args.adopt_warp = args.warp_mode == 'adopt'
         print('\nШАГ 4/4 — Подтверждение\n' + '─' * 44 + '\n'
               f'Домен:        {args.domain}\n'
               'Сертификат:   Let’s Encrypt\n'

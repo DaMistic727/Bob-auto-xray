@@ -8,6 +8,7 @@ import ssl
 import os
 from pathlib import Path
 import re
+import shutil
 import socket
 import sqlite3
 import struct
@@ -297,10 +298,10 @@ def verify(s):
             'tcpBbr': bbr_report}
 
 
-def geodata_e2e(s):
+def geodata_e2e(s, root=Path('/usr/local/x-ui/bin')):
     """Exercise Xray's native scheduled download, hot reload, failure, and rollback."""
     api = Panel(s)
-    root = Path('/usr/local/x-ui/bin')
+    root = Path(root)
     paths = [root/asset['file'] for asset in GEODATA_ASSETS]
 
     def template():
@@ -321,6 +322,10 @@ def geodata_e2e(s):
 
     original = template()
     require(original.get('geodata') == automatic_config(), 'Geodata E2E requires production settings')
+    backup = Path(tempfile.mkdtemp(prefix='.selfsni-geodata-', dir=root))
+    for path in paths:
+        require(path.is_file() and not path.is_symlink(), 'Unexpected geodata asset: ' + str(path))
+        shutil.copy2(path, backup/path.name)
     report = {}
     try:
         live = copy.deepcopy(original)
@@ -366,7 +371,13 @@ def geodata_e2e(s):
         verify_server_geodata(root)
         report['rollback'] = 'invalid 200 response failed reload and restored the original file'
     finally:
-        apply(original)
+        try:
+            apply(original)
+        finally:
+            for path in paths:
+                os.replace(backup/path.name, path)
+            backup.rmdir()
+            run('systemctl', 'restart', 'x-ui')
         require(template().get('geodata') == automatic_config(),
                 'Production geodata schedule was not restored')
         verify_server_geodata(root)

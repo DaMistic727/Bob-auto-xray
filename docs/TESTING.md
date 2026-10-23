@@ -1,10 +1,29 @@
 # Отчёт о тестировании · 23 октября 2026
 
-## Аудит опционального WARP · 23 октября
+## Текущий аудит `3ced196` и локальные исправления
+
+**PASSED (локально):** рабочее дерево перед аудитом было чистым, ветка `feat/v0.3.4-installer-recovery-warp-menu` содержала локальный `3ced196`. Проверены ветви `skip` в preflight, bundle lock, установке, resume, Xray template, acceptance и внешнем сценарии; тесты подтверждают отсутствие обращения к upstream WARP API, TUN, WARP-пакету и зависимости `warp-svc` в этих ветвях. Мастер теперь спрашивает WARP сразу после домена, по умолчанию выбирает установку, а adopt предлагает только при обнаруженных `warp-cli` и активном `warp-svc`. Для adopt пропущен общий `apt-get upgrade`, способный косвенно обновить или перезапустить существующий WARP. `apt-get update` и установка необходимых пакетов остаются. Локальный прогон: **89/89 unittest**, `compileall`, `bash -n`, ShellCheck, `git diff --check` — успешно.
+
+Первое SSH-подключение было остановлено изменившимся host key. Пользователь подтвердил новый ED25519 fingerprint через доверенный канал и разрешил полный E2E на одноразовой VPS; полученный ключ совпал. Домен имел единственный DNS A, указывающий на VPS. Архив Bob передан с совпавшим локальным и серверным SHA256 `25f503bdb17f5001b2cc2c9ccfa7dbb6a1015f56451bf552df2f40ce65f99c68`.
+
+| Проверка на Ubuntu 26.04.1 amd64 | Результат | Доказательство |
+| --- | --- | --- |
+| `--no-warp --preflight-only`, чистая установка | **PASSED** | Preflight exit 0 без изменения системы; installer exit 0, `HEALTHY_LOCAL/skip`, 3x-ui `v3.10.2`, Xray `26.10.10`. |
+| On-host acceptance и временный REALITY-клиент | **PASSED** | 25/25 до и после reboot; post-reboot обезличенный [JSON](e2e-no-warp-onhost-after.json), клиент удалён. |
+| Фактический `xray run -test`, nginx, TCP/443, DNS, HTTPS, DIRECT | **PASSED** | Xray и nginx exit 0; Xray слушал публичный TCP/443; DNS A совпал с IPv4 сервера. Независимый macOS Xray `26.10.21` прошёл шесть [проверок до](e2e-no-warp-external-before.json) и [после](e2e-no-warp-external-after.json) reboot: REALITY/Vision, HTTPS-подписки, DIRECT, IP-check DIRECT, OpenAI HTTP, RU block. ZIP Xray сверяли с официальным SHA256 `926cc55fda2a8757dabe4f22dc98772f218ace025f101bd0b68aee232e59d5dc`. |
+| Native GeoData, BBR/FQ, UFW, Fail2ban, Certbot | **PASSED** для штатной конфигурации | Встроенные проверки 25/25; BBR=`bbr`, qdisc=`fq`, UFW active, jails `3x-ipl` и `sshd`, Certbot timer enabled, nginx/Xray active. Certbot production certificate и renewal dry-run завершились в установщике. |
+| Отсутствие WARP-зависимостей | **PASSED** | Пакет `cloudflare-warp` отсутствует, `warp-svc` inactive, `systemctl cat x-ui` не содержит `warp-svc`, runtime config не содержит WARP outbound/rules. |
+| Reboot и повторная установка | **PASSED** | Boot ID изменился с `f39bf7d3-7a2c-4551-b825-dde50ccc50cf` на `ca4a5a95-11dc-4a76-b0b3-c3ad0987d275`; повторные on-host/external проверки прошли. Повторный installer exit 1, state остался `HEALTHY_LOCAL`, `resume_count=0`. |
+| Инъекция невалидного GeoData HTTP 200 и rollback | **FAILED** | Встроенный Xray не откатил файл `geosite.dat`; строгий E2E exit 1. Исправленный тест теперь сохраняет исходные файлы и в `finally` восстанавливает их атомарно. Повторный запуск подтвердил четыре исходных SHA256 и 25/25 штатной acceptance; это не отменяет FAILED для rollback. |
+| Отдельный VPS E2E `--adopt-warp`; реальные APT/DNS/Certbot/несовместимый WARP fault injection и resume | **NOT TESTED** | Нужен новый чистый снимок или вторая одноразовая VPS. Локальные regression tests есть, они не заменяют реальную проверку. |
+
+Сценарий для оставшихся проверок: [E2E-NO-WARP.md](E2E-NO-WARP.md). **Production-ready не подтверждён:** GeoData rollback провалился, adopt и реальные failure/resume сценарии ещё не проверены.
+
+## Базовый аудит опционального WARP до VPS E2E · 23 октября
 
 В текущем кандидате добавлены режимы install/adopt/skip, сохранение режима в state, защита от смены при resume, маршрутизация и acceptance по режиму, а также проверки внешнего клиента без WARP. Локальный Python unittest: 85/85; `compileall`, ShellCheck и `bash -n` прошли. Двукратная локальная сборка дала одинаковый SHA256 payload; `SHA256SUMS` проверен. Режим skip не вызывает меню, не обращается к WARP, не требует `/dev/net/tun`, не включает `warp-svc` в unit x-ui и не проверяет пакет `cloudflare-warp`. Проверка bundle пропускает WARP keyring только в adopt/skip, сохраняя проверки остальных файлов. Regression подтверждает, что несовместимый upstream guard не блокирует полный mock-проход установки skip. Режим adopt выполняет только read-only проверки существующего клиента. Исторические E2E ниже относятся к более ранним кандидатам и не подтверждают эту доработку.
 
-Официальный `Diman6267/VPS-Server-Menu` `main` на дату проверки всё ещё `3775143b00b197a801d9872ebc0bf5407431302d`; API реализован в открытом PR #6, но ещё не объединён. Поэтому проверенный `menu_commit`/`menu_archive_sha256` не заполнены, а install останавливается до системных изменений. Полный E2E всех трёх режимов, включая `xray run -test` и внешний клиент на одноразовой VPS, пока не выполнен. Проверки production VPS в рамках этой доработки не запускались.
+Официальный `Diman6267/VPS-Server-Menu` `main` на дату той проверки был `3775143b00b197a801d9872ebc0bf5407431302d`; API реализован в открытом PR #6, но ещё не объединён. Поэтому проверенный `menu_commit`/`menu_archive_sha256` не заполнены, а install останавливается до системных изменений. На момент коммита `3ced196` E2E новых режимов ещё не выполнялся. Результаты последующего E2E `--no-warp` приведены выше.
 
 ## v0.3.4: исправления после реального E2E
 
