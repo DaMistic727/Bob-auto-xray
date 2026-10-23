@@ -32,7 +32,7 @@ class UiTests(unittest.TestCase):
 
         cases = (
             ('not-a-fqdn\n', 'Некорректный домен'),
-            ('vpn.example.com\n\nn\n', 'Установка отменена пользователем'),
+            ('vpn.example.com\n\n\nn\n', 'Установка отменена пользователем'),
         )
         for answers, expected in cases:
             with self.subTest(expected=expected):
@@ -55,7 +55,7 @@ class UiTests(unittest.TestCase):
         from selfsni.ui import interactive_wizard
         args = Namespace(domain=None, email='admin@example.com', adopt_warp=False)
         output = io.StringIO()
-        interactive_wizard(args, '0.3.4', io.StringIO('vpn.example.com\n\n'), output)
+        interactive_wizard(args, '0.3.4', io.StringIO('vpn.example.com\n\n\n'), output)
         self.assertEqual(args.domain, 'vpn.example.com')
         self.assertNotIn('Email (необязательно) ›', output.getvalue())
         self.assertIn('Будут обновлены системные пакеты', output.getvalue())

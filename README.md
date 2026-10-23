@@ -11,11 +11,11 @@
 
 **Чистая VPS → готовый VLESS TCP REALITY Vision с собственным SNI.**
 
-Одноразовый установщик разворачивает 3x-ui, HTTPS-заглушку частного облака, выборочную маршрутизацию через WARP и подписки для Happ/INCY. Конфигурации создаются автоматически, клиентов вы добавляете через панель.
+Одноразовый установщик разворачивает 3x-ui, HTTPS-заглушку частного облака и подписки для Happ/INCY. Cloudflare WARP выбирается отдельно; без него AI/IP-check идёт через обычный DIRECT. Конфигурации создаются автоматически, клиентов вы добавляете через панель.
 
 > **Статус: preview.** Исправление BBR preflight для минимальных образов без `modinfo` выпущено в v0.3.3. Кандидат из PR #6 прошёл clean install на Ubuntu 26.04.1 LTS amd64, новую регистрацию WARP, BBR/FQ, native Geodata Auto-Update, Target UI, Firefox/REALITY Vision, внешний клиент и реальную перезагрузку. Этот E2E выполнен на кандидате PR #6, а не на опубликованном архиве v0.3.3. Happ и INCY проверены пользователем на физическом iPhone. [Подробный отчёт →](docs/TESTING.md)
 
-> **v0.3.4 ещё не опубликован и сейчас блокирует установку до изменения upstream.** Официальный `Diman6267/VPS-Server-Menu` `main` не предоставляет безопасного неинтерактивного интерфейса установки WARP: штатная функция добавляет cron и при сбое может ожидать ввод. Установщик меню также может сбросить существующий checkout и изменить `.bashrc`. Bob проверяет официальный commit до системных изменений и останавливается с диагностикой. До нового VPS E2E используйте опубликованный v0.3.3; его поведение отличается от текущего кандидата.
+> **v0.3.4 ещё не опубликован.** По состоянию на 23 октября 2026 официальный `Diman6267/VPS-Server-Menu` `main` (`3775143…`) не содержит API из открытого PR #6. Проверенные commit и SHA256 архива меню ещё не закреплены, поэтому режим установки нового WARP останавливается до изменений системы. Режимы существующего WARP и без WARP проходят отдельный путь, но ещё не проверены полным VPS E2E. Опубликованный v0.3.3 ведёт себя иначе.
 
 ## Что получится
 
@@ -25,7 +25,7 @@
 | **REALITY** | TCP/443, Self-SNI, Vision, Unix socket nginx, PROXY protocol v1 |
 | **Заглушка** | Уникальный облачный login portal, PHP-FPM, CSRF; данные формы не сохраняются |
 | **TLS** | Certbot HTTP-01 webroot, автоматическое продление для всех TLS-сервисов |
-| **WARP** | SOCKS5 только на loopback; компактные GeoSite AI/IP-check через WARP |
+| **WARP** | По выбору: новый, существующий или отключён; при активном WARP SOCKS5 только на loopback |
 | **Маршрутизация** | Basic UI `blocked`, RU/UA/private/BitTorrent блокируются; `IPOnDemand`, остальное DIRECT |
 | **Geodata** | Штатный Xray hot reload четырёх файлов ежедневно в 03:00 МСК через `direct`, с rollback |
 | **TCP BBR** | Автоматически настраивается на поддерживаемом ядре Linux, с FQ pacing и сохранением после reboot |
@@ -48,19 +48,21 @@
 5. **Добавляйте клиентов через 3x-ui**, привязывая их к созданному inbound и выбирая flow `xtls-rprx-vision`. Подписки и клиентская маршрутизация уже настроены.
 
 <details>
-<summary>Уже установлен WARP / нужен non-interactive запуск?</summary>
+<summary>Выбор WARP и запуск без вопросов</summary>
 
 Скопируйте и распакуйте проверенный release archive, затем:
 
 ```bash
 bash /root/selfsni/install.sh --domain vpn.example.com --adopt-warp
+bash /root/selfsni/install.sh --domain vpn.example.com --no-warp
+bash /root/selfsni/install.sh --domain vpn.example.com
 ```
 
-`--adopt-warp` предназначен для совместимого существующего WARP. В текущем кандидате v0.3.4 установка и продолжение останавливаются до изменения системы: официальный `main` меню пока не имеет безопасного интерфейса автоматизации. Успешный WARP health на VPS относится к предыдущему кандидату с форком, а не к этому коду.
+Без флагов выбирается новый WARP. `--adopt-warp` только читает состояние существующего `warp-svc` и требует Connected, proxy mode, порт 40000, loopback SOCKS5 и реальный `warp=on`; несовместимый WARP не меняется. `--no-warp` не устанавливает и не проверяет WARP, не создаёт его outbound и не меняет уже установленный сторонний WARP. Оба флага взаимоисключающие. В мастере доступны те же три пункта.
 
-Параметры: `--domain`, `--email`, `--ssh-port`, `--adopt-warp`, `--preflight-only`. При non-interactive запуске `--domain` обязателен. `NO_COLOR=1` отключает ANSI-цвета. `--preflight-only` строго read-only.
+Параметры: `--domain`, `--email`, `--ssh-port`, `--adopt-warp`, `--no-warp`, `--preflight-only`. При non-interactive запуске `--domain` обязателен. `NO_COLOR=1` отключает ANSI-цвета. `--preflight-only` строго read-only.
 
-Кандидат v0.3.4 хранит этап и installation ID в root-only state. После доказанного сбоя `APT_UPDATE`, `APT_UPGRADE`, `APT_INSTALL`, `WARP` или выдачи сертификата повтор той же команды продолжает установку, сохраняя порты и credentials. Если домен уже сохранён, мастер не спрашивает его снова. Перед повтором Certbot заново проверяются WARP и HTTP ownership. Узкий legacy-migration поддерживает только точный ранний `apt-get exited 100` из v0.3.3 при отсутствии любого управляемого пути; неизвестное старое состояние отклоняется. После более поздней стадии автоматическое продолжение запрещено. Полный redacted журнал команд находится в `/var/log/bob-auto-xray/install.log` с правами `0600`; одновременно работает только один установщик.
+Кандидат v0.3.4 хранит этап, installation ID и режим WARP в root-only state. После доказанного сбоя `APT_UPDATE`, `APT_UPGRADE`, `APT_INSTALL`, `WARP` или выдачи сертификата повтор продолжает установку, сохраняя режим, порты и credentials. Сменить режим при resume нельзя. Если домен уже сохранён, мастер не спрашивает его снова. Перед повтором Certbot заново проверяются существующий WARP в режиме adopt и HTTP ownership. Узкий legacy-migration поддерживает только точный ранний `apt-get exited 100` из v0.3.3 при отсутствии любого управляемого пути; неизвестное старое состояние отклоняется. После более поздней стадии автоматическое продолжение запрещено. Полный redacted журнал команд находится в `/var/log/bob-auto-xray/install.log` с правами `0600`; одновременно работает только один установщик.
 
 </details>
 
@@ -74,7 +76,8 @@ flowchart LR
     Socket --> Portal[nginx TLS + PHP portal]
     REALITY -->|VLESS Vision| Rules{Серверные правила}
     Rules -->|RU / UA / private / BitTorrent| Block[blocked · Basic UI]
-    Rules -->|GeoSite AI / IP-check| WARP[WARP SOCKS5 · loopback]
+    Rules -->|GeoSite AI / IP-check при активном WARP| WARP[WARP SOCKS5 · loopback]
+    Rules -->|GeoSite AI / IP-check без WARP| Direct
     Rules -->|остальное| Direct[DIRECT]
 ```
 

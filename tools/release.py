@@ -32,11 +32,11 @@ bootstrap_sha = hashlib.sha256(installer.read_bytes()).hexdigest()
 (root / 'dist/SHA256SUMS').write_text(f'{checksum}  {archive.name}\n{bootstrap_sha}  install.sh\n')
 (root / 'dist/release-notes.md').write_text(f'''Preview-релиз Bob Auto Xray {a.tag}.
 
-3x-ui + VLESS TCP REALITY Vision Self-SNI, nginx/PHP portal, selective WARP, native Geodata Auto-Update, TCP BBR с FQ и отдельные профили Happ/INCY.
+3x-ui + VLESS TCP REALITY Vision Self-SNI, nginx/PHP portal, опциональный WARP, native Geodata Auto-Update, TCP BBR с FQ и отдельные профили Happ/INCY.
 
 Установщик показывает русскоязычный мастер, прогресс по завершённым этапам и живой статус длительных команд. Диагностика Certbot объясняет типовые ошибки ACME и переводит подтверждённое время повтора из UTC в МСК. Сохранены безопасный resume, root-only журнал и SHA256-проверка архивов.
 
-Релиз публикуется только после отдельного успешного E2E именно этого кандидата: настоящий сертификат Let’s Encrypt, внешний REALITY/Vision клиент, WARP, подписки и reboot. Подробные результаты должны быть внесены в docs/TESTING.md до создания тега.
+Релиз публикуется только после отдельного успешного E2E именно этого кандидата: настоящий сертификат Let’s Encrypt, внешний REALITY/Vision клиент, оба сценария с WARP и без WARP, подписки и reboot. Подробные результаты должны быть внесены в docs/TESTING.md до создания тега.
 
 ## Установка от root на чистой VPS
 

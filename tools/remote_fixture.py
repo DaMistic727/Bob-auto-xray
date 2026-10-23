@@ -24,7 +24,7 @@ if action=='create':
     run('systemctl','restart','x-ui')
     wait_for(lambda: bool(api.call('inbounds/list')), 'client activation')
     print(json.dumps({k:s[k] for k in ['domain','ipv4','reality_public','short_id','sub_port','sub_path','panel_port','panel_path']}
-                     | {'client':client}))
+                     | {'client':client, 'warp_mode':s.get('warp_mode', 'adopt' if s.get('adopt_warp') else 'install')}))
 elif action=='cleanup':
     saved=json.loads(fixture.read_text())
     api.call('clients/del/'+saved['client']['email'], {})

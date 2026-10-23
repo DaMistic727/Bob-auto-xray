@@ -4,7 +4,7 @@ Xray слушает `0.0.0.0:443`, VLESS TCP REALITY. Сервис 3x-ui v3.10.2
 
 REALITY `target=/run/selfsni/nginx.sock`, `xver=1`. Ключ `target` нужен модели веб-редактора 3x-ui v3.10.2; legacy `dest` не записывается рядом. nginx принимает исходный TLS с PROXY v1 (`ssl http2 proxy_protocol`), завершает TLS и передаёт только корень сайта и случайный auth endpoint в PHP-FPM. Публичного второго порта заглушки нет. В Xray 26.10.10 RAW и TCP — совместимые имена транспорта. Проверка обычного HTTPS через TCP/443 одновременно проверяет TLS passthrough, Unix socket и PROXY protocol: nginx без корректного префикса отвергает соединение.
 
-Каталог сокета создаётся tmpfiles и ExecStartPre nginx. Права каталога 0750 root:root; Xray работает в официальном root-сервисе панели. x-ui запускается после nginx и WARP и проверяет наличие сокета. nginx при рестарте пересоздаёт listener; REALITY открывает новое Unix-соединение для каждого fallback.
+Каталог сокета создаётся tmpfiles и ExecStartPre nginx. Права каталога 0750 root:root; Xray работает в официальном root-сервисе панели. x-ui запускается после nginx и проверяет наличие сокета; зависимость от `warp-svc` добавляется только в режимах install/adopt. nginx при рестарте пересоздаёт listener; REALITY открывает новое Unix-соединение для каждого fallback.
 
 Certbot использует только HTTP-01 webroot `/var/lib/selfsni-acme`. Панель, nginx и подписки читают одни и те же `live/<FQDN>/{fullchain,privkey}.pem`. Deploy hook проверяет и перезагружает nginx, затем перезапускает x-ui (панель, Xray, подписки). Проверяется `certbot renew --dry-run --run-deploy-hooks`.
 
@@ -30,11 +30,9 @@ sysctl net.core.default_qdisc
 
 ## Проверяемые зависимости
 
-`versions.lock.json` фиксирует 3x-ui, upstream scripts, commit VPS-Server-Menu и commit routing. Release assets 3x-ui сверяются с SHA256 GitHub release metadata, записанным в lock при разработке. Оригинальный non-interactive `install.sh` 3x-ui запускается без изменений; временный offline curl adapter обслуживает исключительно заранее скачанные и проверенные файлы. Доступ к неизвестным URL прекращается. Временный HTTP порт панели закрыт UFW; наружу он открывается после настройки HTTPS и сертификата.
+`versions.lock.json` фиксирует 3x-ui, upstream scripts и commit routing. Для нового WARP зарезервированы `menu_commit` и `menu_archive_sha256`: пока PR #6 не объединён и не проверен, оба поля `null`, а режим install прекращается до изменений системы. После заполнения Bob требует точного совпадения pinned commit с официальным `main` и проверяет SHA256 commit-addressed архива до APT. Плавающие URL `main` и непроверенный форк отвергаются. В adopt/skip данные меню не проверяются и не скачиваются. Release assets 3x-ui сверяются с SHA256 GitHub release metadata, записанным в lock при разработке. Оригинальный non-interactive `install.sh` 3x-ui запускается без изменений; временный offline curl adapter обслуживает исключительно заранее скачанные и проверенные файлы. Доступ к неизвестным URL прекращается. Временный HTTP порт панели закрыт UFW; наружу он открывается после настройки HTTPS и сертификата.
 
-Bob не реализует установку WARP самостоятельно. Он получает SHA256-закреплённый архив VPS-Server-Menu, создаёт Git checkout точного commit с сохранённым `.git`, сверяет его содержимое с архивом и вызывает pinned installer с `--non-interactive --no-autostart`. Плавающий `git pull main` и автозапуск из `.bashrc` не используются.
-
-Далее Bob вызывает официальный API меню: `server-menu warp install --port 40000 --json` либо только `health` при `--adopt-warp`. Меню задаёт proxy mode и порт до регистрации/connect, сохраняет существующую регистрацию при восстановлении и не запускает WARPSCOUT автоматически. HEALTHY требует active `warp-svc`, Connected, ожидаемый proxy port, только loopback-listener и реальный Cloudflare trace через SOCKS5 с `warp=on`; DEGRADED/DOWN прекращают provisioning. Bob независимо повторяет functional trace перед настройкой Xray. Установка не создаёт cron restart; Endpoint Manager и WARPSCOUT остаются ручными функциями меню.
+Новый WARP остаётся заблокированным до объединения и интеграции проверенного non-interactive контракта PR #6 в официальном VPS-Server-Menu. На 23 октября 2026 его `main` всё ещё содержит несовместимый для Bob commit `3775143…`. Bob не вызывает интерактивное меню и не выполняет разрушительное обновление checkout. Режим `adopt` не вызывает меню: он читает active `warp-svc`, `warp-cli status/settings`, loopback listener и Cloudflare trace через SOCKS5. Установка существующего аккаунта, смена proxy mode/порта и перезапуск сервиса запрещены. Режим `skip` не обращается к WARP, не требует `/dev/net/tun` и допускает уже установленный сторонний WARP без изменений.
 
 Пакеты Ubuntu и WARP обновляются из подписанных APT-репозиториев; фактически установленные версии сохраняются в state. Это не побитово воспроизводимый snapshot APT. Поддержка 26.04/arm64 условна: требуются официальные пакеты для этой пары ОС/архитектуры; обход через пакеты другой Ubuntu отсутствует.
 
@@ -56,17 +54,17 @@ Xray-core 26.10.10 создаёт `robfig/cron` без `WithLocation`, поэт�
 
 Native updater сначала загружает все assets во временные файлы, затем атомарно заменяет цели и вызывает reload registries. Ошибка скачивания не меняет установленные файлы; ошибка reload возвращает прежние файлы. Acceptance проверяет оба пути, hot reload без смены PID и повторно валидирует используемые категории.
 
-Штатные теги Basic UI — `direct` и `blocked`; отдельный дублирующий `block` не создаётся. Пользовательские outbounds имеют ровно такой порядок: `direct`, `blocked`, `warp-outbound`. Правила:
+Штатные теги Basic UI — `direct` и `blocked`; отдельный дублирующий `block` не создаётся. В install/adopt порядок пользовательских outbounds — `direct`, `blocked`, `warp-outbound`; в skip — только `direct`, `blocked`. Правила:
 
 1. Штатное служебное правило `api`.
 2. `blocked`: `geoip:private`, `ext:geoip_RU.dat:ru`, `geoip:ua`.
 3. `blocked`: протокол `bittorrent`.
 4. `blocked`: `ext:geosite_RU.dat:category-ads-all`, `ext:geosite_RU.dat:ru-available-only-inside`, суффиксы `.ru`, `.su`, `.xn--p1ai`.
-5. `warp-outbound`: `geosite:category-ai-!cn`, `geosite:category-ip-geo-detect`.
+5. Только install/adopt: `warp-outbound` для `geosite:category-ai-!cn`, `geosite:category-ip-geo-detect`.
 
 Терминальное правило DIRECT отсутствует: Xray использует первый outbound (`direct`) для трафика, который не совпал с правилами. Такой вид совпадает с Basic UI, переживает сохранение через API без появления дублей и оставляет служебный inbound панели работоспособным.
 
-`IPOnDemand` принципиален: Xray разрешает домен тогда, когда раннему IP-правилу нужен адрес. Поэтому иностранное имя, которое разрешается в российский IP, блокируется до более позднего GeoSite WARP. `IPIfNonMatch` может пропустить раннюю IP-проверку, если позднее совпадёт доменное правило. DNS Xray использует DoH через системный путь; серверные блокировки не касаются Certbot, SSH, системного DNS, WARP daemon или панели. При недоступности WARP соответствующие назначения не переключаются молча на DIRECT.
+`IPOnDemand` принципиален: Xray разрешает домен тогда, когда раннему IP-правилу нужен адрес. Поэтому иностранное имя, которое разрешается в российский IP, блокируется до более позднего GeoSite WARP. `IPIfNonMatch` может пропустить раннюю IP-проверку, если позднее совпадёт доменное правило. DNS Xray использует DoH через системный путь; серверные блокировки не касаются Certbot, SSH, системного DNS, WARP daemon или панели. В режиме skip AI/IP-check попадает в обычный DIRECT после блокирующих правил. В install/adopt недоступный WARP не переключается молча на DIRECT.
 
 REALITY хранится с `show: true` и Firefox uTLS fingerprint. Sniffing включает `http`, `tls`, `quic`, `fakedns`; итоговый `routeOnly: true` использует sniffed имя для выбора маршрута и сохраняет запрошенный адрес назначения. Контрольный SOCKS5+TLS тест с раздельными IP и SNI подтвердил различие режимов: при `false` Xray переписывает dial target, при `true` сохраняет исходный IP. Firefox также фиксируется в выдаваемых VLESS URI и во временных E2E-клиентах.
 
@@ -78,7 +76,7 @@ UFW сохраняет все обнаруженные SSH-порты и отк�
 
 Перед provisioning APT выполняет отдельные `update`, обычный `upgrade -y` и `install -y` с `DPkg::Lock::Timeout=600`, noninteractive/`--force-confold` и запретом удаления пакетов при upgrade. Сетевые повторы ограничены и применяются только к `update`; неизвестный частичный install автоматически не повторяется внутри того же запуска. Полный вывод команд хранится в redacted журнале 0600, а терминал показывает классификацию lock/network/dependencies/dpkg/systemd/timeout.
 
-State machine сохраняет installation ID, текущий и последний завершённый этап, исходные credentials и доказательства отсутствовавших управляемых путей. Повтор той же команды разрешён после APT и WARP: пакетная операция безопасно повторяется либо меню согласует частичный WARP без удаления регистрации. Resume проверяет домен, режим adopt, ownership и nginx default site. После сертификата, панели и других неоднозначных стадий автоматическое продолжение прекращается с инструкцией. `HEALTHY_LOCAL` повторно не устанавливается. Процесс защищён `flock`; `--preflight-only` не создаёт state, lock или лог.
+State machine сохраняет installation ID, режим WARP, текущий и последний завершённый этап, исходные credentials и доказательства отсутствовавших управляемых путей. Resume после APT/WARP/Certbot проверяет домен, неизменность режима, ownership и nginx default site. Старые state с `adopt_warp` читаются как install/adopt. В skip этап WARP отмечается завершённым как осознанно пропущенный. При adopt перед Certbot повторно проверяется работающий туннель без его изменения. После сертификата, панели и других неоднозначных стадий автоматическое продолжение прекращается с инструкцией. `HEALTHY_LOCAL` повторно не устанавливается. Процесс защищён `flock`; `--preflight-only` не создаёт state, lock или лог.
 
 При сбое установка сообщает FAILED и не выводит credentials как успешный результат. Чужие конфигурации не удаляются. Автоматического отката пакетов/сертификата нет: он мог бы удалить полезную диагностику или разорвать SSH.
 

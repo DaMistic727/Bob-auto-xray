@@ -36,7 +36,7 @@ def _is_api_rule(rule):
     return rule.get('outboundTag') == 'api' and (inbound == 'api' or inbound == ['api'])
 
 
-def server_template(original):
+def server_template(original, warp_mode='install'):
     """Build the fresh-panel template in the same shape as RoutingBasic.tsx.
 
     The stock `blocked` rules intentionally have no inboundTag. Their `ip` fields
@@ -44,6 +44,7 @@ def server_template(original):
     form used by the Basic UI makes a load/save round-trip idempotent.
     """
     result = copy.deepcopy(original)
+    require(warp_mode in ('install', 'adopt', 'skip'), 'Unknown WARP mode')
     outbounds = result.get('outbounds', [])
     direct = [x for x in outbounds if x.get('tag') == 'direct']
     blocked = [x for x in outbounds if x.get('tag') == 'blocked']
@@ -55,11 +56,12 @@ def server_template(original):
     require(len(warp) <= 1, 'Duplicate WARP outbounds')
 
     extras = [x for x in outbounds if x.get('tag') not in ('direct', 'blocked', 'block', 'warp-outbound')]
-    result['outbounds'] = [direct[0], blocked[0], {
+    warp_outbound = {
         'tag': 'warp-outbound',
         'protocol': 'socks',
         'settings': {'servers': [{'address': '127.0.0.1', 'port': 40000, 'users': []}]},
-    }, *extras]
+    }
+    result['outbounds'] = [direct[0], blocked[0]] + ([] if warp_mode == 'skip' else [warp_outbound]) + extras
 
     routing = result.setdefault('routing', {})
     # IPOnDemand is deliberate: AsIs cannot apply the RU IP rule when a client
@@ -77,8 +79,8 @@ def server_template(original):
         {'type': 'field', 'ip': BLOCKED_IPS, 'outboundTag': 'blocked'},
         {'type': 'field', 'protocol': ['bittorrent'], 'outboundTag': 'blocked'},
         {'type': 'field', 'domain': BLOCKED_DOMAINS, 'outboundTag': 'blocked'},
-        {'type': 'field', 'domain': WARP_DOMAINS, 'outboundTag': 'warp-outbound'},
-    ]
+    ] + ([] if warp_mode == 'skip' else [
+        {'type': 'field', 'domain': WARP_DOMAINS, 'outboundTag': 'warp-outbound'}])
     result.setdefault('policy', {}).setdefault('system', {}).update(
         statsOutboundUplink=True, statsOutboundDownlink=True)
     result['dns'] = {'servers': ['https+local://1.1.1.1/dns-query'], 'queryStrategy': 'UseIP'}

@@ -62,10 +62,10 @@ class InstallerUI:
     def stage(self, number, total, label, state='running'):
         self._clear()
         self.current = (number, total, label)
-        if state == 'ok':
+        if state in ('ok', 'skipped'):
             self.completed = max(self.completed, number)
-            symbol = '✓' if self.unicode else 'OK'
-            elapsed = int(time.monotonic() - self.stage_started)
+            symbol = ('—' if self.unicode else 'SKIP') if state == 'skipped' else ('✓' if self.unicode else 'OK')
+            elapsed = 0 if state == 'skipped' else int(time.monotonic() - self.stage_started)
             print(self._paint('32', f'{symbol} {label} ({self.completed}/{total}, {elapsed // 60:02d}:{elapsed % 60:02d})'),
                   file=self.stream, flush=True)
         elif state == 'failed':
@@ -106,8 +106,9 @@ class InstallerUI:
                   '│\n╰' + '─' * 46 + '╯', file=self.stream)
         else:
             print('\nУСТАНОВКА ЗАВЕРШЕНА', file=self.stream)
-        checks = ('Сервер настроен', 'SSL-сертификат получен', '3x-ui работает',
-                  'WARP HEALTHY', 'Локальные проверки пройдены')
+        checks = ['Сервер настроен', 'SSL-сертификат получен', '3x-ui работает']
+        checks.append('WARP HEALTHY' if state.get('warp_mode', 'install') != 'skip' else 'WARP не используется')
+        checks.append('Локальные проверки пройдены')
         mark = '✓' if self.unicode else 'OK'
         print('\n' + '\n'.join(f'{mark} {item}' for item in checks), file=self.stream)
         print(f'\nПанель управления:\nhttps://{state["domain"]}:{state["panel_port"]}{state["panel_path"]}',
@@ -145,7 +146,7 @@ def interactive_wizard(args, version, input_stream=None, output=None):
         ui = InstallerUI(output, tty=output.isatty())
         ui.banner(version)
         if not args.domain:
-            print('\nШАГ 1/3 — Домен сервера\n' + '─' * 44 + '\n'
+            print('\nШАГ 1/4 — Домен сервера\n' + '─' * 44 + '\n'
                   'Введите домен для подключения к VPN.\nПример: vpn.example.com\n\n'
                   'Перед продолжением проверьте:\n'
                   '• DNS-запись A указывает на IP этого сервера.\n'
@@ -156,7 +157,7 @@ def interactive_wizard(args, version, input_stream=None, output=None):
             except InstallError as error:
                 raise InstallError('Некорректный домен. Введите адрес вида vpn.example.com, без https:// и пути.') from error
         if not args.email:
-            print('\nШАГ 2/3 — SSL-сертификат\n' + '─' * 44 + '\n'
+            print('\nШАГ 2/4 — SSL-сертификат\n' + '─' * 44 + '\n'
                   'Для защищённого соединения будет получен бесплатный\n'
                   'сертификат Let’s Encrypt. Email для уведомлений\n'
                   'необязателен: нажмите Enter, чтобы пропустить.\n'
@@ -164,10 +165,20 @@ def interactive_wizard(args, version, input_stream=None, output=None):
             args.email = _read(source, output, 'Email (необязательно) › ')
         if args.email and not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', args.email):
             raise InstallError('Некорректный email. Пример: admin@example.com')
-        print('\nШАГ 3/3 — Подтверждение\n' + '─' * 44 + '\n'
+        if not getattr(args, 'warp_mode', None):
+            print('\nШАГ 3/4 — Cloudflare WARP\n' + '─' * 44 + '\n'
+                  '1. Установить Cloudflare WARP (по умолчанию)\n'
+                  '2. Использовать существующий WARP\n'
+                  '3. Не использовать WARP\n', file=output)
+            choice = _read(source, output, 'Режим WARP [1/2/3] › ')
+            if choice not in ('', '1', '2', '3'):
+                raise InstallError('Выберите режим WARP: 1, 2 или 3')
+            args.warp_mode = {'': 'install', '1': 'install', '2': 'adopt', '3': 'skip'}[choice]
+        args.adopt_warp = args.warp_mode == 'adopt'
+        print('\nШАГ 4/4 — Подтверждение\n' + '─' * 44 + '\n'
               f'Домен:        {args.domain}\n'
               'Сертификат:   Let’s Encrypt\n'
-              f'WARP:         {"Проверка существующей установки" if args.adopt_warp else "Автоматическая установка"}\n'
+              f'WARP:         {dict(install="Автоматическая установка", adopt="Проверка существующей установки", skip="Не используется")[args.warp_mode]}\n'
               'Панель:       3x-ui\n\n'
               'Будут обновлены системные пакеты и настроены\nкомпоненты VPN-сервера.\n', file=output)
         if _read(source, output, 'Начать установку? [Y/n] › ').lower() not in ('', 'y', 'yes', 'д', 'да'):

@@ -230,9 +230,12 @@ def download(url, path, sha256=None):
         raise result[0]
     return Path(path)
 
-def verify_bundle():
+def verify_bundle(warp_mode='install'):
+    require(warp_mode in ('install', 'adopt', 'skip'), 'Unknown WARP mode')
     lock = json.loads((ROOT / 'versions.lock.json').read_text())
     for name, expected in lock['files'].items():
+        if warp_mode != 'install' and name == 'vendor/cloudflare-pubkey.gpg':
+            continue
         require(digest(ROOT / name) == expected, f'Bundled file changed: {name}')
     return lock
 

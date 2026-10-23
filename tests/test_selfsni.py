@@ -23,8 +23,9 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(lock['xui_version'],'v3.10.2')
         self.assertEqual(lock['menu_repository'],
                          'https://github.com/Diman6267/VPS-Server-Menu.git')
-        self.assertEqual(lock['menu_branch'], 'main')
-        self.assertNotIn('menu_commit', lock)
+        self.assertIsNone(lock['menu_commit'])
+        self.assertIsNone(lock['menu_archive_sha256'])
+        self.assertNotIn('menu_branch', lock)
         self.assertNotIn('menu.tar.gz', lock['downloads'])
         self.assertEqual(set(lock['server_geodata']['files']), set(REQUIRED))
 
@@ -199,7 +200,8 @@ class FailureTests(unittest.TestCase):
             fixture={'domain':'test.example','ipv4':'192.0.2.1','ubuntu':'26.04','codename':'resolute',
                      'arch':'amd64','ssh_ports':[22],'panel_port':21000,'sub_port':22000,
                      'panel_path':'/panel/','sub_path':'/sub/','username':'user',
-                     'password':'password','adopt_warp':False,'bbr_preflight':{},'status':'INSTALLING'}
+                     'password':'password','adopt_warp':False,'warp_mode':'install',
+                     'bbr_preflight':{},'status':'INSTALLING'}
             with patch.object(provision,'STATE',state), patch.object(provision,'verify_bundle',return_value={}), \
                  patch.object(provision,'check_official_menu'), \
                  patch.object(provision,'DIAGNOSTIC_LOG',Path(d)/'install.log'), \

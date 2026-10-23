@@ -32,11 +32,11 @@ def check_warp():
     warp = [x for x in listeners.splitlines() if x.split()[3].endswith(':40000')]
     require(warp and all(x.split()[3] in ('127.0.0.1:40000','[::1]:40000') for x in warp),
             'WARP must listen on loopback only')
-    trace = run('curl','-fsS','--socks5-hostname','127.0.0.1:40000',
+    trace = run('curl','--noproxy','','-fsS','--socks5-hostname','127.0.0.1:40000',
                 '--connect-timeout','10','--max-time','30','https://www.cloudflare.com/cdn-cgi/trace')
-    require('warp=on' in trace or 'warp=plus' in trace, 'SOCKS5 trace is not WARP')
-    direct = run('curl','-fsS','--max-time','30','https://www.cloudflare.com/cdn-cgi/trace')
-    require('warp=off' in direct, 'System traffic is unexpectedly tunneled')
+    require(re.search(r'(?m)^warp=(on|plus)$', trace), 'SOCKS5 trace is not WARP')
+    direct = run('curl','--noproxy','*','-fsS','--max-time','30','https://www.cloudflare.com/cdn-cgi/trace')
+    require(re.search(r'(?m)^warp=off$', direct), 'System traffic is unexpectedly tunneled')
     return True
 
 
@@ -64,6 +64,8 @@ def editor_reality_target(row):
     return target
 
 def verify(s):
+    mode = s.get('warp_mode', 'adopt' if s.get('adopt_warp') else 'install')
+    require(mode in ('install', 'adopt', 'skip'), 'Unknown WARP mode')
     checks = []
     bbr_report = {}
     def check(name, fn):
@@ -123,18 +125,21 @@ def verify(s):
 
     def routing_roundtrip():
         before = xray_setting()
-        require(server_template(before) == before, 'Stored Xray template is not canonical')
+        require(server_template(before, mode) == before, 'Stored Xray template is not canonical')
         tags = [x.get('tag') for x in before['outbounds']]
-        require(tags[:3] == ['direct', 'blocked', 'warp-outbound'], 'Unexpected outbound order')
+        expected_tags = ['direct', 'blocked'] + ([] if mode == 'skip' else ['warp-outbound'])
+        require(tags[:len(expected_tags)] == expected_tags and
+                (mode != 'skip' or 'warp-outbound' not in tags), 'Unexpected outbound order')
         require(len(tags) == len(set(tags)) and 'block' not in tags, 'Duplicate/legacy outbound present')
         rules = before['routing']['rules']
         require(rules[0].get('outboundTag') == 'api', 'API service rule lost precedence')
-        require(rules[1:] == [
+        expected_rules = [
             {'type': 'field', 'ip': BLOCKED_IPS, 'outboundTag': 'blocked'},
             {'type': 'field', 'protocol': ['bittorrent'], 'outboundTag': 'blocked'},
             {'type': 'field', 'domain': BLOCKED_DOMAINS, 'outboundTag': 'blocked'},
-            {'type': 'field', 'domain': WARP_DOMAINS, 'outboundTag': 'warp-outbound'},
-        ], 'Basic/WARP rules differ or are duplicated')
+        ] + ([] if mode == 'skip' else [
+            {'type': 'field', 'domain': WARP_DOMAINS, 'outboundTag': 'warp-outbound'}])
+        require(rules[1:] == expected_rules, 'Basic routing rules differ or are duplicated')
         require(before['routing']['domainStrategy'] == 'IPOnDemand', 'Unsafe routing domain strategy')
         require(before.get('geodata') == automatic_config(), 'Native geodata configuration mismatch')
         view = json_obj(api.call('xray/', {}, method='POST'))
@@ -157,8 +162,12 @@ def verify(s):
     def runtime_shape():
         config = json.loads(Path('/usr/local/x-ui/bin/config.json').read_text())
         tags = [x.get('tag') for x in config['outbounds']]
-        require(tags == ['direct', 'blocked', 'warp-outbound'],
-                'Runtime user outbounds differ from direct/blocked/WARP')
+        require(tags == ['direct', 'blocked'] + ([] if mode == 'skip' else ['warp-outbound']),
+                'Runtime user outbounds differ from selected WARP mode')
+        if mode == 'skip':
+            require(not any(rule.get('outboundTag') == 'warp-outbound' for rule in
+                            config.get('routing', {}).get('rules', [])),
+                    'Runtime routing still references WARP')
         inbound = next((item for item in config.get('inbounds', [])
                         if item.get('port') == 443
                         and item.get('streamSettings', {}).get('security') == 'reality'), None)
@@ -239,7 +248,12 @@ def verify(s):
                 if path.is_file() and path.stat().st_size < 5 * 1024 * 1024:
                     require(b'acceptance.invalid' not in path.read_bytes(), 'Portal submitted identity was persisted')
     check('Portal submitted identity absent from sessions and nginx logs', portal_privacy)
-    check('WARP SOCKS trace + direct system trace', check_warp)
+    if mode != 'skip':
+        check('WARP SOCKS trace + direct system trace', check_warp)
+    else:
+        check('x-ui has no warp-svc systemd dependency',
+              lambda: require('warp-svc.service' not in run('systemctl', 'cat', 'x-ui'),
+                              'x-ui depends on warp-svc'))
     def presets():
         settings = api.call('setting/all',{},method='POST')
         require(settings.get('subHappTunType') == 'xray', 'Happ TUN type was not persisted')
@@ -259,8 +273,8 @@ def verify(s):
             ({'ip':'77.88.8.8'}, 'blocked'),
             ({'ip':'2a02:6b8::1'}, 'blocked'),
             ({'domain':'77.88.8.8.nip.io'}, 'blocked'),
-            ({'domain':'chatgpt.com'}, 'warp-outbound'),
-            ({'domain':'api.ipify.org'}, 'warp-outbound'),
+            ({'domain':'chatgpt.com'}, 'warp-outbound' if mode != 'skip' else ''),
+            ({'domain':'api.ipify.org'}, 'warp-outbound' if mode != 'skip' else ''),
             ({'domain':'example.com'}, ''),
             ({'domain':'example.com', 'protocol':'bittorrent'}, 'blocked'),
         ]
@@ -270,8 +284,8 @@ def verify(s):
             result = api.call('xray/routeTest', data, form=True)
             actual = result.get('outboundTag', '')
             require(actual == expected, 'Unexpected destination route: ' + str(target))
-    check('Live routing: RU/IP/DNS, BitTorrent, GeoSite WARP, default DIRECT',routes)
-    for service in ['x-ui','nginx','warp-svc','fail2ban',s['php_service']]:
+    check('Live routing: RU/IP/DNS, BitTorrent, AI/IP-check, default DIRECT',routes)
+    for service in ['x-ui','nginx','fail2ban',s['php_service']] + ([] if mode == 'skip' else ['warp-svc']):
         check('systemd '+service,lambda service=service: (run('systemctl','is-active',service),run('systemctl','is-enabled',service)))
     check('UFW active',lambda:expect('Status: active' in run('ufw','status'),'UFW inactive'))
     check('Fail2ban jails',lambda:(run('fail2ban-client','status','sshd'),run('fail2ban-client','status','3x-ipl')))
@@ -394,6 +408,7 @@ def verify_sub_response(kind, status, headers, body):
     return True
 
 def e2e(s):
+    mode = s.get('warp_mode', 'adopt' if s.get('adopt_warp') else 'install')
     api = Panel(s)
     original = api.call('inbounds/list')[0]
     require(json_obj(original['settings'])['clients'] == [], 'E2E requires a disposable zero-client server')
@@ -422,8 +437,12 @@ def e2e(s):
                 wait_for(lambda: bool(fetch('https://example.com')), 'REALITY Vision test client')
                 direct = fetch('https://www.cloudflare.com/cdn-cgi/trace')
                 require('warp=off' in direct,'Ordinary traffic went through WARP')
-                expected_ip = run('curl','-fsS','--socks5-hostname','127.0.0.1:40000','--max-time','30','https://api.ipify.org').strip()
-                require(fetch('https://api.ipify.org').strip() == expected_ip,'IP-check did not egress WARP')
+                if mode == 'skip':
+                    expected_ip = run('curl','-4fsS','--max-time','30','https://api.ipify.org').strip()
+                else:
+                    expected_ip = run('curl','-fsS','--socks5-hostname','127.0.0.1:40000','--max-time','30','https://api.ipify.org').strip()
+                require(fetch('https://api.ipify.org').strip() == expected_ip,
+                        'IP-check did not use the selected DIRECT/WARP route')
                 for url in ['https://yandex.ru','https://77.88.8.8']:
                     try:
                         fetch(url)
@@ -470,11 +489,11 @@ def e2e(s):
                 # mismatch then proves the behavioral difference: false rewrites
                 # the dial target to the sniffed SNI, while true preserves the IP.
                 set_route_only(False)
-                require(bool(fetch('https://api.ipify.org')), 'WARP failed with routeOnly=false')
+                require(bool(fetch('https://api.ipify.org')), 'IP-check failed with routeOnly=false')
                 require(tls_to_ip_with_sni('8.8.8.8', 'example.com'),
                         'routeOnly=false did not rewrite sniffed SNI')
                 set_route_only(True)
-                require(bool(fetch('https://api.ipify.org')), 'WARP failed with routeOnly=true')
+                require(bool(fetch('https://api.ipify.org')), 'IP-check failed with routeOnly=true')
                 try:
                     tls_to_ip_with_sni('8.8.8.8', 'example.com')
                 except (ssl.SSLError, OSError):
@@ -499,7 +518,7 @@ def e2e(s):
     return {'subscriptions':'real HTTP for Happ + INCY; Base64/JSON/deeplinks verified',
             'reality':'real Vision connection with Firefox fingerprint from second Xray process on same VPS',
             'sniffing':'GeoSite routing passed with routeOnly false/true; final true preserves the requested IP against SNI rewriting',
-            'routing':'DIRECT example/trace + WARP IP-check + RU blocked',
+            'routing':'DIRECT example/trace + ' + ('DIRECT' if mode == 'skip' else 'WARP') + ' IP-check + RU blocked',
             'cleanup':'zero clients restored', 'external_client':'not covered by on-host test'}
 
 def main():

@@ -22,7 +22,7 @@ from .certbot_errors import explain as explain_certbot
 from .apt import AptRunner
 from .menu_upstream import check_official_menu
 from .install_state import (InstallerLock, checkpoint, fail, initialize, load,
-                            upgrade_legacy_apt_failure, validate_resume)
+                            upgrade_legacy_apt_failure, validate_resume, warp_mode)
 from .ui import InstallerUI, interactive_wizard
 from .geodata import GEODATA_TIMEZONE, verify_server_geodata
 from .portal import generate
@@ -73,7 +73,8 @@ def preflight(args, resume_state=None):
     require(os.geteuid() == 0, 'Run as root on the test/clean VPS')
     info = os_info()
     require(Path('/run/systemd/system').exists(), 'systemd is required')
-    require(Path('/dev/net/tun').exists(), '/dev/net/tun is required for WARP')
+    if args.warp_mode != 'skip':
+        require(Path('/dev/net/tun').exists(), '/dev/net/tun is required for WARP')
     require(shutil.disk_usage('/').free >= 2 * 1024**3, 'At least 2 GiB free disk required')
     for p in [str(STATE), *CONTROLLED_PATHS]:
         if resume_state and p == str(STATE):
@@ -101,16 +102,16 @@ def preflight(args, resume_state=None):
                     require(not foreign,
                             'Чужие Let’s Encrypt certificates обнаружены во время resume')
                 continue
-        # The existing official WARP repository is explicitly adopted with WARP.
-        if args.adopt_warp and (p.endswith('/cloudflare-client.list') or p == '/root/VPS-Server-Menu'):
+        # Existing WARP files belong to the operator in adopt/skip mode.
+        if args.warp_mode in ('adopt', 'skip') and (p.endswith('/cloudflare-client.list') or p == '/root/VPS-Server-Menu'):
             continue
         require(not Path(p).exists(), 'Existing installation/configuration: ' + p)
-    warp_present = shutil.which('warp-cli') is not None
-    warp_resume = bool(resume_state and resume_state.get('stage') in ('WARP', 'CERTIFICATE'))
+    warp_present = shutil.which('warp-cli') is not None if args.warp_mode != 'skip' else False
+    warp_resume = bool(args.warp_mode == 'install' and resume_state and resume_state.get('stage') in ('WARP', 'CERTIFICATE'))
     certificate_resume = bool(resume_state and resume_state.get('stage') == 'CERTIFICATE')
-    require(not warp_present or args.adopt_warp or warp_resume,
+    require(not warp_present or args.warp_mode in ('adopt', 'skip') or warp_resume,
             'Existing WARP: needs explicit --adopt-warp')
-    require(not args.adopt_warp or warp_present, '--adopt-warp requires an existing installation')
+    require(args.warp_mode != 'adopt' or warp_present, '--adopt-warp requires an existing installation')
     # Socket activation may expose ports absent from sshd_config; preserve both.
     ssh_ports = set()
     ssh_config = run('/usr/sbin/sshd', '-T')
@@ -128,8 +129,12 @@ def preflight(args, resume_state=None):
         ssh_ports.add(args.ssh_port)
     require(bool(ssh_ports) and all(1 <= x <= 65535 for x in ssh_ports), 'Cannot detect SSH port')
     allowed = ssh_ports | {53}
-    if args.adopt_warp or warp_resume:
+    if args.warp_mode == 'adopt' or warp_resume:
         allowed.add(40000)
+    if args.warp_mode == 'skip':
+        # A pre-existing WARP daemon is outside this installation's ownership.
+        allowed.update(int(line.split()[3].rsplit(':', 1)[1]) for line in listeners.splitlines()
+                       if 'warp-svc' in line)
     if certificate_resume:
         allowed.add(80)
     for line in listeners.splitlines():
@@ -149,7 +154,7 @@ def preflight(args, resume_state=None):
             for line in Path('/etc/ufw', name).read_text().splitlines():
                 if line.startswith('-A ufw-user-input '):
                     match = re.fullmatch(r'-A ufw-user-input -p tcp --dport (\d+) -j ACCEPT', line)
-                    resume_ports = {80, 443} if warp_resume else set()
+                    resume_ports = {80, 443} if resume_state and resume_state.get('stage') in ('WARP', 'CERTIFICATE') else set()
                     require(match is not None and int(match.group(1)) in ssh_ports | resume_ports,
                             'Existing non-SSH UFW rules')
     domain = fqdn(args.domain)
@@ -185,7 +190,8 @@ def preflight(args, resume_state=None):
     fresh = dict(domain=domain, ipv4=public, ubuntu=info['VERSION_ID'], codename=info['VERSION_CODENAME'],
                 arch='amd64' if platform.machine() == 'x86_64' else 'arm64',
                 ssh_ports=sorted(ssh_ports), panel_port=panel_port, sub_port=sub_port,
-                adopt_warp=args.adopt_warp, bbr_preflight=bbr_report, **credentials,
+                warp_mode=args.warp_mode, adopt_warp=args.warp_mode == 'adopt',
+                bbr_preflight=bbr_report, **credentials,
                 status='INSTALLING')
     if resume_state:
         preserved = ('panel_path', 'sub_path', 'username', 'password', 'panel_port', 'sub_port',
@@ -218,6 +224,26 @@ def install_warp(s, lock, work):
     # runs before APT in main(); keep the stage guarded if called directly.
     check_official_menu(lock)
     raise InstallError('Автоматизация WARP официального меню ещё не поддерживается')
+
+
+def adopt_warp(s):
+    """Inspect an existing daemon; never register, reconfigure or restart it."""
+    require(run('systemctl', 'is-active', 'warp-svc').strip() == 'active',
+            'Существующий warp-svc не активен')
+    try:
+        status = json.loads(run('warp-cli', '--json', 'status'))
+        settings = json.loads(run('warp-cli', '--json', 'settings'))
+    except (ValueError, TypeError) as error:
+        raise InstallError('Существующий WARP не вернул совместимый JSON status/settings') from error
+    require(isinstance(status, dict) and status.get('status') == 'Connected',
+            'Существующий WARP не подключён')
+    config = settings.get('settings') if isinstance(settings, dict) else None
+    require(isinstance(config, dict) and config.get('operation_mode') == 'proxy',
+            'Существующий WARP должен работать в proxy mode')
+    require(type(config.get('proxy_port')) is int and config['proxy_port'] == 40000,
+            'Существующий WARP должен использовать порт 40000')
+    from .acceptance import check_warp
+    check_warp()
 
 def certificate(s, email):
     stage('nginx + Certbot HTTP-01 webroot')
@@ -304,9 +330,8 @@ def panel(s, lock, work):
     run('/usr/local/x-ui/x-ui','setting','-webCert',cert+'fullchain.pem','-webCertKey',cert+'privkey.pem',
         '-listenIP','0.0.0.0')
     write('/etc/systemd/system/x-ui.service.d/20-selfsni.conf',
-          '[Unit]\nAfter=nginx.service warp-svc.service network-online.target\nWants=nginx.service warp-svc.service network-online.target\n'
-          '[Service]\nEnvironment=TZ=' + GEODATA_TIMEZONE + '\n'
-          'ExecStartPre=/usr/bin/test -S /run/selfsni/nginx.sock\n', 0o644)
+          xui_unit_override(s.get('warp_mode', 'install')),
+          0o644)
     run('systemctl','daemon-reload')
     run('systemctl','restart','x-ui')
     wait_for(lambda: request(s['domain'], s['panel_port'], s['panel_path'])[0] == 200, 'HTTPS panel')
@@ -317,6 +342,23 @@ def panel(s, lock, work):
     register_secrets(s['api_token'])
     save(STATE/'state.json',s)
     configure_panel(s, lock)
+
+
+def xui_unit_override(mode):
+    require(mode in ('install', 'adopt', 'skip'), 'Unknown WARP mode')
+    warp_unit = ' warp-svc.service' if mode != 'skip' else ''
+    return (f'[Unit]\nAfter=nginx.service{warp_unit} network-online.target\n'
+            f'Wants=nginx.service{warp_unit} network-online.target\n'
+            '[Service]\nEnvironment=TZ=' + GEODATA_TIMEZONE + '\n'
+            'ExecStartPre=/usr/bin/test -S /run/selfsni/nginx.sock\n')
+
+
+def version_packages(mode):
+    require(mode in ('install', 'adopt', 'skip'), 'Unknown WARP mode')
+    packages = ['nginx', 'php-fpm', 'certbot', 'fail2ban', 'ufw']
+    if mode != 'skip':
+        packages.append('cloudflare-warp')
+    return packages
 
 def configure_panel(s, lock):
     cert = f'/etc/letsencrypt/live/{s["domain"]}/'
@@ -344,7 +386,7 @@ def configure_panel(s, lock):
     xray = view['xraySetting']
     if isinstance(xray, str):
         xray = json.loads(xray)
-    api.call('xray/update', {'xraySetting': json.dumps(server_template(xray))}, form=True)
+    api.call('xray/update', {'xraySetting': json.dumps(server_template(xray, s.get('warp_mode', 'install')))}, form=True)
     require(not api.call('inbounds/list'), 'Fresh panel contains pre-existing inbounds')
     s['xray_bin'] = '/usr/local/x-ui/bin/xray-linux-' + s['arch']
     keys = run(s['xray_bin'], 'x25519')
@@ -360,7 +402,7 @@ def configure_panel(s, lock):
     run('systemctl','restart','x-ui')
     wait_for(lambda: request(s['domain'],s['sub_port'],s['sub_path']+'missing')[0] in (400,404), 'TLS subscriptions')
     s['xray_version'] = run(s['xray_bin'], 'version').splitlines()[0]
-    s['xui_version'] = verify_bundle()['xui_version']
+    s['xui_version'] = lock['xui_version']
 
 def security(s):
     stage('Official 3x-ui Fail2ban integration + SSH jail')
@@ -386,24 +428,32 @@ def main():
     parser.add_argument('--domain')
     parser.add_argument('--email', default='')
     parser.add_argument('--ssh-port', type=int)
-    parser.add_argument('--adopt-warp', action='store_true')
+    warp_flags = parser.add_mutually_exclusive_group()
+    warp_flags.add_argument('--adopt-warp', action='store_true')
+    warp_flags.add_argument('--no-warp', action='store_true')
     parser.add_argument('--preflight-only', action='store_true')
     args = parser.parse_args()
+    explicit_warp_mode = args.adopt_warp or args.no_warp
+    args.warp_mode = 'adopt' if args.adopt_warp else 'skip' if args.no_warp else None
     UI = InstallerUI()
     configure_activity(UI.pulse)
     try:
         resume_preview = load(STATE) if not args.preflight_only else None
         if resume_preview and not args.domain:
             args.domain = resume_preview['domain']
-            args.adopt_warp = resume_preview.get('adopt_warp', False)
             UI.note(f'Продолжаем сохранённую установку для {args.domain}. Параметры будут использованы повторно.')
+        if resume_preview and not explicit_warp_mode:
+            args.warp_mode = warp_mode(resume_preview)
         if not args.domain:
             version = (ROOT/'VERSION').read_text().strip()
             interactive_wizard(args, version)
         else:
             args.domain = fqdn(args.domain)
-        lock = verify_bundle()
-        if not args.preflight_only:
+        if args.warp_mode is None:
+            args.warp_mode = 'install'
+        args.adopt_warp = args.warp_mode == 'adopt'
+        lock = verify_bundle(args.warp_mode)
+        if not args.preflight_only and args.warp_mode == 'install':
             check_official_menu(lock)
         if args.preflight_only:
             UI.stage(1, 13, 'Проверка системы')
@@ -415,7 +465,7 @@ def main():
             previous = load(STATE)
             if previous:
                 previous = upgrade_legacy_apt_failure(previous, STATE, CONTROLLED_PATHS)
-                previous = validate_resume(previous, args.domain, args.adopt_warp)
+                previous = validate_resume(previous, args.domain, args.warp_mode)
                 require(not args.email or args.email == previous.get('email', ''),
                         'Для продолжения используйте исходный Let’s Encrypt email')
                 args.email = previous.get('email', '')
@@ -466,10 +516,20 @@ def main():
                     firewall(s); checkpoint(STATE, s, 'FIREWALL', True)
                     UI.stage(6, 13, 'Настройка сетевой защиты', 'ok')
                 if resume_target != 'CERTIFICATE':
-                    checkpoint(STATE, s, 'WARP'); UI.stage(7, 13, 'VPS-Server-Menu и WARP')
-                    install_warp(s,lock,work); checkpoint(STATE, s, 'WARP', True)
-                    UI.stage(7, 13, 'VPS-Server-Menu и WARP', 'ok')
-                else:
+                    checkpoint(STATE, s, 'WARP')
+                    if s['warp_mode'] == 'skip':
+                        UI.stage(7, 13, 'WARP пропущен', 'skipped')
+                    else:
+                        UI.stage(7, 13, 'Проверка WARP' if s['warp_mode'] == 'adopt' else 'VPS-Server-Menu и WARP')
+                        if s['warp_mode'] == 'adopt':
+                            adopt_warp(s)
+                        else:
+                            install_warp(s, lock, work)
+                        UI.stage(7, 13, 'WARP', 'ok')
+                    checkpoint(STATE, s, 'WARP', True)
+                elif s['warp_mode'] == 'adopt':
+                    adopt_warp(s)
+                elif s['warp_mode'] == 'install':
                     raise InstallError('Проверка WARP через официальный non-interactive API пока недоступна')
                 checkpoint(STATE, s, 'CERTIFICATE'); UI.stage(8, 13, 'Получение SSL-сертификата')
                 certificate(s,s['email']); checkpoint(STATE, s, 'CERTIFICATE', True)
@@ -495,8 +555,7 @@ def main():
                 s['status'] = 'HEALTHY_LOCAL'; s['stage'] = 'HEALTHY_LOCAL'
                 s['last_completed_stage'] = 'HEALTHY_LOCAL'
                 s.pop('failure', None)
-                s['versions'] = run('dpkg-query','-W','nginx','php-fpm','certbot',
-                                    'cloudflare-warp','fail2ban','ufw')
+                s['versions'] = run('dpkg-query','-W',*version_packages(s['warp_mode']))
                 save(STATE/'state.json',s)
                 (STATE/'FAILED').unlink(missing_ok=True)
                 UI.stage(13, 13, 'Готово', 'ok')
