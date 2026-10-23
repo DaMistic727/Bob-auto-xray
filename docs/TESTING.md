@@ -1,5 +1,17 @@
 # Отчёт о тестировании · 23 октября 2026
 
+## Обновление закреплённого Xray-core до v26.10.21
+
+Официальный XTLS/Xray-core [отозвал v26.10.10 и v26.10.17 из-за проблемы безопасности certificate roots и выпустил v26.10.21](https://github.com/XTLS/Xray-core/releases/tag/v26.10.21). 3x-ui остаётся v3.10.2; его официальный архив содержит старый Xray, который установщик заменяет отдельно. В `versions.lock.json` закреплены точные URL и SHA256 официальных Linux ZIP и извлечённых `xray` для amd64/arm64. Оба ZIP загружены из официального релиза, их SHA256 совпали с GitHub asset digest, бинарные SHA256 совпали с lock. Runtime arm64 на Linux не проверялся.
+
+| Проверка нового pin | Результат | Доказательство |
+| --- | --- | --- |
+| Локальные регрессии и статические проверки | **PASSED** | 92/92 unittest; ShellCheck, `bash -n`, `compileall`, JSON и `git diff --check` прошли. Отдельные тесты проверяют официальный URL, сохранение 3x-ui v3.10.2, порядок stop/replace, архивный и бинарный digest, отказ при подмене binary/fork. Два запуска `tools/package.py` дали одинаковый SHA256. |
+| Установленный Xray на одноразовой Ubuntu 26.04.1 amd64 | **PASSED** | Официальный бинарный SHA256 `a27e3f95ab6ce270956d0cecd32eda4686a811afc71c64a6a734a3dede14883e`; `Xray 26.10.21`, commit `1b1647c`, Go 1.27.3. Панель осталась `v3.10.2`. |
+| Конфигурация, созданная 3x-ui, и on-host acceptance | **PASSED** | Фактический `/usr/local/x-ui/bin/config.json`: `xray run -test` exit 0, on-host 26/26 и временный клиент E2E; [обезличенный отчёт](e2e-xray-261021-onhost.json). Запуск отдельного бинарного файла без `XRAY_LOCATION_ASSET` сначала обнаружил отсутствие GeoData рядом с ним; с каталожными assets панели тот же тест прошёл. |
+| Внешний независимый REALITY/Vision-клиент | **PASSED** | 6/6: HTTPS-подписки, реальное подключение к TCP/443, DIRECT/IP-check, OpenAI HTTP и RU block; [обезличенный отчёт](e2e-xray-261021-external.json). Временный клиент удалён. |
+| Чистая установка с новым pin, reboot после обновления, Linux arm64 runtime | **NOT TESTED** | Предыдущее clean-install/reboot доказательство ниже получено со встроенным Xray 26.10.10 до этого изменения. Требуется отдельный прогон с новым архивом проекта. |
+
 ## Текущий аудит `3ced196` и локальные исправления
 
 **PASSED (локально):** рабочее дерево перед аудитом было чистым, ветка `feat/v0.3.4-installer-recovery-warp-menu` содержала локальный `3ced196`. Проверены ветви `skip` в preflight, bundle lock, установке, resume, Xray template, acceptance и внешнем сценарии; тесты подтверждают отсутствие обращения к upstream WARP API, TUN, WARP-пакету и зависимости `warp-svc` в этих ветвях. Мастер теперь спрашивает WARP сразу после домена, по умолчанию выбирает установку, а adopt предлагает только при обнаруженных `warp-cli` и активном `warp-svc`. Для adopt пропущен общий `apt-get upgrade`, способный косвенно обновить или перезапустить существующий WARP. `apt-get update` и установка необходимых пакетов остаются. Локальный прогон: **89/89 unittest**, `compileall`, `bash -n`, ShellCheck, `git diff --check` — успешно.

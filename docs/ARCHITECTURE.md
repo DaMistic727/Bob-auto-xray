@@ -1,8 +1,8 @@
 # Архитектура и происхождение правил
 
-Xray слушает `0.0.0.0:443`, VLESS TCP REALITY. Сервис 3x-ui v3.10.2 управляет Xray; собственных постоянных демонов установщика нет. Клиенты добавляются вручную с Vision. Правила назначения применяются ко всем пользовательским inbound, поэтому добавленные через панель inbound получают ту же защиту. Служебное правило API сохраняется первым. География источника соединения никогда не фильтруется.
+Xray-core v26.10.21 слушает `0.0.0.0:443`, VLESS TCP REALITY. Сервис 3x-ui v3.10.2 управляет Xray; установщик проверяет официальный ZIP и бинарный SHA256 перед заменой встроенного ядра панели. Собственных постоянных демонов установщика нет. Клиенты добавляются вручную с Vision. Правила назначения применяются ко всем пользовательским inbound, поэтому добавленные через панель inbound получают ту же защиту. Служебное правило API сохраняется первым. География источника соединения никогда не фильтруется.
 
-REALITY `target=/run/selfsni/nginx.sock`, `xver=1`. Ключ `target` нужен модели веб-редактора 3x-ui v3.10.2; legacy `dest` не записывается рядом. nginx принимает исходный TLS с PROXY v1 (`ssl http2 proxy_protocol`), завершает TLS и передаёт только корень сайта и случайный auth endpoint в PHP-FPM. Публичного второго порта заглушки нет. В Xray 26.10.10 RAW и TCP — совместимые имена транспорта. Проверка обычного HTTPS через TCP/443 одновременно проверяет TLS passthrough, Unix socket и PROXY protocol: nginx без корректного префикса отвергает соединение.
+REALITY `target=/run/selfsni/nginx.sock`, `xver=1`. Ключ `target` нужен модели веб-редактора 3x-ui v3.10.2; legacy `dest` не записывается рядом. nginx принимает исходный TLS с PROXY v1 (`ssl http2 proxy_protocol`), завершает TLS и передаёт только корень сайта и случайный auth endpoint в PHP-FPM. Публичного второго порта заглушки нет. В закреплённом Xray 26.10.21 текущая конфигурация RAW проходит `run -test` и реальное подключение REALITY/Vision. Проверка обычного HTTPS через TCP/443 одновременно проверяет TLS passthrough, Unix socket и PROXY protocol: nginx без корректного префикса отвергает соединение.
 
 Каталог сокета создаётся tmpfiles и ExecStartPre nginx. Права каталога 0750 root:root; Xray работает в официальном root-сервисе панели. x-ui запускается после nginx и проверяет наличие сокета; зависимость от `warp-svc` добавляется только в режимах install/adopt. nginx при рестарте пересоздаёт listener; REALITY открывает новое Unix-соединение для каждого fallback.
 
@@ -50,7 +50,7 @@ sysctl net.core.default_qdisc
 
 После установки Xray сам обновляет четыре server assets через native `geodata.assets`: основные `geosite.dat`/`geoip.dat` из Loyalsoldier и RU-файлы из runetfreedom. `geodata.outbound` равен `direct`; отдельные cron jobs, download scripts и systemd timers отсутствуют. Конфигурация хранится в штатном Xray JSON, отображается в Geodata UI 3x-ui и сохраняется обычным `xray/update`.
 
-Xray-core 26.10.10 создаёт `robfig/cron` без `WithLocation`, поэтому cron использует Go `time.Local` процесса. Systemd drop-in устойчиво задаёт `TZ=Etc/UTC` для `x-ui` и дочернего Xray, а cron `0 0 * * *` означает 00:00 UTC = 03:00 Europe/Moscow. Системный timezone сервера не меняется. Drop-in переживает restart и reboot.
+Systemd drop-in задаёт `TZ=Etc/UTC` для `x-ui` и дочернего Xray, а cron `0 0 * * *` означает 00:00 UTC = 03:00 Europe/Moscow. На Xray 26.10.21 конфигурация native GeoData прошла acceptance после замены бинарного файла; фактический очередной ежедневный запуск cron для этой версии отдельно не проверен. Системный timezone сервера не меняется.
 
 Native updater сначала загружает все assets во временные файлы, затем атомарно заменяет цели и вызывает reload registries. Ошибка скачивания не меняет установленные файлы; ошибка reload возвращает прежние файлы. Acceptance проверяет оба пути, hot reload без смены PID и повторно валидирует используемые категории.
 

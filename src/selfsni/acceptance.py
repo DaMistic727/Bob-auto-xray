@@ -26,6 +26,7 @@ from .geodata import (GEODATA_ASSETS, GEODATA_CRON, GEODATA_TIMEZONE,
                       automatic_config, verify_server_geodata)
 from .routing import (BLOCKED_DOMAINS, BLOCKED_IPS, WARP_DOMAINS, TAG, profile,
                       server_template)
+from .xray_pin import pinned_xray_spec
 
 
 def check_warp():
@@ -159,6 +160,15 @@ def verify(s):
     check('Installed GeoSite/GeoIP categories',
           lambda: verify_server_geodata('/usr/local/x-ui/bin'))
     check('nginx configuration',lambda: run('nginx','-t'))
+    def pinned_xray():
+        from .core import ROOT
+        lock = json.loads((ROOT/'versions.lock.json').read_text())
+        expected = pinned_xray_spec(lock, s['arch'])['binary_sha256']
+        require(s.get('xray_sha256') == expected and digest(s['xray_bin']) == expected,
+                'Panel Xray binary differs from the pinned official release')
+        require(run(s['xray_bin'], 'version').startswith('Xray 26.10.21 '),
+                'Panel Xray version differs from the pinned release')
+    check('Pinned official Xray binary SHA256 and version', pinned_xray)
     check('Xray configuration',lambda: run(s['xray_bin'],'run','-test','-config','/usr/local/x-ui/bin/config.json'))
     def runtime_shape():
         config = json.loads(Path('/usr/local/x-ui/bin/config.json').read_text())

@@ -27,6 +27,7 @@ from .ui import InstallerUI, interactive_wizard
 from .geodata import GEODATA_TIMEZONE, verify_server_geodata
 from .portal import generate
 from .routing import deeplink, inbound, server_template
+from .xray_pin import install_pinned_xray
 
 STATE = Path('/var/lib/selfsni')
 DIAGNOSTIC_LOG = Path('/var/log/bob-auto-xray/install.log')
@@ -326,6 +327,7 @@ def panel(s, lock, work):
                XUI_PANEL_PORT=str(s['panel_port']), XUI_WEB_BASE_PATH=s['panel_path'].strip('/'))
     # UFW already blocks the temporary plaintext panel during official bootstrap.
     run('bash', ROOT / 'vendor/3x-ui/install.sh', lock['xui_version'], env=env, timeout=900)
+    s['xray_sha256'] = install_pinned_xray(lock, s['arch'], work)
     cert = f'/etc/letsencrypt/live/{s["domain"]}/'
     run('/usr/local/x-ui/x-ui','setting','-webCert',cert+'fullchain.pem','-webCertKey',cert+'privkey.pem',
         '-listenIP','0.0.0.0')
