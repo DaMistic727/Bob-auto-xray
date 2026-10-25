@@ -35,7 +35,7 @@ def check_warp():
             'WARP must listen on loopback only')
     trace = run('curl','--noproxy','','-fsS','--socks5-hostname','127.0.0.1:40000',
                 '--connect-timeout','10','--max-time','30','https://www.cloudflare.com/cdn-cgi/trace')
-    require(re.search(r'(?m)^warp=(on|plus)$', trace), 'SOCKS5 trace is not WARP')
+    require(re.search(r'(?m)^warp=on$', trace), 'SOCKS5 trace is not WARP')
     direct = run('curl','--noproxy','*','-fsS','--max-time','30','https://www.cloudflare.com/cdn-cgi/trace')
     require(re.search(r'(?m)^warp=off$', direct), 'System traffic is unexpectedly tunneled')
     return True

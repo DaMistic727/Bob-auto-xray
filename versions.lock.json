@@ -17,8 +17,8 @@
   },
   "routing_commit": "a2241b8d6793ee3e5fb2d0eeb8fe9eac7cd79876",
   "menu_repository": "https://github.com/Diman6267/VPS-Server-Menu.git",
-  "menu_commit": null,
-  "menu_archive_sha256": null,
+  "menu_commit": "3ed5166bbc5b4fb4cc3bb26616bc4db3bbe2734c",
+  "menu_archive_sha256": "9d7a2aced39fe206a9cb4cd46481ee6876471458a63988b9fca152238fa7ec29",
   "downloads": {
     "x-ui-linux-amd64.tar.gz": {
       "url": "https://github.com/MHSanaei/3x-ui/releases/download/v3.10.2/x-ui-linux-amd64.tar.gz",

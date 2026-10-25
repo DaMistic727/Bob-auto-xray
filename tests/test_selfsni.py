@@ -23,8 +23,9 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(lock['xui_version'],'v3.10.2')
         self.assertEqual(lock['menu_repository'],
                          'https://github.com/Diman6267/VPS-Server-Menu.git')
-        self.assertIsNone(lock['menu_commit'])
-        self.assertIsNone(lock['menu_archive_sha256'])
+        self.assertEqual(lock['menu_commit'], '3ed5166bbc5b4fb4cc3bb26616bc4db3bbe2734c')
+        self.assertEqual(lock['menu_archive_sha256'],
+                         '9d7a2aced39fe206a9cb4cd46481ee6876471458a63988b9fca152238fa7ec29')
         self.assertNotIn('menu_branch', lock)
         self.assertNotIn('menu.tar.gz', lock['downloads'])
         self.assertEqual(set(lock['server_geodata']['files']), set(REQUIRED))
@@ -176,9 +177,11 @@ class FailureTests(unittest.TestCase):
     def test_warp_requires_functional_trace(self):
         from selfsni.acceptance import check_warp
         # Listener + active service alone must never produce HEALTHY.
-        output=['LISTEN 0 1024 127.0.0.1:40000 0.0.0.0:* users:(("warp-svc"))', 'warp=off\n']
-        with patch('selfsni.acceptance.run',side_effect=output):
-            with self.assertRaises(InstallError): check_warp()
+        for flag in ('off', 'plus'):
+            output=['LISTEN 0 1024 127.0.0.1:40000 0.0.0.0:* users:(("warp-svc"))',
+                    f'warp={flag}\n']
+            with patch('selfsni.acceptance.run',side_effect=output):
+                with self.assertRaises(InstallError): check_warp()
 
     def test_warp_rejects_public_listener(self):
         from selfsni.acceptance import check_warp

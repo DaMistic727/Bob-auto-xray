@@ -20,7 +20,8 @@ from .core import (ROOT, CommandError, InstallError, configure_diagnostics, reda
                    configure_activity)
 from .certbot_errors import explain as explain_certbot
 from .apt import AptRunner
-from .menu_upstream import check_official_menu
+from .menu_upstream import check_official_menu, install_menu
+from . import menu_warp
 from .install_state import (InstallerLock, checkpoint, fail, initialize, load,
                             upgrade_legacy_apt_failure, validate_resume, warp_mode)
 from .ui import InstallerUI, interactive_wizard
@@ -104,7 +105,9 @@ def preflight(args, resume_state=None):
                             'Чужие Let’s Encrypt certificates обнаружены во время resume')
                 continue
         # Existing WARP files belong to the operator in adopt/skip mode.
-        if args.warp_mode in ('adopt', 'skip') and (p.endswith('/cloudflare-client.list') or p == '/root/VPS-Server-Menu'):
+        if (p == '/root/VPS-Server-Menu' and args.warp_mode != 'skip') or (
+                args.warp_mode in ('adopt', 'skip') and
+                (p.endswith('/cloudflare-client.list') or p == '/root/VPS-Server-Menu')):
             continue
         require(not Path(p).exists(), 'Existing installation/configuration: ' + p)
     warp_present = shutil.which('warp-cli') is not None if args.warp_mode != 'skip' else False
@@ -221,30 +224,15 @@ def install_apt_key(source, target):
 
 
 def install_warp(s, lock, work):
-    # The current official main has no safe unattended contract. This check
-    # runs before APT in main(); keep the stage guarded if called directly.
-    check_official_menu(lock)
-    raise InstallError('Автоматизация WARP официального меню ещё не поддерживается')
+    stage('WARP: официальный VPS-Server-Menu')
+    install_menu(lock, work)
+    s['warp_health'] = menu_warp.install()
 
 
-def adopt_warp(s):
-    """Inspect an existing daemon; never register, reconfigure or restart it."""
-    require(run('systemctl', 'is-active', 'warp-svc').strip() == 'active',
-            'Существующий warp-svc не активен')
-    try:
-        status = json.loads(run('warp-cli', '--json', 'status'))
-        settings = json.loads(run('warp-cli', '--json', 'settings'))
-    except (ValueError, TypeError) as error:
-        raise InstallError('Существующий WARP не вернул совместимый JSON status/settings') from error
-    require(isinstance(status, dict) and status.get('status') == 'Connected',
-            'Существующий WARP не подключён')
-    config = settings.get('settings') if isinstance(settings, dict) else None
-    require(isinstance(config, dict) and config.get('operation_mode') == 'proxy',
-            'Существующий WARP должен работать в proxy mode')
-    require(type(config.get('proxy_port')) is int and config['proxy_port'] == 40000,
-            'Существующий WARP должен использовать порт 40000')
-    from .acceptance import check_warp
-    check_warp()
+def adopt_warp(s, lock, work):
+    """Install/check the menu, then use its read-only health command."""
+    install_menu(lock, work)
+    s['warp_health'] = menu_warp.health()
 
 def certificate(s, email):
     stage('nginx + Certbot HTTP-01 webroot')
@@ -454,7 +442,7 @@ def main():
             args.warp_mode = 'install'
         args.adopt_warp = args.warp_mode == 'adopt'
         lock = verify_bundle(args.warp_mode)
-        if not args.preflight_only and args.warp_mode == 'install':
+        if not args.preflight_only and args.warp_mode in ('install', 'adopt'):
             check_official_menu(lock)
         if args.preflight_only:
             UI.stage(1, 13, 'Проверка системы')
@@ -527,15 +515,15 @@ def main():
                     else:
                         UI.stage(7, 13, 'Проверка WARP' if s['warp_mode'] == 'adopt' else 'VPS-Server-Menu и WARP')
                         if s['warp_mode'] == 'adopt':
-                            adopt_warp(s)
+                            adopt_warp(s, lock, work)
                         else:
                             install_warp(s, lock, work)
                         UI.stage(7, 13, 'WARP', 'ok')
                     checkpoint(STATE, s, 'WARP', True)
                 elif s['warp_mode'] == 'adopt':
-                    adopt_warp(s)
+                    adopt_warp(s, lock, work)
                 elif s['warp_mode'] == 'install':
-                    raise InstallError('Проверка WARP через официальный non-interactive API пока недоступна')
+                    s['warp_health'] = menu_warp.health()
                 checkpoint(STATE, s, 'CERTIFICATE'); UI.stage(8, 13, 'Получение SSL-сертификата')
                 certificate(s,s['email']); checkpoint(STATE, s, 'CERTIFICATE', True)
                 UI.stage(8, 13, 'Получение SSL-сертификата', 'ok')

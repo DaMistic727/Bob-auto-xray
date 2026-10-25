@@ -114,21 +114,15 @@ class WarpModeTests(unittest.TestCase):
         self.assertEqual(error.exception.code, 2)
 
     def test_adopt_is_read_only_and_requires_healthy_proxy(self):
-        outputs = iter(['active', '{"status":"Connected"}',
-                        '{"settings":{"operation_mode":"proxy","proxy_port":40000}}'])
-        with patch.object(provision, 'run', side_effect=lambda *a: next(outputs)) as command, \
-             patch('selfsni.acceptance.check_warp') as trace:
-            provision.adopt_warp(state('adopt'))
-        trace.assert_called_once_with()
-        self.assertEqual([call.args for call in command.call_args_list],
-                         [('systemctl', 'is-active', 'warp-svc'),
-                          ('warp-cli', '--json', 'status'), ('warp-cli', '--json', 'settings')])
-        with patch.object(provision, 'run', side_effect=['active', '{"status":"Connected"}',
-                                                        '{"settings":{"operation_mode":"proxy","proxy_port":40001}}']), \
-             patch('selfsni.acceptance.check_warp') as trace:
-            with self.assertRaisesRegex(InstallError, '40000'):
-                provision.adopt_warp(state('adopt'))
-            trace.assert_not_called()
+        s = state('adopt')
+        with patch.object(provision, 'install_menu') as menu, \
+             patch.object(provision.menu_warp, 'health', return_value={'status':'HEALTHY'}) as health, \
+             patch.object(provision.menu_warp, 'install') as install:
+            provision.adopt_warp(s, {}, Path('/tmp'))
+        menu.assert_called_once()
+        health.assert_called_once_with()
+        install.assert_not_called()
+        self.assertEqual(s['warp_health']['status'], 'HEALTHY')
 
     def test_skip_has_no_systemd_warp_dependency(self):
         self.assertNotIn('warp-svc', provision.xui_unit_override('skip'))
@@ -212,6 +206,43 @@ class WarpModeTests(unittest.TestCase):
                     self.assertEqual(result['installation_id'], saved['installation_id'])
                     self.assertEqual(result['password'], saved['password'])
 
+    def test_install_certbot_resume_rechecks_official_health_before_retry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            saved = initialize(state('install'), [])
+            saved.update(status='FAILED', stage='CERTIFICATE',
+                         last_completed_stage='WARP', email='')
+            (root / 'state').mkdir()
+            (root / 'state/state.json').write_text(json.dumps(saved))
+            events = []
+            def health():
+                events.append('health')
+                return {'status': 'HEALTHY'}
+            def certificate(*args):
+                events.append('certbot')
+                raise InstallError('Certbot failed')
+            with patch.object(provision, 'STATE', root/'state'), \
+                 patch.object(provision, 'DIAGNOSTIC_LOG', root/'install.log'), \
+                 patch.object(provision, 'INSTALL_LOCK', root/'install.lock'), \
+                 patch.object(provision, 'CONTROLLED_PATHS', []), \
+                 patch.object(provision, 'verify_bundle', return_value={}), \
+                 patch.object(provision, 'check_official_menu'), \
+                 patch.object(provision, 'preflight', side_effect=lambda args, previous: previous), \
+                 patch.object(provision, 'AptRunner'), \
+                 patch.object(provision, 'run'), \
+                 patch.object(provision, 'install_warp') as install, \
+                 patch.object(provision.menu_warp, 'health', side_effect=health), \
+                 patch.object(provision, 'certificate', side_effect=certificate), \
+                 patch('sys.argv', ['install', '--domain', 'vpn.example.com']), \
+                 patch('sys.stdout', io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    provision.main()
+            self.assertEqual(events, ['health', 'certbot'])
+            install.assert_not_called()
+            result = json.loads((root/'state/state.json').read_text())
+            self.assertEqual(result['installation_id'], saved['installation_id'])
+            self.assertEqual(result['password'], saved['password'])
+
     def test_adopt_avoids_global_upgrade_and_warp_mutation(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -239,7 +270,7 @@ class WarpModeTests(unittest.TestCase):
             apt.install.assert_called_once()
             adopt.assert_called_once()
             install.assert_not_called()
-            menu.assert_not_called()
+            menu.assert_called_once()
             saved = json.loads((root/'state/state.json').read_text())
             self.assertEqual(saved['stage'], 'CERTIFICATE')
             self.assertEqual(saved['warp_mode'], 'adopt')

@@ -9,7 +9,7 @@
 - Добавлены три режима WARP: install (по умолчанию), read-only adopt и skip (`--no-warp`). В skip нет WARP outbound/rules, зависимости x-ui от warp-svc, проверки `/dev/net/tun` и обязательного пакета cloudflare-warp; уже установленный сторонний WARP не изменяется.
 - Проверка bundle в adopt/skip не требует WARP keyring; повторная общая проверка в середине установки удалена. Несовместимый upstream WARP API не блокирует режим skip.
 - Режим WARP сохраняется в state и защищён от незаметной смены при resume. Старые state с `adopt_warp` читаются без смены installation ID и credentials; пропущенный этап WARP осознанно отмечается завершённым.
-- Режимы server routing, on-host acceptance и внешнего E2E разделены; блокировки RU/UA/private/BitTorrent и клиентские Happ/INCY presets сохранены. Новый WARP по-прежнему блокируется из-за отсутствия безопасного official upstream API; E2E этого режима требует принятия upstream PR #6 и новой интеграции.
+- Режимы server routing, on-host acceptance и внешнего E2E разделены; блокировки RU/UA/private/BitTorrent и клиентские Happ/INCY presets сохранены. Новый WARP использует закреплённый официальный API; E2E именно этой интеграции на одноразовой VPS ещё требуется.
 - APT разделён на `update`, обычный `upgrade` и `install`: штатное ожидание dpkg lock до 10 минут, ограниченные повторы только временных ошибок репозитория и точная классификация lock/network/dependencies/dpkg/systemd/timeout.
 - Добавлены redacted diagnostic log 0600, installation lock и state machine с сохранением credentials. Подтверждённые сбои APT, частичная установка WARP и retry Certbot безопасно продолжаются той же командой; поздние неоднозначные стадии автоматически не возобновляются.
 - Добавлен русскоязычный TTY-мастер, ASCII/non-TTY fallback и `NO_COLOR`; release bootstrap больше не показывает progress bar curl.
@@ -18,7 +18,7 @@
 - Ошибки Certbot классифицируются по ответу ACME; подтверждённое время снятия лимита переводится из UTC в МСК без догадок. Состояние после сбоя сертификата сохраняется для resume.
 - Убрано предупреждение APT по одному лишь процессу `unattended-upgr`; реальное ожидание lock отображается по выводу APT однократно. Сохранены `DPkg::Lock::Timeout=600`, индикатор активности и полный защищённый журнал.
 - Финальный экран больше не показывает ссылку на подписки при нуле клиентов, объясняет создание первого клиента и выводит реквизиты только в интерактивном терминале.
-- Зависимость от форка VPS-Server-Menu удалена из lock. Новый WARP требует проверенные `menu_commit` и `menu_archive_sha256`, точное совпадение с официальным `main` и SHA256 commit-addressed архива. Пока PR #6 не объединён и API не интегрирован, режим install останавливается до системных изменений; adopt/skip не проверяют и не скачивают меню. Полный VPS E2E ещё требуется.
+- Официальный VPS-Server-Menu закреплён на `3ed5166bbc5b4fb4cc3bb26616bc4db3bbe2734c` и SHA256 `9d7a2aced39fe206a9cb4cd46481ee6876471458a63988b9fca152238fa7ec29`. Bob проверяет codeload-архив, origin/HEAD/чистоту checkout и symlink-конфликты до APT; сравнивает Git checkout с архивом, запускает официальный установщик без автозапуска и принимает только согласованные JSON/exit codes install и health. Режим adopt использует только health, skip не загружает меню. Полный VPS E2E нового WARP ещё требуется.
 - Добавлены регрессии APT, UI и отказа до системных изменений при несовместимом upstream. Релиз v0.3.4 не опубликован.
 
 ## v0.3.3 — 2026-10-18
