@@ -13,7 +13,7 @@ import tempfile
 import time
 
 from .api import Panel, request
-from . import bbr, ipv6
+from . import bbr, ipv6, swap
 from .core import (ROOT, CommandError, InstallError, configure_diagnostics, redact,
                    register_secrets, require, run, write, save, token, free_port,
                    fqdn, download, verify_bundle, wait_for, digest,
@@ -498,15 +498,17 @@ def main():
             with tempfile.TemporaryDirectory(prefix='selfsni-') as wd:
                 work = Path(wd)
                 if resume_target not in ('WARP', 'CERTIFICATE'):
-                    checkpoint(STATE, s, 'BBR'); UI.stage(5, 13, 'Настройка IPv6, TCP BBR и FQ')
+                    checkpoint(STATE, s, 'BBR'); UI.stage(5, 13, 'Настройка IPv6, TCP BBR, FQ и swap')
+                    swap.preflight()
                     s['ipv6'], ipv6_before = ipv6.configure(s['domain'])
                     try:
                         s['bbr'] = bbr.configure()
+                        s['swap'] = swap.configure()
                     except Exception:
                         ipv6.rollback(ipv6_before)
                         raise
                     checkpoint(STATE, s, 'BBR', True)
-                    UI.stage(5, 13, 'Настройка IPv6, TCP BBR и FQ', 'ok')
+                    UI.stage(5, 13, 'Настройка IPv6, TCP BBR, FQ и swap', 'ok')
                     checkpoint(STATE, s, 'FIREWALL'); UI.stage(6, 13, 'Настройка сетевой защиты')
                     firewall(s); checkpoint(STATE, s, 'FIREWALL', True)
                     UI.stage(6, 13, 'Настройка сетевой защиты', 'ok')

@@ -190,7 +190,9 @@ class WarpModeTests(unittest.TestCase):
                      patch.object(provision, 'firewall'), \
                      patch.multiple(provision,
                                     ipv6=MagicMock(configure=MagicMock(return_value=({}, {}))),
-                                    bbr=MagicMock(configure=MagicMock(return_value={}))), \
+                                    bbr=MagicMock(configure=MagicMock(return_value={})),
+                                    swap=MagicMock(configure=MagicMock(return_value={'status': 'skipped'}),
+                                                   preflight=MagicMock(return_value={}))), \
                      patch.object(provision, 'install_warp') as install, \
                      patch.object(provision, 'adopt_warp') as adopt, \
                      patch.object(provision, 'certificate', side_effect=InstallError('Certbot failed')), \
@@ -260,8 +262,10 @@ class WarpModeTests(unittest.TestCase):
                  patch.object(provision, 'AptRunner', return_value=apt), \
                  patch.object(provision, 'run'), \
                  patch.object(provision, 'firewall'), \
-                 patch.object(provision.ipv6, 'configure', return_value=({}, {})), \
-                 patch.object(provision.bbr, 'configure', return_value={}), \
+                 patch.multiple(provision,
+                                ipv6=MagicMock(configure=MagicMock(return_value=({}, {}))),
+                                bbr=MagicMock(configure=MagicMock(return_value={})),
+                                swap=MagicMock(configure=MagicMock(return_value={'status': 'skipped'}))), \
                  patch.object(provision, 'adopt_warp') as adopt, \
                  patch.object(provision, 'install_warp') as install, \
                  patch.object(provision, 'certificate', side_effect=InstallError('Certbot failed')), \
@@ -293,8 +297,10 @@ class WarpModeTests(unittest.TestCase):
                  patch.object(provision, 'AptRunner'), \
                  patch.object(provision, 'run', return_value='versions') as commands, \
                  patch.object(provision, 'firewall'), \
-                 patch.object(provision.ipv6, 'configure', return_value=({}, {})), \
-                 patch.object(provision.bbr, 'configure', return_value={}), \
+                 patch.multiple(provision,
+                                ipv6=MagicMock(configure=MagicMock(return_value=({}, {}))),
+                                bbr=MagicMock(configure=MagicMock(return_value={})),
+                                swap=MagicMock(configure=MagicMock(return_value={'status': 'skipped'}))), \
                  patch.object(provision, 'install_warp') as install, \
                  patch.object(provision, 'adopt_warp') as adopt, \
                  patch.multiple(provision, certificate=DEFAULT, decoy=DEFAULT,
