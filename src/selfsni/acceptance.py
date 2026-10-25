@@ -20,6 +20,7 @@ import uuid
 from .api import LocalTLS, Panel, request
 from .bbr import verify as verify_bbr
 from .ipv6 import verify as verify_ipv6
+from .swap import verify as verify_swap
 from .core import (digest, json_obj, InstallError, require, run, save, token,
                    free_port, wait_for)
 from .geodata import (GEODATA_ASSETS, GEODATA_CRON, GEODATA_TIMEZONE,
@@ -305,6 +306,8 @@ def verify(s):
         bbr_report.update(verify_bbr())
     check('TCP BBR congestion control and FQ persistence', tcp_bbr)
     check('Persistent IPv4-only sysctl and all IPv6 interfaces disabled', verify_ipv6)
+    if 'swap' in s:
+        check('Managed 2 GiB swap, when installed', lambda: verify_swap(s['swap']))
     return {'scope':'on-host; no external client/reboot claims', 'checks':checks,
             'tcpBbr': bbr_report}
 
