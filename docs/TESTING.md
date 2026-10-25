@@ -13,7 +13,7 @@ Bob проверяет pin, digest, origin, HEAD, чистоту checkout, от�
 | Официальные offline shell tests install/endpoints/cron | PASS |
 | ShellCheck, Bash syntax, compileall, diff check | PASS |
 | Две одинаковые release-сборки и SHA256SUMS | PASS |
-| Python 3.10/3.12 CI нового commit | Ожидает push и GitHub Actions |
+| Python 3.10/3.12 CI интеграционного commit | PASS: [GitHub Actions 40167709206](https://github.com/DaMistic727/Bob-auto-xray/actions/runs/40167709206), оба matrix jobs, включая tests, syntax, ShellCheck и release build |
 | Новая установка WARP, Certbot, внешний REALITY/Vision и reboot на одноразовой VPS | **NOT TESTED** |
 
 Предыдущие VPS E2E adopt/skip ниже относятся к более раннему коду. Они не подтверждают новый официальный menu checkout или новую установку WARP. До полного отдельного E2E нельзя считать v0.3.4 готовым к production или выпускать тег/релиз.
