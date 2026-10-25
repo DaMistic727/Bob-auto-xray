@@ -504,11 +504,12 @@ class Doctor:
     def warp_settings(self):
         if self.mode == 'skip':
             return self.answer('SKIP', 'WARP намеренно отключён в Bob.')
-        code, output = self.p.command('warp-cli', '--json', 'status')
+        # Cloudflare's CLI requires this flag even for read-only status/settings.
+        code, output = self.p.command('warp-cli', '--accept-tos', '--json', 'status')
         if code:
             return self.answer('UNKNOWN', 'Статус WARP недоступен.', suggestion=SUGGEST['warp'])
         status = json.loads(output)
-        code, output = self.p.command('warp-cli', '--json', 'settings')
+        code, output = self.p.command('warp-cli', '--accept-tos', '--json', 'settings')
         if code:
             return self.answer('UNKNOWN', 'Настройки WARP недоступны.', suggestion=SUGGEST['warp'])
         settings = json.loads(output)

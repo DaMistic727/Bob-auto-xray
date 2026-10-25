@@ -82,8 +82,8 @@ class FakeProbe:
             'LISTEN 0 4096 127.0.0.1:40000 0.0.0.0:* users:(("warp-svc",pid=222,fd=8))\n')
         self.commands[('ss', '-H', '-xl')] = (0,
             'u_str LISTEN 0 511 /run/selfsni/nginx.sock 12345 * 0\n')
-        self.commands[('warp-cli', '--json', 'status')] = (0, '{"status":"Connected"}')
-        self.commands[('warp-cli', '--json', 'settings')] = (0,
+        self.commands[('warp-cli', '--accept-tos', '--json', 'status')] = (0, '{"status":"Connected"}')
+        self.commands[('warp-cli', '--accept-tos', '--json', 'settings')] = (0,
             '{"settings":{"operation_mode":"proxy","proxy_port":40000}}')
         self.commands[('systemctl', 'show', 'warp-svc', '--property=MainPID', '--value')] = (0, '222\n')
         self.commands[('ufw', 'status')] = (0, 'Status: active\n')
@@ -328,9 +328,15 @@ class DoctorTests(unittest.TestCase):
                             ('warp.service', 'warp.settings', 'warp.listener')))
         self.assertFalse(any('warp-cli' in str(x) for x in probe.calls))
         for mode in ('adopt', 'install'):
-            self.assertEqual(doctor.Doctor(FakeProbe(mode)).run()['overallStatus'], 'HEALTHY')
+            live = FakeProbe(mode)
+            self.assertEqual(doctor.Doctor(live).run()['overallStatus'], 'HEALTHY')
+            warp_calls = [call[1] for call in live.calls if call[0] == 'command'
+                          and call[1][0] == 'warp-cli']
+            self.assertEqual(warp_calls, [
+                ('warp-cli', '--accept-tos', '--json', 'status'),
+                ('warp-cli', '--accept-tos', '--json', 'settings')])
         probe = FakeProbe('adopt')
-        probe.commands[('warp-cli', '--json', 'status')] = (0, '{"status":"Disconnected"}')
+        probe.commands[('warp-cli', '--accept-tos', '--json', 'status')] = (0, '{"status":"Disconnected"}')
         self.assertEqual(check(doctor.Doctor(probe).run(), 'warp.settings')['status'], 'FAIL')
         legacy = FakeProbe('adopt')
         del legacy.state['warp_mode']
