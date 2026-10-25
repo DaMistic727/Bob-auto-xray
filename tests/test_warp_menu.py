@@ -79,7 +79,14 @@ class OfficialMenuTests(unittest.TestCase):
             target, commit = self._checkout(root)
             with patch.object(menu_upstream, 'SUPPORTED_COMMIT', commit):
                 lock = dict(LOCK, menu_commit=commit)
-                self.assertTrue(menu_upstream.inspect_existing_menu(lock, target, git_command))
+                calls = []
+                def inspect_command(*args, **kwargs):
+                    calls.append(args)
+                    return git_command(*args, **kwargs)
+                self.assertTrue(menu_upstream.inspect_existing_menu(lock, target, inspect_command))
+                self.assertTrue(any(x[3:6] == ('config', '--local', '--get-all') for x in calls))
+                self.assertTrue(any('--no-optional-locks' in x and
+                                    'core.fsmonitor=false' in x for x in calls))
                 git('-C', target, 'remote', 'set-url', 'origin', 'https://github.com/fork/menu.git')
                 with self.assertRaisesRegex(InstallError, 'origin'):
                     menu_upstream.inspect_existing_menu(lock, target, git_command)

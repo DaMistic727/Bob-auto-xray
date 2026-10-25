@@ -48,11 +48,13 @@ def inspect_existing_menu(lock, target=MENU_DIR, command=run):
     require(target.is_dir() and (target / '.git').is_dir() and
             not (target / '.git').is_symlink(),
             'VPS-Server-Menu: существующий путь не является обычным Git checkout; перенесите его вручную')
-    require(command('git', '-C', target, 'remote', 'get-url', 'origin').strip() == OFFICIAL_REPOSITORY,
+    require(command('git', '-C', target, 'config', '--local', '--get-all',
+                    'remote.origin.url').splitlines() == [OFFICIAL_REPOSITORY],
             'VPS-Server-Menu: origin не официальный; миграция существующего checkout только вручную')
     require(command('git', '-C', target, 'rev-parse', 'HEAD').strip() == SUPPORTED_COMMIT,
             'VPS-Server-Menu: HEAD не совпадает с закреплённым commit; миграция только вручную')
-    require(not command('git', '-c', 'core.filemode=false', '-C', target,
+    require(not command('git', '--no-optional-locks', '-c', 'core.fsmonitor=false',
+                        '-c', 'core.filemode=false', '-C', target,
                         'status', '--porcelain', '--untracked-files=all').strip(),
             'VPS-Server-Menu: рабочее дерево изменено; устраните изменения вручную')
     _manifest(target)
