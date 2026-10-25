@@ -657,7 +657,7 @@ class Doctor:
         foreign_entries = [line for line in fstab if not line.lstrip().startswith('#')
                            and len(line.split()) >= 3 and line.split()[2] == 'swap'
                            and line.split()[0] != str(swap.FILE)]
-        code, output = self.p.command('swapon', '--noheadings', '--raw', '--output=NAME')
+        code, output = self.p.command('swapon', '--show=NAME', '--noheadings', '--raw')
         if code:
             return self.answer('UNKNOWN', 'Активный swap нельзя определить.',
                                suggestion=SUGGEST['swap'])

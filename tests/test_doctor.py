@@ -91,7 +91,7 @@ class FakeProbe:
             self.commands[('fail2ban-client', 'status', jail)] = (0, 'ok')
         self.commands[('sysctl', '-n', 'net.ipv4.tcp_congestion_control')] = (0, 'bbr\n')
         self.commands[('sysctl', '-n', 'net.core.default_qdisc')] = (0, 'fq\n')
-        self.commands[('swapon', '--noheadings', '--raw', '--output=NAME')] = (0, '/swapfile\n')
+        self.commands[('swapon', '--show=NAME', '--noheadings', '--raw')] = (0, '/swapfile\n')
 
     def read(self, path):
         path = str(path)
@@ -283,7 +283,7 @@ class DoctorTests(unittest.TestCase):
             probe.missing_stats.update((str(swap.FILE), str(ipv6.CONFIG)))
             del probe.files[str(ipv6.CONFIG)]
             probe.files[str(swap.FSTAB)] = ''
-            probe.commands[('swapon', '--noheadings', '--raw', '--output=NAME')] = (0, '')
+            probe.commands[('swapon', '--show=NAME', '--noheadings', '--raw')] = (0, '')
             report = doctor.Doctor(probe).run()
             self.assertEqual(check(report, 'system.swap')['status'], 'SKIP')
             self.assertEqual(check(report, 'system.ipv6')['status'], 'SKIP')
@@ -293,7 +293,7 @@ class DoctorTests(unittest.TestCase):
             if change == 'missing':
                 probe.missing_stats.add(str(swap.FILE))
             elif change == 'inactive':
-                probe.commands[('swapon', '--noheadings', '--raw', '--output=NAME')] = (0, '')
+                probe.commands[('swapon', '--show=NAME', '--noheadings', '--raw')] = (0, '')
             elif change == 'fstab':
                 probe.files[str(swap.FSTAB)] = ''
             elif change == 'symlink':
@@ -599,13 +599,13 @@ class DoctorTests(unittest.TestCase):
         probe.state['swap'] = {'status': 'skipped'}
         probe.files[doctor.STATE] = json.dumps(probe.state)
         probe.missing_stats.add(str(swap.FILE))
-        probe.commands[('swapon', '--noheadings', '--raw', '--output=NAME')] = (0, '')
+        probe.commands[('swapon', '--show=NAME', '--noheadings', '--raw')] = (0, '')
         probe.files[str(swap.FSTAB)] = '/swapfile none swap defaults 0 0\n'
         self.assertEqual(check(doctor.Doctor(probe).run(), 'system.swap')['status'], 'UNKNOWN')
 
     def test_foreign_swap_is_not_silent_healthy(self):
         probe = FakeProbe()
-        probe.commands[('swapon', '--noheadings', '--raw', '--output=NAME')] = (0, '/swapfile\n/dev/zram0\n')
+        probe.commands[('swapon', '--show=NAME', '--noheadings', '--raw')] = (0, '/swapfile\n/dev/zram0\n')
         report = doctor.Doctor(probe).run()
         self.assertEqual(check(report, 'system.swap')['status'], 'WARN')
         self.assertEqual(report['overallStatus'], 'DEGRADED')
