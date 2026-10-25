@@ -1,5 +1,11 @@
 # Отчёт о тестировании · 25 октября 2026
 
+## v0.3.4 · Smoke E2E #1: официальный WARP
+
+На чистой одноразовой Ubuntu 26.04.1 amd64 кандидат commit `1ecae2001fd101499996cf0bc931c25f5b4f85f6` прошёл read-only preflight и установку официального VPS-Server-Menu с новой регистрацией WARP. Подтверждены WARP HEALTHY, SOCKS5 `127.0.0.1:40000`, `warp=on`, прямой трафик `warp=off`, Certbot и настоящий сертификат, nginx, VLESS REALITY Vision, правила DIRECT/WARP/BLOCK и on-host acceptance **27/27**. Установщик завершился exit 0 со статусом `HEALTHY_LOCAL`. SHA256 тестового архива: `5974ad15b4972d04a30ef33bb7742b0899c7d1c095dfd3bc1341fe3b35bf0a73`. Владелец проекта дополнительно проверил VPN, WARP, скорость и маршрутизацию вручную.
+
+Независимый автоматизированный внешний E2E именно этого smoke-кандидата и reboot непосредственно после его чистой установки не выполнялись. После smoke-теста добавлен IPv6-этап; его отдельные проверки описаны ниже. Smoke-результат не приписывается неизменённому финальному архиву.
+
 ## v0.3.4: persistent IPv4-only candidate
 
 Кандидат PR #9 добавляет отдельный IPv6-модуль в этап BBR/FQ. Он записывает `/etc/sysctl.d/99-zz-bob-auto-xray-ipv6.conf` с `all=1`, `default=1` и per-interface glob, применяет sysctl сразу и устанавливает drop-in `/etc/systemd/network/10-netplan-ens3.network.d/99-zz-bob-auto-xray-ipv4-only.conf` с `LinkLocalAddressing=no` и `IPv6AcceptRA=no`. В общем случае имя drop-in берётся из активного netplan-файла интерфейса IPv4 SSH. Исходный netplan-файл, `/etc/sysctl.conf` и загрузчик не меняются. При ошибке оба файла и прежние значения sysctl восстанавливаются. `--preflight-only` остаётся read-only.
@@ -8,7 +14,7 @@
 
 Ранние reboot-пробы показали, что одних `all=1`, `default=1` недостаточно: `ens3` возвращался к `0`. Per-interface glob также не удержал `ens3`: после раннего `systemd-sysctl` интерфейс позже настраивал `systemd-networkd` с `LinkLocalAddressing=ipv6`. После добавления drop-in и реального reboot `all`, `default`, `lo`, `ens3` равны `1`; глобальных IPv6-адресов нет. `systemd-analyze cat-config` подтверждает, что исходный `/run/systemd/network/10-netplan-ens3.network` дополнен проектным drop-in. Повторное применение после reboot прошло и сохранило IPv4 SSH и HTTPS.
 
-После reboot проверены: IPv4-адрес `5.178.109.164`, DNS A без AAAA, `bbr` и `fq`, SSH, WARP SOCKS5 только на `127.0.0.1:40000` с `warp=on`, Xray `Configuration OK`, активные x-ui/nginx/warp-svc, nginx `-t`, действующий сертификат Certbot и HTTPS 200. Внешний macOS Xray с **существующим** Vision-клиентом установил реальное REALITY-соединение и загрузил `https://example.com`; клиент не изменялся. Read-only `ipv6.verify()` прошёл после reboot.
+После reboot проверены: ожидаемый публичный IPv4-адрес, DNS A без AAAA, `bbr` и `fq`, SSH, WARP SOCKS5 только на `127.0.0.1:40000` с `warp=on`, Xray `Configuration OK`, активные x-ui/nginx/warp-svc, nginx `-t`, действующий сертификат Certbot и HTTPS 200. Внешний macOS Xray с **существующим** Vision-клиентом установил реальное REALITY-соединение и загрузил `https://example.com`; клиент не изменялся. Read-only `ipv6.verify()` прошёл после reboot.
 
 Проверка проводилась на уже установленной одноразовой VPS по согласованию с пользователем. Fresh-install с этой новой реализацией не выполнялся. Полный `acceptance --e2e` не запускался: на VPS есть один пользовательский клиент, а этот сценарий требует ноль клиентов и временно меняет панель. Предыдущий smoke E2E относится к commit `1ecae2001fd101499996cf0bc931c25f5b4f85f6` до изменения IPv6.
 
@@ -26,9 +32,10 @@ Bob проверяет pin, digest, origin, HEAD, чистоту checkout, от�
 | ShellCheck, Bash syntax, compileall, diff check | PASS |
 | Две одинаковые release-сборки и SHA256SUMS | PASS |
 | Python 3.10/3.12 CI интеграционного commit | PASS: [GitHub Actions 40167709206](https://github.com/DaMistic727/Bob-auto-xray/actions/runs/40167709206), оба matrix jobs, включая tests, syntax, ShellCheck и release build |
-| Новая установка WARP, Certbot, внешний REALITY/Vision и reboot на одноразовой VPS | **NOT TESTED** |
+| Smoke E2E #1: новая установка WARP, Certbot, REALITY Vision, 27/27 on-host | **PASS** на commit `1ecae200`, до добавления IPv6 |
+| Независимый внешний E2E и reboot сразу после чистой установки финального IPv6-кандидата | **NOT TESTED** |
 
-Предыдущие VPS E2E adopt/skip ниже относятся к более раннему коду. Они не подтверждают новый официальный menu checkout или новую установку WARP. До полного отдельного E2E нельзя считать v0.3.4 готовым к production или выпускать тег/релиз.
+Предыдущие VPS E2E adopt/skip ниже относятся к более раннему коду. Они не подтверждают новую установку WARP в текущем release-кандидате. Smoke E2E #1 подтверждает официальный install до IPv6-изменения. Текущее ограничение Preview — отсутствие чистой установки с IPv6-этапом и независимого внешнего E2E полного финального кандидата.
 
 ## v0.3.4 · чистая Ubuntu 26.04.1 с закреплённым Xray 26.10.21
 
@@ -83,7 +90,7 @@ Bob проверяет pin, digest, origin, HEAD, чистоту checkout, от�
 
 На момент старого коммита `3ced196` pin меню отсутствовал. Результаты последующего E2E `--no-warp` приведены выше; актуальная интеграция описана в начале документа.
 
-## v0.3.4: исправления после реального E2E
+## История v0.3.4: UX-исправления до официального WARP smoke-теста
 
 Локально прошли 75/75 Python-тестов под Python 3.12, ShellCheck, `bash -n`, `compileall` и двукратная сборка с одинаковыми SHA256. [CI PR #9](https://github.com/DaMistic727/Bob-auto-xray/actions/runs/39426489924) прошёл на Python 3.10 и 3.12. Тесты охватывают отсутствие ложного APT-предупреждения при активном `unattended-upgr`, однократное сообщение при реальном lock, TTY/non-TTY экран без ссылки на подписки и отказ при несовместимом официальном `main` до системных изменений.
 
@@ -91,13 +98,13 @@ Bob проверяет pin, digest, origin, HEAD, чистоту checkout, от�
 
 Read-only проверка существующей VPS подтвердила работающие `warp-svc`, `x-ui`, nginx и Bob `HEALTHY_LOCAL` с 26/26 on-host checks. SOCKS5 слушает только `127.0.0.1:40000`; health установленного меню вернул `HEALTHY`, proxy mode и `warp=on`, cron restart отсутствует. Источник **установленного ранее** меню — форк `DaMistic727/VPS-Server-Menu`, commit `a84dfe03191e72c8853959ad47e5f816b0118b4b`. Сервер не менялся. Эти результаты не подтверждают поведение новой интеграции с официальным `main`.
 
-Upstream предоставил безопасные параметры установщика и WARP CLI; Bob закрепил точный commit и SHA256. Полный E2E именно нового кандидата остаётся обязательным.
+Позднее upstream предоставил безопасные параметры установщика и WARP CLI; Bob закрепил точный commit и SHA256. Итог последующего официального WARP smoke-теста приведён в начале отчёта.
 
 ## Предыдущий v0.3.4 UX release candidate · 19 октября
 
 На предыдущем кандидате локально прошли 70 Python regression tests под Python 3.12 и системным Python 3.9, `compileall`, `bash -n` и ShellCheck для bootstrap. В число новых регрессий входят мастер с уже заданным email, понятные ошибки и отмена, TTY/NO_COLOR progress, heartbeat длительной команды и загрузки с сохранением полного вывода, Ctrl+C, отсутствие curl progress table, классификация ACME rate limit и перевод подтверждённого UTC-времени в МСК. Python 3.10 в локальной среде отсутствует; [GitHub Actions run 39293995469](https://github.com/DaMistic727/Bob-auto-xray/actions/runs/39293995469) успешно проверил Python 3.10 и 3.12, ShellCheck, compileall, bootstrap tests и воспроизводимую сборку с SHA256. Локальная двукратная сборка также дала одинаковые digest и прошла `SHA256SUMS`.
 
-PR #8 был объединён до завершения обязательного E2E, вопреки собственному описанию PR. Этот факт не означает готовность v0.3.4 к выпуску. Новый кандидат требует отдельного полного прогона с настоящим сертификатом Let’s Encrypt, внешним REALITY/Vision клиентом, WARP, подписками и проверкой после reboot. Известный exact-set rate limit препятствовал выдаче сертификата; повторную выдачу до подтверждённого ACME времени не запускали. До такого прогона тег и release assets не публикуются.
+PR #8 был объединён до завершения обязательного E2E, вопреки собственному описанию PR. На тот момент v0.3.4 ещё не был готов к выпуску: требовались настоящий сертификат Let’s Encrypt, REALITY/Vision, WARP и проверка после reboot. Известный exact-set rate limit препятствовал выдаче сертификата; повторную выдачу до подтверждённого ACME времени не запускали. Более поздние результаты и оставшиеся ограничения Preview приведены в начале отчёта.
 
 В предыдущем кандидате lock закреплял commit `a84dfe03191e72c8853959ad47e5f816b0118b4b` собственного форка и SHA256 архива `d0497cccd2ff93feb5dba18d453286de027cd09b05ca5febc57818ad27ad2aeb`. Проверка функционального `HEALTHY` на VPS относится к этому коду; после изменений UX новый полный E2E ещё нужен.
 

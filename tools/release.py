@@ -32,11 +32,15 @@ bootstrap_sha = hashlib.sha256(installer.read_bytes()).hexdigest()
 (root / 'dist/SHA256SUMS').write_text(f'{checksum}  {archive.name}\n{bootstrap_sha}  install.sh\n')
 (root / 'dist/release-notes.md').write_text(f'''Preview-релиз Bob Auto Xray {a.tag}.
 
-3x-ui + VLESS TCP REALITY Vision Self-SNI, nginx/PHP portal, опциональный WARP, native Geodata Auto-Update, TCP BBR с FQ и отдельные профили Happ/INCY.
+3x-ui v3.10.2 + Xray v26.10.21 с VLESS TCP REALITY Vision Self-SNI, nginx/PHP portal, опциональный WARP, native Geodata Auto-Update, TCP BBR с FQ, отключение IPv6 и отдельные профили Happ/INCY.
+
+Официальный VPS-Server-Menu закреплён на commit `3ed5166bbc5b4fb4cc3bb26616bc4db3bbe2734c` с проверкой SHA256 архива до изменений системы. Доступны установка нового WARP, использование существующего и режим без WARP.
 
 Установщик показывает русскоязычный мастер, прогресс по завершённым этапам и живой статус длительных команд. Диагностика Certbot объясняет типовые ошибки ACME и переводит подтверждённое время повтора из UTC в МСК. Сохранены безопасный resume, root-only журнал и SHA256-проверка архивов.
 
-Релиз публикуется только после отдельного успешного E2E именно этого кандидата: настоящий сертификат Let’s Encrypt, внешний REALITY/Vision клиент, оба сценария с WARP и без WARP, подписки и reboot. Подробные результаты должны быть внесены в docs/TESTING.md до создания тега.
+Smoke E2E #1 на чистой одноразовой Ubuntu 26.04.1 amd64 подтвердил официальный новый WARP, Certbot, REALITY Vision, DIRECT/WARP/BLOCK и on-host acceptance 27/27. Владелец отдельно проверил VPN, WARP, скорость и маршрутизацию вручную. Добавленное позже отключение IPv6 прошло настоящий reboot на уже установленной VPS с сохранением SSH, BBR/FQ, WARP и REALITY.
+
+Ограничения Preview: чистая установка с новым IPv6-этапом, независимый автоматизированный внешний E2E полного финального кандидата и reboot непосредственно после его чистой установки не выполнялись. Раздельные результаты и их область действия приведены в docs/TESTING.md.
 
 ## Установка от root на чистой VPS
 
