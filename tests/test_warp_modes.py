@@ -188,8 +188,9 @@ class WarpModeTests(unittest.TestCase):
                      patch.object(provision, 'AptRunner', return_value=apt), \
                      patch.object(provision, 'run'), \
                      patch.object(provision, 'firewall'), \
-                     patch.object(provision.ipv6, 'configure', return_value=({}, {})), \
-                     patch.object(provision.bbr, 'configure', return_value={}), \
+                     patch.multiple(provision,
+                                    ipv6=MagicMock(configure=MagicMock(return_value=({}, {}))),
+                                    bbr=MagicMock(configure=MagicMock(return_value={}))), \
                      patch.object(provision, 'install_warp') as install, \
                      patch.object(provision, 'adopt_warp') as adopt, \
                      patch.object(provision, 'certificate', side_effect=InstallError('Certbot failed')), \
