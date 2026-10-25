@@ -11,11 +11,9 @@
 
 **Чистая VPS → готовый VLESS TCP REALITY Vision с собственным SNI.**
 
-Одноразовый установщик разворачивает 3x-ui, HTTPS-заглушку частного облака, выборочную маршрутизацию через WARP и подписки для Happ/INCY. Конфигурации создаются автоматически, клиентов вы добавляете через панель.
+Одноразовый установщик разворачивает 3x-ui, HTTPS-заглушку частного облака и подписки для Happ/INCY. Cloudflare WARP выбирается отдельно; без него AI/IP-check идёт через обычный DIRECT. Конфигурации создаются автоматически, клиентов вы добавляете через панель.
 
-> **Статус: preview.** Исправление BBR preflight для минимальных образов без `modinfo` выпущено в v0.3.3. Кандидат из PR #6 прошёл clean install на Ubuntu 26.04.1 LTS amd64, новую регистрацию WARP, BBR/FQ, native Geodata Auto-Update, Target UI, Firefox/REALITY Vision, внешний клиент и реальную перезагрузку. Этот E2E выполнен на кандидате PR #6, а не на опубликованном архиве v0.3.3. Happ и INCY проверены пользователем на физическом iPhone. [Подробный отчёт →](docs/TESTING.md)
-
-> **v0.3.4 ещё не опубликован.** В ветке-кандидате перерабатываются APT, безопасное продолжение и интеграция VPS-Server-Menu. До нового VPS E2E используйте опубликованный v0.3.3.
+> **v0.3.4 Preview.** Официальный VPS-Server-Menu закреплён на commit `3ed5166bbc5b4fb4cc3bb26616bc4db3bbe2734c` с проверкой SHA256 архива. На чистой одноразовой Ubuntu 26.04.1 amd64 Smoke E2E #1 подтвердил установку меню, новую регистрацию WARP, Certbot, REALITY Vision и on-host acceptance 27/27. Владелец дополнительно проверил VPN, WARP, скорость и маршрутизацию вручную. После smoke-теста добавлено отключение IPv6: оно прошло reboot-проверку на уже установленной VPS. Чистая установка с этим изменением, независимый автоматизированный внешний E2E полного финального кандидата и reboot непосредственно после его чистой установки не выполнялись. [Подробный отчёт →](docs/TESTING.md)
 
 ## Что получится
 
@@ -25,10 +23,11 @@
 | **REALITY** | TCP/443, Self-SNI, Vision, Unix socket nginx, PROXY protocol v1 |
 | **Заглушка** | Уникальный облачный login portal, PHP-FPM, CSRF; данные формы не сохраняются |
 | **TLS** | Certbot HTTP-01 webroot, автоматическое продление для всех TLS-сервисов |
-| **WARP** | SOCKS5 только на loopback; компактные GeoSite AI/IP-check через WARP |
+| **WARP** | По выбору: новый, существующий или отключён; при активном WARP SOCKS5 только на loopback |
 | **Маршрутизация** | Basic UI `blocked`, RU/UA/private/BitTorrent блокируются; `IPOnDemand`, остальное DIRECT |
 | **Geodata** | Штатный Xray hot reload четырёх файлов ежедневно в 03:00 МСК через `direct`, с rollback |
 | **TCP BBR** | Автоматически настраивается на поддерживаемом ядре Linux, с FQ pacing и сохранением после reboot |
+| **IPv4-only** | IPv6 отключается через проектный sysctl-файл и drop-in systemd-networkd для netplan-интерфейса SSH; настройки сохраняются после reboot. Требуются SSH по IPv4 и FQDN без AAAA |
 | **Happ / INCY** | Отдельные профили и способы доставки; правила из [DigneZzZ/routing](https://github.com/DigneZzZ/routing) |
 | **Защита** | UFW с сохранением SSH, штатная интеграция Fail2ban 3x-ui |
 
@@ -39,28 +38,30 @@
 3. **Запустите установщик одной командой** от root:
 
    ```bash
-   bash <(curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' https://github.com/DaMistic727/Bob-auto-xray/releases/download/v0.3.3/install.sh)
+   bash <(curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' https://github.com/DaMistic727/Bob-auto-xray/releases/download/v0.3.4/install.sh)
    ```
 
-   Он запускает русскоязычный мастер FQDN/Let's Encrypt и показывает сводку перед изменениями. Bootstrap загружает **конкретный релиз** и проверяет закреплённый SHA256 архива до выполнения модулей.
+   v0.3.4 запускает мастер с вопросами о домене и сертификате, показывает живой статус длительных операций и объясняет ошибки Certbot. Bootstrap загружает **конкретный релиз** и проверяет закреплённый SHA256 архива до выполнения модулей.
 
 4. **Сохраните HTTPS-ссылку, логин и пароль**, которые появятся после успешных проверок. На VPS результат хранится в root-only `/var/lib/selfsni/state.json`.
 5. **Добавляйте клиентов через 3x-ui**, привязывая их к созданному inbound и выбирая flow `xtls-rprx-vision`. Подписки и клиентская маршрутизация уже настроены.
 
 <details>
-<summary>Уже установлен WARP / нужен non-interactive запуск?</summary>
+<summary>Выбор WARP и запуск без вопросов</summary>
 
 Скопируйте и распакуйте проверенный release archive, затем:
 
 ```bash
 bash /root/selfsni/install.sh --domain vpn.example.com --adopt-warp
+bash /root/selfsni/install.sh --domain vpn.example.com --no-warp
+bash /root/selfsni/install.sh --domain vpn.example.com
 ```
 
-`--adopt-warp` явно разрешает использовать совместимый существующий WARP. Bob устанавливает закреплённый VPS-Server-Menu и вызывает только его официальный `server-menu warp health --port 40000 --json`; регистрация и настройки WARP не меняются. Обязательны active `warp-svc`, Connected, proxy mode, единственный loopback listener и Cloudflare trace с `warp=on`.
+Без флагов выбирается новый WARP. `--adopt-warp` устанавливает или проверяет совместимое официальное меню, затем вызывает только read-only `server-menu warp health --port 40000 --json` и требует active/Connected, proxy mode, loopback SOCKS5 и реальный `warp=on`; несовместимый WARP не меняется. `--no-warp` не устанавливает и не проверяет WARP, не создаёт его outbound и не меняет уже установленный сторонний WARP. Оба флага взаимоисключающие. В мастере доступны те же три пункта.
 
-Параметры: `--domain`, `--email`, `--ssh-port`, `--adopt-warp`, `--preflight-only`. При non-interactive запуске `--domain` обязателен. `NO_COLOR=1` отключает ANSI-цвета. `--preflight-only` строго read-only.
+Параметры: `--domain`, `--email`, `--ssh-port`, `--adopt-warp`, `--no-warp`, `--preflight-only`. При non-interactive запуске `--domain` обязателен. `NO_COLOR=1` отключает ANSI-цвета. `--preflight-only` строго read-only.
 
-v0.3.4 хранит этап и installation ID в root-only state. После доказанного сбоя `APT_UPDATE`, `APT_UPGRADE`, `APT_INSTALL`, `WARP` или выдачи сертификата повтор той же команды продолжает установку, сохраняя порты и credentials. Перед повтором Certbot заново проверяются WARP и HTTP ownership. Узкий legacy-migration поддерживает только точный ранний `apt-get exited 100` из v0.3.3 при отсутствии любого управляемого пути; неизвестное старое состояние отклоняется. После более поздней стадии автоматическое продолжение запрещено. Полный redacted журнал команд находится в `/var/log/bob-auto-xray/install.log` с правами `0600`; одновременно работает только один установщик.
+v0.3.4 хранит этап, installation ID и режим WARP в root-only state. После доказанного сбоя `APT_UPDATE`, `APT_UPGRADE`, `APT_INSTALL`, `WARP` или выдачи сертификата повтор продолжает установку, сохраняя режим, порты и credentials. Сменить режим при resume нельзя. Если домен уже сохранён, мастер не спрашивает его снова. Перед повтором Certbot заново проверяются WARP через официальный health API в режимах install/adopt и HTTP ownership. Узкий legacy-migration поддерживает только точный ранний `apt-get exited 100` из v0.3.3 при отсутствии любого управляемого пути; неизвестное старое состояние отклоняется. После более поздней стадии автоматическое продолжение запрещено. Полный redacted журнал команд находится в `/var/log/bob-auto-xray/install.log` с правами `0600`; одновременно работает только один установщик.
 
 </details>
 
@@ -74,7 +75,8 @@ flowchart LR
     Socket --> Portal[nginx TLS + PHP portal]
     REALITY -->|VLESS Vision| Rules{Серверные правила}
     Rules -->|RU / UA / private / BitTorrent| Block[blocked · Basic UI]
-    Rules -->|GeoSite AI / IP-check| WARP[WARP SOCKS5 · loopback]
+    Rules -->|GeoSite AI / IP-check при активном WARP| WARP[WARP SOCKS5 · loopback]
+    Rules -->|GeoSite AI / IP-check без WARP| Direct
     Rules -->|остальное| Direct[DIRECT]
 ```
 
@@ -84,6 +86,7 @@ flowchart LR
 
 | Платформа / сценарий | Статус |
 |---|---|
+| v0.3.4 · официальный WARP на Ubuntu 26.04.1 amd64 | Smoke E2E #1: чистая установка, новая регистрация, Certbot, REALITY Vision и on-host 27/27. Позднее IPv6 отключение проверено на уже установленной VPS до/после reboot; отдельная чистая установка с этим изменением не проверена |
 | v0.2.0 · Ubuntu 24.04 amd64 + существующий WARP | Проверены установка через `--adopt-warp`, внешний клиент и reboot |
 | v0.3.1 · Ubuntu 26.04.1 amd64, чистая ОС | Проверены установка всех VPN-компонентов, Target UI, новая регистрация WARP, внешний клиент и reboot |
 | v0.3.3 · кандидат PR #6 на Ubuntu 26.04.1 amd64 | Проверены clean install, новая WARP-регистрация, BBR/FQ и TCP socket, Target UI, 26/26 on-host и 7/7 external checks до/после reboot; опубликованный архив v0.3.3 отдельно не разворачивался |

@@ -1,0 +1,113 @@
+{
+  "scope": "on-host; no external client/reboot claims",
+  "checks": [
+    {
+      "name": "one inbound, zero clients, Self-SNI + Firefox parameters",
+      "passed": true
+    },
+    {
+      "name": "REALITY Target in API/DB/editor model survives inbound save",
+      "passed": true
+    },
+    {
+      "name": "Basic UI + native geodata panel API save round-trip",
+      "passed": true
+    },
+    {
+      "name": "Installed GeoSite/GeoIP categories",
+      "passed": true
+    },
+    {
+      "name": "nginx configuration",
+      "passed": true
+    },
+    {
+      "name": "Xray configuration",
+      "passed": true
+    },
+    {
+      "name": "Runtime outbound set + safe REALITY diagnostics",
+      "passed": true
+    },
+    {
+      "name": "Native geodata process timezone and 03:00 Europe/Moscow schedule",
+      "passed": true
+    },
+    {
+      "name": "HTTPS panel certificate and response",
+      "passed": true
+    },
+    {
+      "name": "Generated credentials authenticate with HTTPS session and CSRF",
+      "passed": true
+    },
+    {
+      "name": "Sensitive state, DB and runtime configuration are root-only",
+      "passed": true
+    },
+    {
+      "name": "All three TLS listeners use the current live certificate",
+      "passed": true
+    },
+    {
+      "name": "REALITY fallback, PROXY v1, portal GET/POST/CSRF",
+      "passed": true
+    },
+    {
+      "name": "Portal submitted identity absent from sessions and nginx logs",
+      "passed": true
+    },
+    {
+      "name": "x-ui has no warp-svc systemd dependency",
+      "passed": true
+    },
+    {
+      "name": "Happ/INCY settings and stored profile round-trip",
+      "passed": true
+    },
+    {
+      "name": "Live routing: RU/IP/DNS, BitTorrent, AI/IP-check, default DIRECT",
+      "passed": true
+    },
+    {
+      "name": "systemd x-ui",
+      "passed": true
+    },
+    {
+      "name": "systemd nginx",
+      "passed": true
+    },
+    {
+      "name": "systemd fail2ban",
+      "passed": true
+    },
+    {
+      "name": "systemd php8.5-fpm",
+      "passed": true
+    },
+    {
+      "name": "UFW active",
+      "passed": true
+    },
+    {
+      "name": "Fail2ban jails",
+      "passed": true
+    },
+    {
+      "name": "Certbot timer",
+      "passed": true
+    },
+    {
+      "name": "TCP BBR congestion control and FQ persistence",
+      "passed": true
+    }
+  ],
+  "e2e": {
+    "subscriptions": "real HTTP for Happ + INCY; Base64/JSON/deeplinks verified",
+    "reality": "real Vision connection with Firefox fingerprint from second Xray process on same VPS",
+    "sniffing": "GeoSite routing passed with routeOnly false/true; final true preserves the requested IP against SNI rewriting",
+    "routing": "DIRECT example/trace + DIRECT IP-check + RU blocked",
+    "cleanup": "zero clients restored",
+    "external_client": "not covered by on-host test"
+  }
+}

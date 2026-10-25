@@ -36,6 +36,8 @@ class BootstrapTests(unittest.TestCase):
 
     def test_verified_release_executes(self):
         r=self.exercise();self.assertEqual(r.returncode,0,r.stderr);self.assertIn('BOOTSTRAP_OK',r.stdout)
+        self.assertNotIn('% Total', r.stderr)
+        self.assertIn('SHA256 подтверждён', r.stderr)
 
     def test_tampered_release_never_executes(self):
         r=self.exercise(correct=False);self.assertNotEqual(r.returncode,0);self.assertNotIn('BOOTSTRAP_OK',r.stdout)

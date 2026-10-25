@@ -7,6 +7,18 @@ import uuid
 from .core import InstallError, save
 
 SCHEMA = 2
+WARP_MODES = ('install', 'adopt', 'skip')
+
+
+def warp_mode(state):
+    """Read old state files without changing their credentials or identity."""
+    mode = state.get('warp_mode')
+    if mode is None:
+        mode = 'adopt' if state.get('adopt_warp', False) else 'install'
+    if mode not in WARP_MODES or ('adopt_warp' in state and
+                                  bool(state['adopt_warp']) != (mode == 'adopt')):
+        raise InstallError('Некорректный режим WARP в сохранённом состоянии')
+    return mode
 RESUMABLE_FAILURE_STAGES = {'APT_UPDATE', 'APT_UPGRADE', 'APT_INSTALL', 'WARP', 'CERTIFICATE'}
 STAGES = (
     'PREFLIGHT', 'APT_UPDATE', 'APT_UPGRADE', 'APT_INSTALL', 'BBR', 'FIREWALL',
@@ -62,7 +74,9 @@ def initialize(values, absent_paths):
     return state
 
 
-def validate_resume(state, domain, adopt_warp):
+def validate_resume(state, domain, mode):
+    if isinstance(mode, bool):
+        mode = 'adopt' if mode else 'install'
     if state.get('status') == 'HEALTHY_LOCAL':
         raise InstallError('Установка уже завершена (HEALTHY_LOCAL); повторная установка запрещена')
     if state.get('schema') != SCHEMA or not state.get('installation_id'):
@@ -70,12 +84,13 @@ def validate_resume(state, domain, adopt_warp):
     stage = state.get('stage')
     if state.get('status') not in ('FAILED', 'INSTALLING') or stage not in RESUMABLE_FAILURE_STAGES:
         raise InstallError(f'Безопасное продолжение после этапа {stage or "UNKNOWN"} не поддерживается')
-    if state.get('domain') != domain or bool(state.get('adopt_warp')) != bool(adopt_warp):
-        raise InstallError('Для продолжения повторите исходные --domain и --adopt-warp')
+    if state.get('domain') != domain or warp_mode(state) != mode:
+        raise InstallError('Для продолжения повторите исходные --domain и режим WARP (--adopt-warp/--no-warp)')
     required = ('username', 'password', 'panel_port', 'sub_port', 'panel_path', 'sub_path')
     if any(not state.get(key) for key in required):
         raise InstallError('В состоянии отсутствуют исходные credentials; продолжение запрещено')
     state['resume_count'] = int(state.get('resume_count', 0)) + 1
+    state['warp_mode'] = mode
     state['status'] = 'INSTALLING'
     return state
 
@@ -107,6 +122,7 @@ def upgrade_legacy_apt_failure(state, state_root, controlled_paths):
     if present:
         raise InstallError('Legacy APT resume запрещён: появились управляемые пути: ' + ', '.join(present))
     upgraded = initialize(state, controlled_paths)
+    upgraded['warp_mode'] = warp_mode(upgraded)
     upgraded['status'] = 'FAILED'
     upgraded['failure'] = 'legacy v0.3.3 APT exit 100; re-run from APT_UPDATE'
     upgraded['legacy_resume'] = 'v0.3.3-apt-exit-100'

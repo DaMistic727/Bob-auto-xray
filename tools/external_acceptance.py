@@ -44,6 +44,7 @@ try:
     fixture_json=remote('create')
     created=True
     s=json.loads(fixture_json)
+    warp_enabled=s['warp_mode'] != 'skip'
     for kind,agent in [('happ','Happ/3.0.0 (iOS)'),('incy','INCY/1.0.0/ios')]:
         verify_sub_response(kind,*http(f'https://{s["domain"]}:{s["sub_port"]}{s["sub_path"]}{s["client"]["subId"]}',agent))
         report['checks'].append(kind+' external subscription: HTTPS + Base64/JSON/deeplink')
@@ -64,30 +65,35 @@ try:
             report['checks'].append('VLESS REALITY Vision: real external connection')
             require('warp=off' in fetch('https://www.cloudflare.com/cdn-cgi/trace'),'DIRECT unexpectedly uses WARP')
             ip=fetch('https://api.ipify.org').strip()
-            require(ip != s['ipv4'],'IP checker did not egress WARP')
-            report['checks'].append('Ordinary traffic DIRECT, IP-check egress differs from VPS')
-            before=json.loads(remote('stats'))
+            require((ip != s['ipv4']) if warp_enabled else (ip == s['ipv4']),
+                    'IP-check egress does not match selected WARP mode')
+            report['checks'].append('Ordinary traffic DIRECT; IP-check uses '+('WARP' if warp_enabled else 'DIRECT'))
+            before=json.loads(remote('stats')) if warp_enabled else None
             # HTTP 401/403 from an AI service is still a functional TLS/HTTP exchange.
             response=fetch('https://api.openai.com/v1/models',must_succeed=False)
             require(bool(response),'AI service produced no HTTP body')
-            after=json.loads(remote('stats'))
-            def count(obj):
-                return sum(int(x.get('value',0)) for x in obj.get('stat',[]) if x.get('name','').startswith('outbound>>>warp-outbound>>>'))
-            require(count(after)>count(before),'AI traffic did not increment WARP outbound counters')
-            report['checks'].append('OpenAI HTTP exchange increments live WARP outbound byte counters')
+            if warp_enabled:
+                after=json.loads(remote('stats'))
+                def count(obj):
+                    return sum(int(x.get('value',0)) for x in obj.get('stat',[]) if x.get('name','').startswith('outbound>>>warp-outbound>>>'))
+                require(count(after)>count(before),'AI traffic did not increment WARP outbound counters')
+                report['checks'].append('OpenAI HTTP exchange increments live WARP outbound byte counters')
+            else:
+                report['checks'].append('OpenAI HTTP exchange succeeds over DIRECT')
             for url in ['https://yandex.ru','https://77.88.8.8','https://77.88.8.8.nip.io']:
                 try: fetch(url)
                 except InstallError: pass
                 else: raise InstallError('Russian destination reachable through VPN')
             report['checks'].append('RU domain, RU IP, and foreign-name-to-RU-IP blocked over real external VLESS tunnel')
-            try:
-                with socket.create_connection((s['ipv4'],40000),timeout=3) as sock:
-                    sock.settimeout(3)
-                    sock.sendall(b'\x05\x01\x00')
-                    reply = sock.recv(2)
-                    require(not reply.startswith(b'\x05'), 'Public SOCKS5 negotiation exposed')
-            except (ConnectionError,TimeoutError,socket.timeout): pass
-            report['checks'].append('WARP SOCKS5 negotiation unavailable externally')
+            if warp_enabled:
+                try:
+                    with socket.create_connection((s['ipv4'],40000),timeout=3) as sock:
+                        sock.settimeout(3)
+                        sock.sendall(b'\x05\x01\x00')
+                        reply = sock.recv(2)
+                        require(not reply.startswith(b'\x05'), 'Public SOCKS5 negotiation exposed')
+                except (ConnectionError,TimeoutError,socket.timeout): pass
+                report['checks'].append('WARP SOCKS5 negotiation unavailable externally')
         finally:
             proc.terminate()
             try: proc.wait(timeout=5)

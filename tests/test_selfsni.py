@@ -21,9 +21,13 @@ class InstallerTests(unittest.TestCase):
     def test_bundle_checksums(self):
         lock=verify_bundle()
         self.assertEqual(lock['xui_version'],'v3.10.2')
-        self.assertEqual(lock['menu_commit'],'a84dfe03191e72c8853959ad47e5f816b0118b4b')
-        self.assertEqual(lock['downloads']['menu.tar.gz']['sha256'],
-                         'd0497cccd2ff93feb5dba18d453286de027cd09b05ca5febc57818ad27ad2aeb')
+        self.assertEqual(lock['menu_repository'],
+                         'https://github.com/Diman6267/VPS-Server-Menu.git')
+        self.assertEqual(lock['menu_commit'], '3ed5166bbc5b4fb4cc3bb26616bc4db3bbe2734c')
+        self.assertEqual(lock['menu_archive_sha256'],
+                         '9d7a2aced39fe206a9cb4cd46481ee6876471458a63988b9fca152238fa7ec29')
+        self.assertNotIn('menu_branch', lock)
+        self.assertNotIn('menu.tar.gz', lock['downloads'])
         self.assertEqual(set(lock['server_geodata']['files']), set(REQUIRED))
 
     def test_profiles_and_http_contract(self):
@@ -173,9 +177,11 @@ class FailureTests(unittest.TestCase):
     def test_warp_requires_functional_trace(self):
         from selfsni.acceptance import check_warp
         # Listener + active service alone must never produce HEALTHY.
-        output=['LISTEN 0 1024 127.0.0.1:40000 0.0.0.0:* users:(("warp-svc"))', 'warp=off\n']
-        with patch('selfsni.acceptance.run',side_effect=output):
-            with self.assertRaises(InstallError): check_warp()
+        for flag in ('off', 'plus'):
+            output=['LISTEN 0 1024 127.0.0.1:40000 0.0.0.0:* users:(("warp-svc"))',
+                    f'warp={flag}\n']
+            with patch('selfsni.acceptance.run',side_effect=output):
+                with self.assertRaises(InstallError): check_warp()
 
     def test_warp_rejects_public_listener(self):
         from selfsni.acceptance import check_warp
@@ -197,14 +203,17 @@ class FailureTests(unittest.TestCase):
             fixture={'domain':'test.example','ipv4':'192.0.2.1','ubuntu':'26.04','codename':'resolute',
                      'arch':'amd64','ssh_ports':[22],'panel_port':21000,'sub_port':22000,
                      'panel_path':'/panel/','sub_path':'/sub/','username':'user',
-                     'password':'password','adopt_warp':False,'bbr_preflight':{},'status':'INSTALLING'}
+                     'password':'password','adopt_warp':False,'warp_mode':'install',
+                     'bbr_preflight':{},'status':'INSTALLING'}
             with patch.object(provision,'STATE',state), patch.object(provision,'verify_bundle',return_value={}), \
+                 patch.object(provision,'check_official_menu'), \
                  patch.object(provision,'DIAGNOSTIC_LOG',Path(d)/'install.log'), \
                  patch.object(provision,'INSTALL_LOCK',Path(d)/'install.lock'), \
                  patch.object(provision,'CONTROLLED_PATHS',[]), \
                  patch.object(provision,'preflight',return_value=fixture), \
                  patch.object(provision,'AptRunner',return_value=apt), \
                  patch.object(provision,'run'), patch.object(provision,'firewall'), \
+                 patch.object(provision.ipv6,'configure',return_value=({}, {})), \
                  patch.object(provision.bbr,'configure',return_value={}), \
                  patch.object(provision,'install_warp'), \
                  patch.object(provision,'certificate',side_effect=InstallError('Certbot validation failed')), \
@@ -213,7 +222,7 @@ class FailureTests(unittest.TestCase):
                 with self.assertRaises(SystemExit) as result: provision.main()
                 self.assertEqual(result.exception.code,1)
                 self.assertFalse(next_stage.called)
-                self.assertIn('FAILED',out.getvalue())
+                self.assertIn('Причина: Certbot validation failed',out.getvalue())
                 self.assertNotIn('INSTALLATION COMPLETED',out.getvalue())
                 state_file = state/'state.json'
                 self.assertTrue(state_file.exists(), out.getvalue())

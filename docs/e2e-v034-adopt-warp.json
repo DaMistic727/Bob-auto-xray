@@ -1,0 +1,52 @@
+{
+  "scope": "fresh disposable Ubuntu 26.04.1 amd64; official Cloudflare WARP installed and connected before Bob",
+  "bobArchiveSha256": "665ffd0cc01b88de13988025bb7521d7f8183f9fcec16f2b0aabe098a2aafd8c",
+  "warpPackage": "cloudflare-warp 2026.8.2115.0 from official signed resolute APT repository",
+  "beforeBob": {
+    "status": "Connected",
+    "operationMode": "proxy",
+    "proxyPort": 40000,
+    "loopbackListener": true,
+    "cloudflareTrace": "warp=on"
+  },
+  "preflightExit": 0,
+  "installerExit": 0,
+  "state": "HEALTHY_LOCAL/adopt",
+  "resumeCount": 0,
+  "afterInstall": {
+    "registrationSha256Unchanged": true,
+    "settingsSha256Unchanged": true,
+    "configurationSha256Unchanged": true,
+    "warpPackageVersionUnchanged": true,
+    "warpServicePidUnchanged": true,
+    "warpServiceStartTimeUnchanged": true,
+    "warpServiceRestartCountUnchanged": true,
+    "cloudflareTrace": "warp=on",
+    "panelVersion": "3.10.2",
+    "xrayVersion": "26.10.21",
+    "xrayBinarySha256": "a27e3f95ab6ce270956d0cecd32eda4686a811afc71c64a6a734a3dede14883e",
+    "actualConfigRunTest": "PASSED",
+    "onHostChecks": "27/27",
+    "externalChecks": "7/7"
+  },
+  "reboot": {
+    "bootIdBefore": "c3cacccd-cd98-4a55-b297-f1f639458b5a",
+    "bootIdAfter": "8f579c70-388e-4c29-a610-8edca39bfb25",
+    "servicesActive": ["x-ui", "nginx", "fail2ban", "warp-svc"],
+    "certbotTimerEnabled": true,
+    "registrationSha256Unchanged": true,
+    "settingsSha256Unchanged": true,
+    "warpConfigurationSha256Unchanged": false,
+    "note": "The WARP daemon changed its internal conf.json during reboot; registration and settings remained identical.",
+    "cloudflareTrace": "warp=on",
+    "actualConfigRunTest": "PASSED",
+    "onHostChecks": "27/27",
+    "externalChecks": "7/7"
+  },
+  "repeatInstaller": {
+    "exit": 1,
+    "stateUnchanged": true,
+    "resumeCountUnchanged": true,
+    "warpRegistrationAndSettingsUnchanged": true
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "scope": "external Mac client → public VPS TCP/443",
+  "checks": [
+    "happ external subscription: HTTPS + Base64/JSON/deeplink",
+    "incy external subscription: HTTPS + Base64/JSON/deeplink",
+    "VLESS REALITY Vision: real external connection",
+    "Ordinary traffic DIRECT; IP-check uses DIRECT",
+    "OpenAI HTTP exchange succeeds over DIRECT",
+    "RU domain, RU IP, and foreign-name-to-RU-IP blocked over real external VLESS tunnel"
+  ],
+  "cleanup": "temporary client removed"
+}
