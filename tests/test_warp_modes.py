@@ -157,7 +157,8 @@ class WarpModeTests(unittest.TestCase):
              patch.object(provision.socket, 'getaddrinfo', return_value=[(None,None,None,None,('8.8.8.8', 80))]), \
              patch.object(provision.socket, 'socket') as sock, \
              patch.object(provision, 'free_port', side_effect=[21000,22000]), \
-             patch.object(provision.bbr, 'preflight', return_value={}):
+             patch.object(provision.bbr, 'preflight', return_value={}), \
+             patch.object(provision.ipv6, 'preflight', return_value={}):
             result = provision.preflight(args)
         self.assertEqual(result['warp_mode'], 'skip')
         self.assertFalse(any(call.args[0][0] in ('warp-cli', 'systemctl') for call in commands.call_args_list))
@@ -187,6 +188,7 @@ class WarpModeTests(unittest.TestCase):
                      patch.object(provision, 'AptRunner', return_value=apt), \
                      patch.object(provision, 'run'), \
                      patch.object(provision, 'firewall'), \
+                     patch.object(provision.ipv6, 'configure', return_value=({}, {})), \
                      patch.object(provision.bbr, 'configure', return_value={}), \
                      patch.object(provision, 'install_warp') as install, \
                      patch.object(provision, 'adopt_warp') as adopt, \
@@ -257,6 +259,7 @@ class WarpModeTests(unittest.TestCase):
                  patch.object(provision, 'AptRunner', return_value=apt), \
                  patch.object(provision, 'run'), \
                  patch.object(provision, 'firewall'), \
+                 patch.object(provision.ipv6, 'configure', return_value=({}, {})), \
                  patch.object(provision.bbr, 'configure', return_value={}), \
                  patch.object(provision, 'adopt_warp') as adopt, \
                  patch.object(provision, 'install_warp') as install, \
@@ -289,6 +292,7 @@ class WarpModeTests(unittest.TestCase):
                  patch.object(provision, 'AptRunner'), \
                  patch.object(provision, 'run', return_value='versions') as commands, \
                  patch.object(provision, 'firewall'), \
+                 patch.object(provision.ipv6, 'configure', return_value=({}, {})), \
                  patch.object(provision.bbr, 'configure', return_value={}), \
                  patch.object(provision, 'install_warp') as install, \
                  patch.object(provision, 'adopt_warp') as adopt, \

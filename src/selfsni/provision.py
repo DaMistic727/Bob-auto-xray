@@ -13,7 +13,7 @@ import tempfile
 import time
 
 from .api import Panel, request
-from . import bbr
+from . import bbr, ipv6
 from .core import (ROOT, CommandError, InstallError, configure_diagnostics, redact,
                    register_secrets, require, run, write, save, token, free_port,
                    fqdn, download, verify_bundle, wait_for, digest,
@@ -67,7 +67,7 @@ CONTROLLED_PATHS = [
     '/etc/systemd/system/x-ui.service', '/usr/bin/x-ui', '/etc/fail2ban/jail.local',
     '/etc/fail2ban/jail.d/selfsni-ssh.local',
     '/etc/apt/sources.list.d/cloudflare-client.list', str(bbr.SYSCTL_CONFIG),
-    str(bbr.MODULE_CONFIG),
+    str(bbr.MODULE_CONFIG), str(ipv6.CONFIG),
 ]
 
 
@@ -87,7 +87,7 @@ def preflight(args, resume_state=None):
             if resume_state.get('stage') in ('WARP', 'CERTIFICATE'):
                 allowed_resume_paths.update({'/root/VPS-Server-Menu',
                     '/etc/apt/sources.list.d/cloudflare-client.list',
-                    str(bbr.SYSCTL_CONFIG), str(bbr.MODULE_CONFIG)})
+                    str(bbr.SYSCTL_CONFIG), str(bbr.MODULE_CONFIG), str(ipv6.CONFIG)})
             if resume_state.get('stage') == 'CERTIFICATE':
                 allowed_resume_paths.add('/var/lib/selfsni-acme')
             if p in allowed_resume_paths:
@@ -168,12 +168,8 @@ def preflight(args, resume_state=None):
     require(ipaddress.ip_address(public).is_global and v4 == {public},
             'DNS A must contain only this public IPv4; disable CDN proxying')
     v6 = {x for x in addresses if ipaddress.ip_address(x).version == 6}
-    if v6:
-        local = json.loads(run('ip', '-j', '-6', 'address', 'show', 'scope', 'global'))
-        own = {a['local'] for dev in local for a in dev.get('addr_info', [])}
-        require(v6 <= own, 'AAAA points elsewhere: remove or correct AAAA')
-        public6 = run('curl', '-6fsS', '--connect-timeout', '10', '--max-time', '20', 'https://api6.ipify.org').strip()
-        require(public6 in v6, 'AAAA IPv6 connectivity is not verified')
+    require(not v6, 'Installation FQDN has an AAAA record; IPv4-only requires removing it')
+    ipv6_report = ipv6.preflight(domain)
     excluded = set(ssh_ports) | {80,443,40000,62789,11111}
     if resume_state:
         panel_port = int(resume_state['panel_port'])
@@ -195,7 +191,7 @@ def preflight(args, resume_state=None):
                 arch='amd64' if platform.machine() == 'x86_64' else 'arm64',
                 ssh_ports=sorted(ssh_ports), panel_port=panel_port, sub_port=sub_port,
                 warp_mode=args.warp_mode, adopt_warp=args.warp_mode == 'adopt',
-                bbr_preflight=bbr_report, **credentials,
+                bbr_preflight=bbr_report, ipv6_preflight=ipv6_report, **credentials,
                 status='INSTALLING')
     if resume_state:
         preserved = ('panel_path', 'sub_path', 'username', 'password', 'panel_port', 'sub_port',
@@ -502,9 +498,15 @@ def main():
             with tempfile.TemporaryDirectory(prefix='selfsni-') as wd:
                 work = Path(wd)
                 if resume_target not in ('WARP', 'CERTIFICATE'):
-                    checkpoint(STATE, s, 'BBR'); UI.stage(5, 13, 'Настройка TCP BBR и FQ')
-                    s['bbr'] = bbr.configure(); checkpoint(STATE, s, 'BBR', True)
-                    UI.stage(5, 13, 'Настройка TCP BBR и FQ', 'ok')
+                    checkpoint(STATE, s, 'BBR'); UI.stage(5, 13, 'Настройка IPv6, TCP BBR и FQ')
+                    s['ipv6'], ipv6_before = ipv6.configure(s['domain'])
+                    try:
+                        s['bbr'] = bbr.configure()
+                    except Exception:
+                        ipv6.rollback(ipv6_before)
+                        raise
+                    checkpoint(STATE, s, 'BBR', True)
+                    UI.stage(5, 13, 'Настройка IPv6, TCP BBR и FQ', 'ok')
                     checkpoint(STATE, s, 'FIREWALL'); UI.stage(6, 13, 'Настройка сетевой защиты')
                     firewall(s); checkpoint(STATE, s, 'FIREWALL', True)
                     UI.stage(6, 13, 'Настройка сетевой защиты', 'ok')

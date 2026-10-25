@@ -213,6 +213,7 @@ class FailureTests(unittest.TestCase):
                  patch.object(provision,'preflight',return_value=fixture), \
                  patch.object(provision,'AptRunner',return_value=apt), \
                  patch.object(provision,'run'), patch.object(provision,'firewall'), \
+                 patch.object(provision.ipv6,'configure',return_value=({}, {})), \
                  patch.object(provision.bbr,'configure',return_value={}), \
                  patch.object(provision,'install_warp'), \
                  patch.object(provision,'certificate',side_effect=InstallError('Certbot validation failed')), \
