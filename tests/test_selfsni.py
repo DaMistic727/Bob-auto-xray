@@ -213,10 +213,10 @@ class FailureTests(unittest.TestCase):
                  patch.object(provision,'preflight',return_value=fixture), \
                  patch.object(provision,'AptRunner',return_value=apt), \
                  patch.object(provision,'run'), patch.object(provision,'firewall'), \
-                 patch.object(provision.ipv6,'configure',return_value=({}, {})), \
-                 patch.object(provision.bbr,'configure',return_value={}), \
-                 patch.object(provision.swap,'configure',return_value={'status':'skipped'}), \
-                 patch.object(provision.swap,'preflight',return_value={}), \
+                 patch.multiple(provision,
+                                ipv6=MagicMock(configure=MagicMock(return_value=({}, {}))),
+                                bbr=MagicMock(configure=MagicMock(return_value={})),
+                                swap=MagicMock(configure=MagicMock(return_value={'status':'skipped'}))), \
                  patch.object(provision,'install_warp'), \
                  patch.object(provision,'certificate',side_effect=InstallError('Certbot validation failed')), \
                  patch.object(provision,'decoy') as next_stage, \
