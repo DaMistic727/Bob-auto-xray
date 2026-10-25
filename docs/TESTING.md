@@ -2,9 +2,15 @@
 
 ## v0.3.4: persistent IPv4-only candidate
 
-Кандидат PR #9 добавляет проектный sysctl-файл для IPv6 в этап BBR/FQ. Локально проверены применение, повтор, чужая конфигурация, ошибка sysctl с откатом, отказ при IPv6 SSH и AAAA. Полный набор: 112/112 Python tests. Fresh-install и reboot E2E этого изменения пока не выполнены; предыдущий smoke E2E относится к commit `1ecae2001fd101499996cf0bc931c25f5b4f85f6` до изменения IPv6.
+Кандидат PR #9 добавляет отдельный IPv6-модуль в этап BBR/FQ. Он записывает `/etc/sysctl.d/99-zz-bob-auto-xray-ipv6.conf` с `all=1`, `default=1` и per-interface glob, применяет sysctl сразу и устанавливает drop-in `/etc/systemd/network/10-netplan-ens3.network.d/99-zz-bob-auto-xray-ipv4-only.conf` с `LinkLocalAddressing=no` и `IPv6AcceptRA=no`. В общем случае имя drop-in берётся из активного netplan-файла интерфейса IPv4 SSH. Исходный netplan-файл, `/etc/sysctl.conf` и загрузчик не меняются. При ошибке оба файла и прежние значения sysctl восстанавливаются. `--preflight-only` остаётся read-only.
 
-На уже установленной одноразовой VPS первый reboot-тест выявил, что только `all=1` и `default=1` не удержали `ens3.disable_ipv6=1`: после загрузки `ens3` вернулся к `0`. Поэтому проектный файл дополнен systemd-sysctl glob `net.ipv6.conf.*.disable_ipv6 = 1`, а во время установки sysctl применяется к каждому существующему интерфейсу. Повторная проверка после reboot приводится ниже после её выполнения.
+Локально прошли 115/115 Python tests, включая успешное применение, повтор, конфликтующие sysctl/networkd настройки, отказ sysctl/networkd, откат, IPv6 SSH и AAAA. `compileall` и `git diff --check` прошли. На одноразовой Ubuntu 26.04.1 amd64 read-only preflight перед применением подтвердил SSH по IPv4, отсутствие глобальных IPv6-адресов, отсутствие AAAA и чужих назначений, а также netplan-generated networkd файл для `ens3`.
+
+Ранние reboot-пробы показали, что одних `all=1`, `default=1` недостаточно: `ens3` возвращался к `0`. Per-interface glob также не удержал `ens3`: после раннего `systemd-sysctl` интерфейс позже настраивал `systemd-networkd` с `LinkLocalAddressing=ipv6`. После добавления drop-in и реального reboot `all`, `default`, `lo`, `ens3` равны `1`; глобальных IPv6-адресов нет. `systemd-analyze cat-config` подтверждает, что исходный `/run/systemd/network/10-netplan-ens3.network` дополнен проектным drop-in. Повторное применение после reboot прошло и сохранило IPv4 SSH и HTTPS.
+
+После reboot проверены: IPv4-адрес `5.178.109.164`, DNS A без AAAA, `bbr` и `fq`, SSH, WARP SOCKS5 только на `127.0.0.1:40000` с `warp=on`, Xray `Configuration OK`, активные x-ui/nginx/warp-svc, nginx `-t`, действующий сертификат Certbot и HTTPS 200. Внешний macOS Xray с **существующим** Vision-клиентом установил реальное REALITY-соединение и загрузил `https://example.com`; клиент не изменялся. Read-only `ipv6.verify()` прошёл после reboot.
+
+Проверка проводилась на уже установленной одноразовой VPS по согласованию с пользователем. Fresh-install с этой новой реализацией не выполнялся. Полный `acceptance --e2e` не запускался: на VPS есть один пользовательский клиент, а этот сценарий требует ноль клиентов и временно меняет панель. Предыдущий smoke E2E относится к commit `1ecae2001fd101499996cf0bc931c25f5b4f85f6` до изменения IPv6.
 
 ## Официальный VPS-Server-Menu в текущем PR #9
 

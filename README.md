@@ -29,7 +29,7 @@
 | **Маршрутизация** | Basic UI `blocked`, RU/UA/private/BitTorrent блокируются; `IPOnDemand`, остальное DIRECT |
 | **Geodata** | Штатный Xray hot reload четырёх файлов ежедневно в 03:00 МСК через `direct`, с rollback |
 | **TCP BBR** | Автоматически настраивается на поддерживаемом ядре Linux, с FQ pacing и сохранением после reboot |
-| **IPv4-only** | IPv6 отключается через проектный sysctl-файл и остаётся отключённым после reboot; требуется SSH по IPv4 и FQDN без AAAA |
+| **IPv4-only** | IPv6 отключается через проектный sysctl-файл и drop-in systemd-networkd для netplan-интерфейса SSH; настройки сохраняются после reboot. Требуются SSH по IPv4 и FQDN без AAAA |
 | **Happ / INCY** | Отдельные профили и способы доставки; правила из [DigneZzZ/routing](https://github.com/DigneZzZ/routing) |
 | **Защита** | UFW с сохранением SSH, штатная интеграция Fail2ban 3x-ui |
 
