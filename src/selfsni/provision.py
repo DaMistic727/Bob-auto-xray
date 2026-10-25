@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import platform
 import re
+import shlex
 import shutil
 import socket
 import subprocess
@@ -68,7 +69,35 @@ CONTROLLED_PATHS = [
     '/etc/fail2ban/jail.d/selfsni-ssh.local',
     '/etc/apt/sources.list.d/cloudflare-client.list', str(bbr.SYSCTL_CONFIG),
     str(bbr.MODULE_CONFIG), str(ipv6.CONFIG),
+    '/usr/local/lib/bob-auto-xray',
 ]
+
+DOCTOR_LIB = Path('/usr/local/lib/bob-auto-xray')
+DOCTOR_COMMAND = Path('/usr/local/bin/bob')
+DOCTOR_PYTHON = Path('/usr/bin/python3')
+
+
+def install_doctor_cli():
+    """Persist the packaged diagnostic CLI without replacing a foreign command."""
+    require(not (DOCTOR_LIB.exists() or DOCTOR_LIB.is_symlink()),
+            'Каталог Doctor уже занят; чужие файлы не перезаписаны')
+    shutil.copytree(ROOT / 'src/selfsni', DOCTOR_LIB / 'selfsni',
+                    ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+    if shutil.which('bob') is not None or DOCTOR_COMMAND.exists() or DOCTOR_COMMAND.is_symlink():
+        return False
+    code = (f'import sys; sys.path.insert(0, {json.dumps(str(DOCTOR_LIB))}); '
+            'from selfsni.doctor import main; sys.exit(main())')
+    script = ('#!/bin/sh\nset -eu\n'
+              'if [ "${1:-}" = doctor ]; then shift; fi\n'
+              f'exec {shlex.quote(str(DOCTOR_PYTHON))} -I -B -c {shlex.quote(code)} "$@"\n')
+    try:
+        fd = os.open(DOCTOR_COMMAND, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o755)
+    except FileExistsError:
+        return False
+    with os.fdopen(fd, 'w') as handle:
+        handle.write(script)
+    DOCTOR_COMMAND.chmod(0o755)
+    return True
 
 
 def preflight(args, resume_state=None):
@@ -109,7 +138,8 @@ def preflight(args, resume_state=None):
                 args.warp_mode in ('adopt', 'skip') and
                 (p.endswith('/cloudflare-client.list') or p == '/root/VPS-Server-Menu')):
             continue
-        require(not Path(p).exists(), 'Existing installation/configuration: ' + p)
+        require(not (Path(p).exists() or Path(p).is_symlink()),
+                'Existing installation/configuration: ' + p)
     warp_present = shutil.which('warp-cli') is not None if args.warp_mode != 'skip' else False
     warp_resume = bool(args.warp_mode == 'install' and resume_state and resume_state.get('stage') in ('WARP', 'CERTIFICATE'))
     certificate_resume = bool(resume_state and resume_state.get('stage') == 'CERTIFICATE')
@@ -539,6 +569,8 @@ def main():
                 UI.stage(10, 13, 'Установка панели 3x-ui', 'ok')
                 checkpoint(STATE, s, 'SECURITY'); UI.stage(11, 13, 'Защита и продление сертификата')
                 security(s); renew_hook(s); firewall(s,public=True)
+                if not install_doctor_cli():
+                    UI.note('Имя bob занято другой программой; модуль Doctor сохранён без глобальной команды.')
                 checkpoint(STATE, s, 'SECURITY', True)
                 UI.stage(11, 13, 'Защита и продление сертификата', 'ok')
                 checkpoint(STATE, s, 'ACCEPTANCE'); UI.stage(12, 13, 'Проверка результата')

@@ -304,7 +304,8 @@ class WarpModeTests(unittest.TestCase):
                  patch.object(provision, 'install_warp') as install, \
                  patch.object(provision, 'adopt_warp') as adopt, \
                  patch.multiple(provision, certificate=DEFAULT, decoy=DEFAULT,
-                                panel=DEFAULT, security=DEFAULT, renew_hook=DEFAULT), \
+                                panel=DEFAULT, security=DEFAULT, renew_hook=DEFAULT,
+                                install_doctor_cli=DEFAULT), \
                  patch.object(acceptance, 'verify', return_value={'checks':[{'passed':True}]}), \
                  patch('sys.argv', ['install', '--domain', 'vpn.example.com', '--no-warp']), \
                  patch('sys.stdout', io.StringIO()):
