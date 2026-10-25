@@ -4,6 +4,8 @@
 
 Кандидат PR #9 добавляет проектный sysctl-файл для IPv6 в этап BBR/FQ. Локально проверены применение, повтор, чужая конфигурация, ошибка sysctl с откатом, отказ при IPv6 SSH и AAAA. Полный набор: 112/112 Python tests. Fresh-install и reboot E2E этого изменения пока не выполнены; предыдущий smoke E2E относится к commit `1ecae2001fd101499996cf0bc931c25f5b4f85f6` до изменения IPv6.
 
+На уже установленной одноразовой VPS первый reboot-тест выявил, что только `all=1` и `default=1` не удержали `ens3.disable_ipv6=1`: после загрузки `ens3` вернулся к `0`. Поэтому проектный файл дополнен systemd-sysctl glob `net.ipv6.conf.*.disable_ipv6 = 1`, а во время установки sysctl применяется к каждому существующему интерфейсу. Повторная проверка после reboot приводится ниже после её выполнения.
+
 ## Официальный VPS-Server-Menu в текущем PR #9
 
 Официальные PR #6/#7 объединены. Закреплён commit `3ed5166bbc5b4fb4cc3bb26616bc4db3bbe2734c`; архив `https://codeload.github.com/Diman6267/VPS-Server-Menu/tar.gz/3ed5166bbc5b4fb4cc3bb26616bc4db3bbe2734c` дал SHA256 `9d7a2aced39fe206a9cb4cd46481ee6876471458a63988b9fca152238fa7ec29`. Независимый Git fetch этого commit и сравнение SHA256 всех 25 файлов подтвердили соответствие архива дереву checkout. На закреплённом коде проверены флаги `--non-interactive --no-autostart --source-dir --pinned-commit`, а также `server-menu warp install --port 40000 --json`, `health --port 40000 --json` и `xray-outbound`.

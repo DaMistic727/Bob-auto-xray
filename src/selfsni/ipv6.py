@@ -11,7 +11,8 @@ from .core import InstallError, atomic_write, require, run
 CONFIG = Path('/etc/sysctl.d/99-zz-bob-auto-xray-ipv6.conf')
 DESIRED = {'net.ipv6.conf.all.disable_ipv6': '1',
            'net.ipv6.conf.default.disable_ipv6': '1'}
-CONTENT = ''.join(f'{key} = {value}\n' for key, value in DESIRED.items())
+CONTENT = (''.join(f'{key} = {value}\n' for key, value in DESIRED.items()) +
+           'net.ipv6.conf.*.disable_ipv6 = 1\n')
 
 
 def _interfaces(command):
@@ -36,7 +37,7 @@ def _foreign(etc, run_root, config):
             continue
         for number, line in enumerate(lines, 1):
             line = line.split('#', 1)[0].split(';', 1)[0].strip()
-            match = re.fullmatch(r'-?([\w./]+)\s*=\s*(\S+)', line)
+            match = re.fullmatch(r'-?([\w./*]+)\s*=\s*(\S+)', line)
             if match and re.fullmatch(r'net\.ipv6\.conf\.[^.]+\.disable_ipv6',
                                       match.group(1).replace('/', '.')):
                 found.append(f'{path}:{number}')
@@ -123,6 +124,8 @@ def configure(domain, command=run, config=CONFIG, etc=Path('/etc'),
         atomic_write(config, CONTENT, 0o644)
         for key, value in DESIRED.items():
             command('sysctl', '-w', f'{key}={value}')
+        for name in _interfaces(command):
+            command('sysctl', '-w', f'net.ipv6.conf.{name}.disable_ipv6=1')
         return verify(command, config, etc, run_root), before
     except Exception:
         rollback(before, command, config)
