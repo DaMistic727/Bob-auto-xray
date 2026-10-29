@@ -169,7 +169,10 @@ Exception text, URLs, certificate bodies и credential payload в отчёт н�
 create/cleanup сериализуются file lock, поэтому потерянный SSH response не
 позволяет cleanup обогнать ещё работающий create. Cleanup вызывается из finally
 при PASS/FAIL/INCONCLUSIVE, ошибке JSON, частичном create и исключениях. На VPS
-проверяются owner и id клиента; чужие fixtures/клиенты не удаляются. Cleanup
+проверяются owner и id клиента как в inbound attachments, так и в глобальном
+`clients/list` (uuid/subId): частичный delete может удалить attachments и
+оставить ClientRecord. Marker снимается только после отсутствия в обоих
+представлениях; чужие fixtures/клиенты не удаляются. Cleanup
 идемпотентен и не требует нулевого числа посторонних клиентов после теста.
 Старый marker без owner автоматически не удаляется.
 

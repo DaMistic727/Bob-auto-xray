@@ -21,10 +21,15 @@ def cleanup_fixture(api, fixture, owner):
     client = saved['client']
 
     def matches():
-        return [c for row in api.call('inbounds/list')
-                for c in json_obj(row['settings'])['clients'] if c['email'] == client['email']]
+        attached = [c for row in api.call('inbounds/list')
+                    for c in json_obj(row['settings'])['clients'] if c['email'] == client['email']]
+        catalog = [c for c in api.call('clients/list') if c['email'] == client['email']]
+        require(all(c['id'] == client['id'] for c in attached) and
+                all(c.get('uuid') == client['id'] and c.get('subId') == client['subId'] for c in catalog),
+                'Client identity changed; not removed')
+        # A partial delete may remove all attachments but leave ClientRecord.
+        return bool(attached or catalog)
     found = matches()
-    require(all(c['id'] == client['id'] for c in found), 'Client identity changed; not removed')
     if found:
         api.call('clients/del/'+client['email'], {})
     require(not matches(), 'Client cleanup not confirmed')
@@ -40,7 +45,8 @@ def panel_certificate_fingerprint(state):
 def create_fixture(state, api, fixture, owner):
     require(not fixture.exists(), 'Temporary fixture exists; not replaced')
     rows = api.call('inbounds/list')
-    require(rows and all(json_obj(row['settings'])['clients'] == [] for row in rows),
+    require(rows and all(json_obj(row['settings'])['clients'] == [] for row in rows)
+            and api.call('clients/list') == [],
             'Zero-client disposable VPS required')
     original = rows[0]
     fingerprint = panel_certificate_fingerprint(state)

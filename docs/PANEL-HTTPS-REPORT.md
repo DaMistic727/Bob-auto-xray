@@ -172,7 +172,7 @@ verify bootstrap settings`), поверх опубликованного `b0a5f2
 |---|---|---|
 | P1 | Pinned CLI 3x-ui возвращает exit 0 после ошибок SetListen/SetCertFile/SetKeyFile. Старый gate считал exit 0 доказательством применения настроек | До marker выполняется точный readback `-getListen -getCert` и загрузка actual certificate/key. ExecStartPre после setter проверяет точную строку loopback; ошибка readback блокирует старт |
 | P2 | Один успешный TCP connect объявлял панель публичной и прерывал другие проверки | Отдельный tri-state probe, PKI/SNI и fingerprint VPS; структурированный результат не прерывает Vision/подписки/маршрутизацию |
-| P2 | Потерянный create response или исключение до created=True могли оставить временного клиента; без owner cleanup мог удалить fixture другого запуска | Cleanup из finally после любой попытки create, root-only owner marker, lock create/cleanup, проверка id клиента, идемпотентность и сохранение recovery marker при неподтверждённом удалении |
+| P2 | Потерянный create response или исключение до created=True могли оставить временного клиента; без owner cleanup мог удалить fixture другого запуска | Cleanup из finally после любой попытки create, root-only owner marker, lock create/cleanup, проверка id клиента, идемпотентность и сохранение recovery marker при неподтверждённом удалении. Дополнительный аудит pinned Delete подтвердил отдельный catalog transaction: проверяются и attachments, и clients/list, чтобы частичный delete не оставлял ClientRecord после ложного CONFIRMED |
 | P3 | Отчёт всё ещё утверждал, что push не выполнен | Уточнена публикация ветки и явно отделены исторические E2E, текущие local tests и GitHub CI |
 
 P0 в проведённом статическом аудите не обнаружен. P1 IPv6 reboot-блокер
@@ -209,6 +209,11 @@ key и secret path в probe не передаются. Отчёт содержи
 connect-success/TLS-timeout и 3 SYN/0 SYN-ACK совместимы с interception.
 Их интерпретация новым алгоритмом — INCONCLUSIVE. Это методологическое
 уточнение старого наблюдения, а не новый внешний тест или изменение raw evidence.
+
+После первого CI PASS для `b5b9b50` добавлены проверки отсутствия клиента
+в глобальном каталоге и две регрессии catalog-only/partial-delete-retry.
+Первый CI результат к этому дополнению не приписывается; окончательный SHA
+и повторный exact-head CI зафиксированы в [Draft PR #12](https://github.com/DaMistic727/Bob-auto-xray/pull/12).
 
 Все проверки имеют status, общий FAIL даёт exit 1; при отсутствии FAIL любой
 INCONCLUSIVE/NOT TESTED даёт exit 2; только все PASS дают exit 0. Неопределённый
@@ -267,6 +272,7 @@ access log, но он не заменяет причины upstream errors; до
 | Проверка | Результат на этапе локального коммита |
 |---|---|
 | Полный suite Python 3.12 | PASS: 166 total, 165 passed, 1 skipped; все исходные 136 прошли |
+| Полный suite после catalog-cleanup дополнения | PASS: 168 total, 167 passed, 1 skipped; все исходные 136 прошли |
 | Реальные local TCP/TLS/SNI/peer fingerprint tests | PASS для TLS и interception; настоящий TCP refusal NOT VERIFIED в текущей сети — timeout, 1 SKIP |
 | Детерминированный connection refused / timeout classifier | PASS; не выдаётся за реальную изоляцию VPS |
 | Partial create, потерянный response, ownership, exception/process cleanup, INCONCLUSIVE JSON/exit | PASS: unit/regression, не внешний E2E |

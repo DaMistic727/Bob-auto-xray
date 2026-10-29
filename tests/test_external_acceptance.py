@@ -125,7 +125,9 @@ class RunnerTests(unittest.TestCase):
 class FixtureAPI:
     def __init__(self):
         self.clients = []
+        self.catalog = []
         self.lose_add_response = False
+        self.partial_delete = False
         self.available = True
 
     def call(self, endpoint, data=None):
@@ -133,12 +135,19 @@ class FixtureAPI:
             raise InstallError('API unavailable')
         if endpoint == 'inbounds/list':
             return [{'id': 1, 'settings': json.dumps({'clients': self.clients})}]
+        if endpoint == 'clients/list':
+            return [{'email': c['email'], 'uuid': c['id'], 'subId': c['subId']} for c in self.catalog]
         if endpoint == 'clients/add':
             self.clients.append(data['client'])
+            self.catalog.append(dict(data['client']))
             if self.lose_add_response:
                 raise InstallError('Lost response after DB commit')
         elif endpoint.startswith('clients/del/'):
             self.clients = [c for c in self.clients if c['email'] != endpoint[len('clients/del/'):]]
+            if self.partial_delete:
+                self.partial_delete = False
+                raise InstallError('Attachments deleted; catalog transaction failed')
+            self.catalog = [c for c in self.catalog if c['email'] != endpoint[len('clients/del/'):]]
 
 
 class OwnedFixtureTests(unittest.TestCase):
@@ -205,3 +214,26 @@ class OwnedFixtureTests(unittest.TestCase):
                 cleanup_fixture(api, fixture, 'a'*32)
             self.assertTrue(fixture.exists())
             self.assertEqual(api.clients[0]['id'], 'changed-id')
+
+    def test_catalog_only_client_is_removed_before_cleanup_confirmation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = Path(directory)/'fixture.json'; api = FixtureAPI()
+            self.create(api, fixture)
+            api.clients.clear()
+            cleanup_fixture(api, fixture, 'a'*32)
+            self.assertEqual(api.catalog, [])
+            self.assertFalse(fixture.exists())
+
+    def test_retry_after_partial_delete_also_removes_catalog(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = Path(directory)/'fixture.json'; api = FixtureAPI()
+            self.create(api, fixture)
+            api.partial_delete = True
+            with self.assertRaises(InstallError):
+                cleanup_fixture(api, fixture, 'a'*32)
+            self.assertEqual(api.clients, [])
+            self.assertEqual(len(api.catalog), 1)
+            self.assertTrue(fixture.exists())
+            cleanup_fixture(api, fixture, 'a'*32)
+            self.assertEqual(api.catalog, [])
+            self.assertFalse(fixture.exists())
