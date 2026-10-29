@@ -255,7 +255,7 @@ v0.2.0 проверялся на Ubuntu 24.04.5 LTS amd64 с уже сущест
 
 Локально: `PYTHONPATH=src python3 -m unittest discover -s tests -v`, ShellCheck,
 Bash syntax, compileall, diff-check и два идентичных локальных release build.
-Сборка локальная, публикация release и отправка в remote не выполняются.
+Сборка локальная и не публикует release; feature-ветка уже отправлена в GitHub.
 `tests/test_panel_proxy.py` покрывает URL/internal endpoint, отсутствие UFW
 allow для панели, bootstrap gate и порядок TLS/loopback/проверенного ядра.
 `tests/test_panel_checks.py` проверяет fail-closed probes, PWA asset и валидный
@@ -275,3 +275,28 @@ WebSocket frame, login 429 и две ошибки upstream TLS (hostname/trust).
 одноразовые zero-client VPS. Повторите приёмку после reboot и отдельно проверьте
 внешний браузер, внешний Vision и недоступность внутреннего порта. Не считайте
 моки, локальный Nginx harness или on-host Vision внешним E2E.
+
+### Code-review ревизия внешнего пробника, 29 октября 2026
+
+Новые regression tests: `test_external_probe.py`, `test_external_acceptance.py`
+и `test_panel_bootstrap.py`. Они проверяют TCP refusal/timeout, реальный
+loopback TLS+SNI, untrusted/wrong-name/другой доверенный сертификат, возможный
+TCP interception, INCONCLUSIVE JSON/exit 2, продолжение независимых checks,
+частичный create/lost response, ownership, marker retention и process cleanup.
+Для TLS используются временные сертификаты OpenSSL, не credentials VPS.
+Явный TCP refusal дополнительно тестируется детерминированной инъекцией:
+если реальный localhost refusal фильтруется текущей сетью, соответствующий
+live-local case отмечается skipped/NOT VERIFIED, а не PASS. Это не проверка VPS.
+
+Полная локальная команда требует разрешённых loopback bind/connect. В Codex
+sandbox без сети используйте штатное разрешение на запуск тестов; не заменяйте
+реальный TLS mock-результатом. macOS без Nginx: новый Nginx integration
+NOT TESTED локально. CI на Ubuntu 24.04 устанавливает существующие runtime
+Nginx/OpenSSL и запускает настоящий proxy harness в обеих Python 3.10/3.12 jobs.
+CI должен подтвердить результат фактически; наличие job ещё не означает PASS.
+Статусы и exit codes нового probe описаны в [PANEL-HTTPS.md](PANEL-HTTPS.md).
+
+Исторические 136/136, Nginx 7/7, браузер и VPS 32/32 → 31/32 после reboot
+не переносятся на новые байты. Новый clean install, reboot и внешний Vision
+этой ревизии не запускались. P1 IPv6 ens3 остаётся отдельным release blocker;
+ipv6.py, sysctl, networkd и Netplan в этой ревизии не изменяются.

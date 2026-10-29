@@ -98,6 +98,9 @@ class PanelProxyTests(unittest.TestCase):
                 events.append(('run', *map(str, args)))
                 if '-getApiToken' in args:
                     return 'apiToken: abcdef\n'
+                if '-getListen' in args:
+                    cert = '/etc/letsencrypt/live/vpn.example.com/'
+                    return 'listenIP: 127.0.0.1\ncert: '+cert+'fullchain.pem\nkey: '+cert+'privkey.pem\n'
                 return ''
             def pinned(*args):
                 events.append(('pinned',))
@@ -107,6 +110,7 @@ class PanelProxyTests(unittest.TestCase):
                  patch('selfsni.provision.run', side_effect=run), \
                  patch('selfsni.provision.download', return_value=root/'archive'), \
                  patch('selfsni.provision.install_pinned_xray', side_effect=pinned), \
+                 patch('selfsni.provision.ssl.SSLContext'), \
                  patch('selfsni.provision.wait_for'), patch('selfsni.provision.save'), \
                  patch('selfsni.provision.configure_panel'):
                 panel(s, lock, root)

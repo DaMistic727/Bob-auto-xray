@@ -7,6 +7,7 @@ import platform
 import re
 import shutil
 import socket
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -329,6 +330,7 @@ def panel(s, lock, work):
     cert = f'/etc/letsencrypt/live/{s["domain"]}/'
     run('/usr/local/x-ui/x-ui','setting','-webCert',cert+'fullchain.pem','-webCertKey',cert+'privkey.pem',
         '-listenIP','127.0.0.1')
+    verify_panel_bootstrap(s)
     write(STATE/'panel-ready', 'loopback TLS configured\n')
     run('systemctl','daemon-reload')
     run('systemctl','restart','x-ui')
@@ -342,6 +344,21 @@ def panel(s, lock, work):
     configure_panel(s, lock)
 
 
+def verify_panel_bootstrap(s):
+    # The pinned CLI can exit 0 after failed settings writes. Read them back
+    # while the service is still gated, and validate the actual certificate/key.
+    cert = f'/etc/letsencrypt/live/{s["domain"]}/'
+    output = run('/usr/local/x-ui/x-ui', 'setting', '-getListen', '-getCert')
+    for key, value in (('listenIP', '127.0.0.1'), ('cert', cert+'fullchain.pem'),
+                       ('key', cert+'privkey.pem')):
+        require(re.findall(r'^'+key+r':[ \t]*([^\r\n]*)$', output, re.M) == [value],
+                'Panel bootstrap settings verification failed')
+    try:
+        ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER).load_cert_chain(cert+'fullchain.pem', cert+'privkey.pem')
+    except (OSError, ssl.SSLError) as error:
+        raise InstallError('Panel bootstrap TLS certificate/key validation failed') from error
+
+
 def xui_unit_override(mode):
     require(mode in ('install', 'adopt', 'skip'), 'Unknown WARP mode')
     warp_unit = ' warp-svc.service' if mode != 'skip' else ''
@@ -350,7 +367,9 @@ def xui_unit_override(mode):
             'ConditionPathExists=/var/lib/selfsni/panel-ready\n'
             '[Service]\nEnvironment=TZ=' + GEODATA_TIMEZONE + '\n'
             'ExecStartPre=/usr/bin/test -S /run/selfsni/nginx.sock\n'
-            'ExecStartPre=/usr/local/x-ui/x-ui setting -listenIP 127.0.0.1\n')
+            'ExecStartPre=/usr/local/x-ui/x-ui setting -listenIP 127.0.0.1\n'
+            'ExecStartPre=/bin/sh -ec \'/usr/local/x-ui/x-ui setting -getListen | '
+            '/usr/bin/grep -Fx "listenIP: 127.0.0.1"\'\n')
 
 
 def version_packages(mode):

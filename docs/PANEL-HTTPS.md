@@ -30,8 +30,13 @@ sub_path и сертификат, независимо от панели. Вер
    попытки stock installer запустить службу пропускаются. Plaintext/pubic
    bootstrap listener не появляется.
 5. Устанавливается проверенное ядро Xray, штатный CLI 3x-ui сохраняет HTTPS и
-   `listenIP=127.0.0.1`. Только после успеха создаётся root-only marker.
-6. `ExecStartPre` перед каждым стартом/рестартом повторяет loopback binding;
+   `listenIP=127.0.0.1`. CLI v3.10.2 может вернуть exit 0 при ошибке записи,
+   поэтому Bob отдельно читает `-getListen -getCert`, проверяет точные значения
+   и загружает certificate/key в SSLContext до создания root-only marker.
+6. `ExecStartPre` перед каждым стартом/рестартом повторяет loopback binding
+   и проверяет точную строку `listenIP: 127.0.0.1`; silent CLI failure
+   не разрешает запуск службы. Команды не вызывают restart и не образуют цикл;
+   сохраняется штатный ограниченный Restart=on-failure/StartLimit из vendor unit.
    внутренний LocalTLS подключается к 127.0.0.1, проверяя сертификат по домену.
 7. Сохраняются настройки панели, subscriptions и REALITY inbound. Финальный UFW
    разрешает дополнительно **только** подписки. Acceptance проверяет внутренние
@@ -124,5 +129,69 @@ installer: preflight его отклонит. Ручная миграция тр
 
 Для внешнего клиента используйте `tools/external_acceptance.py`, SSH
 ControlMaster и совместимый Xray: он проверяет реальный Vision, подписки и
-недоступность внутреннего порта. HTTP/WS acceptance не заменяет браузерный
+наблюдаемую внешнюю доступность внутреннего порта. HTTP/WS acceptance не заменяет браузерный
 E2E. Результаты конкретного кандидата приведены в PANEL-HTTPS-REPORT.md.
+
+## Внешний network probe: доказательства и неопределённость
+
+`probe_panel_port` использует IPv4/внутренний порт для TCP, а домен — для SNI
+и обязательной проверки CA/hostname. До любых проб HTTP-путь и credentials
+не передаются этому потенциально чужому listener. Публичный leaf certificate
+считывается read-only на VPS, его SHA256 передаётся через проверенный SSH.
+Успешный TLS сравнивается также с этим fingerprint: локально доверенный
+TLS interceptor с другим сертификатом не даёт ложный FAIL.
+
+| Наблюдение из одной внешней точки | Статус |
+|---|---|
+| Явный TCP connection refused | PASS: наблюдался отказ именно на этом сетевом пути |
+| TCP timeout или иная сетевая ошибка | INCONCLUSIVE |
+| Connect успешен, TLS failed/timeout | INCONCLUSIVE, включая вероятный TCP interception |
+| Сертификат не прошёл CA/hostname verification | INCONCLUSIVE: идентичность listener не установлена |
+| TLS прошёл, но fingerprint VPS отсутствует или отличается | INCONCLUSIVE: возможна TLS interception/смена сертификата |
+| TLS прошёл с правильным SNI, CA/hostname и fingerprint VPS | FAIL: ожидаемый TLS identity доступен на предназначенном для loopback порту |
+
+PASS ограничен наблюдаемым путём, временем и семейством IPv4. Отказ может
+исходить от промежуточного оборудования; он не доказывает глобальную закрытость
+или правильный binding на VPS. Проверяйте отдельно read-only `ss -lntp`, PID
+3x-ui, UFW active/default deny и отсутствие permissive rules для IPv4/IPv6.
+Даже правильные host-side настройки не превращают timeout/failed TLS в PASS.
+Смена сертификата между чтением SSH и TLS probe даёт INCONCLUSIVE, а не обход
+верификации. Проверенная TLS identity на внутреннем порту — достаточная причина
+FAIL; HTTP-аутентификация при этом не пробуется. Компрометация ключа/SSH вне модели.
+
+JSON содержит отдельный `status` каждого check и общий status. Любой FAIL
+даёт exit 1, INCONCLUSIVE/NOT TESTED без FAIL — exit 2, только все PASS — exit 0.
+Результат порта не прерывает независимые Vision/subscription/routing checks.
+Если сам Vision не поднялся, зависимые route tests отмечаются NOT TESTED.
+Exception text, URLs, certificate bodies и credential payload в отчёт не копируются.
+
+Перед любым `create` harness генерирует run-id. Root-only fixture хранит owner;
+create/cleanup сериализуются file lock, поэтому потерянный SSH response не
+позволяет cleanup обогнать ещё работающий create. Cleanup вызывается из finally
+при PASS/FAIL/INCONCLUSIVE, ошибке JSON, частичном create и исключениях. На VPS
+проверяются owner и id клиента; чужие fixtures/клиенты не удаляются. Cleanup
+идемпотентен и не требует нулевого числа посторонних клиентов после теста.
+Старый marker без owner автоматически не удаляется.
+
+Гарантируется попытка cleanup и проверка удаления; физически гарантировать
+удаление при потере SSH/API невозможно. Тогда общий результат FAIL,
+`cleanup=NOT VERIFIED`, root-only marker остаётся для восстановления. На VPS
+проверьте owner/client id и повторите `remote_fixture.py cleanup <run-id>`
+из packaged src окружения. Не удаляйте marker до подтверждённого удаления клиента.
+Не запускайте harness на production или без отдельного разрешения создавать
+временного VPN-клиента. В этой ревизии новый VPS/внешний Vision E2E не выполнялся.
+
+## Решение по Nginx diagnostic logging после code review
+
+`log_format` настраивает request access logs; он не редактирует сообщения
+`error_log`. У error log совместимых Ubuntu Nginx нет используемого Bob
+allowlist-формата полей, который гарантированно убирает URI/Referer из сообщения.
+Syslog или изменение severity не удаляет секрет из самого сообщения.
+Numeric-only access log технически возможен, но не заменяет причины upstream
+ошибок; новая система очистки логов и фоновые обработчики здесь не вводятся.
+Сохранены access_log off и error_log /dev/null crit. Следствие — отсутствие
+request-level причин 4xx/5xx; доступны nginx -t, состояние systemd, readiness,
+безопасные фиксированные коды network probe и отдельная acceptance. Нельзя
+считать systemd journal способом получить обычные request errors без риска URI.
+Основание: [error_log](https://nginx.org/en/docs/ngx_core_module.html#error_log),
+[access log_format](https://nginx.org/en/docs/http/ngx_http_log_module.html#log_format).

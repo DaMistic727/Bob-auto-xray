@@ -27,13 +27,15 @@
 | **Маршрутизация** | Basic UI `blocked`, RU/UA/private/BitTorrent блокируются; `IPOnDemand`, остальное DIRECT |
 | **Geodata** | Штатный Xray hot reload четырёх файлов ежедневно в 03:00 МСК через `direct`, с rollback |
 | **TCP BBR** | Автоматически настраивается на поддерживаемом ядре Linux, с FQ pacing и сохранением после reboot |
-| **IPv4-only** | IPv6 отключается через проектный sysctl-файл и drop-in systemd-networkd для netplan-интерфейса SSH; настройки сохраняются после reboot. Требуются SSH по IPv4 и FQDN без AAAA |
+| **IPv4-only** | Настраиваются проектные sysctl и networkd drop-in; известный P1: после reboot на `ens3` может возвращаться IPv6 link-local. Требуются SSH по IPv4 и FQDN без AAAA; production readiness заблокирована |
 | **Happ / INCY** | Отдельные профили и способы доставки; правила из [DigneZzZ/routing](https://github.com/DigneZzZ/routing) |
 | **Защита** | UFW с сохранением SSH, штатная интеграция Fail2ban 3x-ui |
 
 Панель новых установок: `https://<domain>/<48-hex-secret>/`, без отдельного публичного административного порта. 3x-ui использует HTTPS на `127.0.0.1:<random_internal_port>`; внутренние API Bob сохраняют TLS-проверку домена через `LocalTLS`. На `/` остаётся заглушка, остальные неизвестные пути возвращают 404. Подписки сохраняют отдельный порт и прежний URL.
 
 UFW открывает SSH, 80, 443 и порт подписок; порт панели не открывается. Передача реального IP идёт через REALITY PROXY v1, доверенный Unix socket и Nginx, который заменяет входящие IP-заголовки. Панель доверяет только `127.0.0.1/32`. Секретный путь дополняет штатную авторизацию и CSRF. Ограничение POST login: 6/мин на IP, burst 5; обычные API этим лимитом не ограничены. [Архитектура, ограничения и миграция](docs/PANEL-HTTPS.md).
+
+Кандидат опубликован в ветке [`codex/panel-https-443`](https://github.com/DaMistic727/Bob-auto-xray/tree/codex/panel-https-443). Внешний network probe различает PASS, FAIL и INCONCLUSIVE; успешный TCP connect и неуспешный TLS сами по себе не доказывают доступность или закрытость панели. Ревизия также проверяет сохранённые TLS/loopback настройки до первого старта. Предыдущий E2E относится к `b0a5f25`; новая чистая установка и внешний Vision финальной ревизии ещё не подтверждены. Сохраняется отдельный P1 IPv6 reboot-блокер `ens3`. [История тестов и code review](docs/PANEL-HTTPS-REPORT.md).
 
 ## Быстрый старт
 
