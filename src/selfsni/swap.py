@@ -18,7 +18,7 @@ def preflight(command=run, file=FILE, fstab=FSTAB):
     lines = fstab.read_text().splitlines()
     require(not any(row.split()[:1] == [str(file)] and row != LINE for row in lines),
             'Foreign /swapfile fstab entry')
-    active = str(file) in command('swapon', '--noheadings', '--raw', '--output=NAME').splitlines()
+    active = str(file) in command('swapon', '--show=NAME', '--noheadings', '--raw').splitlines()
     if file.exists():
         require(file.is_file() and file.stat().st_size == SIZE and
                 file.stat().st_mode & 0o777 == 0o600 and active and LINE in lines,
@@ -45,14 +45,14 @@ def configure(command=run, file=FILE, fstab=FSTAB, disk_usage=shutil.disk_usage)
         updated = original + ('' if original.endswith('\n') else '\n') + LINE + '\n'
         atomic_write(fstab, updated, fstab.stat().st_mode & 0o777)
         require(file.stat().st_size == SIZE and
-                str(file) in command('swapon', '--noheadings', '--raw', '--output=NAME').splitlines(),
+                str(file) in command('swapon', '--show=NAME', '--noheadings', '--raw').splitlines(),
                 'Swap activation verification failed')
         require(fstab.read_text().splitlines().count(LINE) == 1,
                 'Swap persistence verification failed')
     except Exception as error:
         failures = []
         try:
-            if str(file) in command('swapon', '--noheadings', '--raw', '--output=NAME').splitlines():
+            if str(file) in command('swapon', '--show=NAME', '--noheadings', '--raw').splitlines():
                 command('swapoff', str(file))
         except Exception as rollback_error:
             failures.append('swapoff: ' + str(rollback_error))
@@ -82,6 +82,6 @@ def verify(report, command=run, file=FILE, fstab=FSTAB):
             'Managed 2 GiB swap file is missing or changed')
     require(file.stat().st_mode & 0o777 == 0o600, 'Swap file permissions changed')
     require(fstab.read_text().splitlines().count(LINE) == 1, 'Swap fstab entry missing')
-    require(str(file) in command('swapon', '--noheadings', '--raw', '--output=NAME').splitlines(),
+    require(str(file) in command('swapon', '--show=NAME', '--noheadings', '--raw').splitlines(),
             'Swap is not active')
     return report

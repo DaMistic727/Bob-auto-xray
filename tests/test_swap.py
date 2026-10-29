@@ -14,7 +14,7 @@ class Commands:
         self.active = False
 
     def __call__(self, *args):
-        if args == ('swapon', '--noheadings', '--raw', '--output=NAME'):
+        if args == ('swapon', '--show=NAME', '--noheadings', '--raw'):
             return str(self.file) + '\n' if self.active else ''
         if args[0] == self.fail:
             raise InstallError('injected failure')

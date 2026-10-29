@@ -245,3 +245,33 @@ v0.2.0 проверялся на Ubuntu 24.04.5 LTS amd64 с уже сущест
 - Полный прогон выполнен на кандидате от `v0.3.2` с исправлением минимального BBR preflight из текущего PR; неизменённый опубликованный архив после этого исправления отдельно не разворачивался.
 - Подключение с подтверждённого российского source IP и UDP через WARP SOCKS отдельно не проверялись.
 - Классификация GeoIP/GeoSite зависит от upstream; установщик и E2E проверяют digest/структуру и все используемые категории.
+
+## Кандидат: панель через Self-SNI HTTPS/443
+
+Новые проверки не меняют старые отчёты о других версиях. Архитектура и модель
+угроз — [PANEL-HTTPS.md](PANEL-HTTPS.md), результаты текущего кандидата —
+[PANEL-HTTPS-REPORT.md](PANEL-HTTPS-REPORT.md), безопасные числовые доказательства —
+[panel-https-evidence.json](panel-https-evidence.json).
+
+Локально: `PYTHONPATH=src python3 -m unittest discover -s tests -v`, ShellCheck,
+Bash syntax, compileall, diff-check и два идентичных локальных release build.
+Сборка локальная, публикация release и отправка в remote не выполняются.
+`tests/test_panel_proxy.py` покрывает URL/internal endpoint, отсутствие UFW
+allow для панели, bootstrap gate и порядок TLS/loopback/проверенного ядра.
+`tests/test_panel_checks.py` проверяет fail-closed probes, PWA asset и валидный
+16-byte WebSocket handshake key.
+
+На одноразовой Linux VPS с уже установленными Nginx и OpenSSL:
+`PYTHONPATH=src python3 tools/test_panel_proxy.py`. Изолированный harness
+создаёт временный Unix socket, loopback HTTPS upstream и тестовые сертификаты.
+Он проверяет реальные Nginx URI/Host/IP headers, redirects, POST >8 KiB,
+WebSocket frame, login 429 и две ошибки upstream TLS (hostname/trust).
+Публичных тестовых TCP listener нет; временные процессы завершаются в finally.
+
+После запуска/рестарта x-ui дождитесь ответа внутреннего HTTPS, затем запускайте
+`PYTHONPATH=src python3 -m selfsni.acceptance`. Немедленный вызов после
+`systemctl restart` может попасть в окно инициализации API: состояние active
+не гарантирует готовность listener. Для `--e2e --geodata-e2e` разрешены только
+одноразовые zero-client VPS. Повторите приёмку после reboot и отдельно проверьте
+внешний браузер, внешний Vision и недоступность внутреннего порта. Не считайте
+моки, локальный Nginx harness или on-host Vision внешним E2E.

@@ -13,6 +13,7 @@ import time
 import urllib.request
 
 from selfsni.acceptance import verify_sub_response
+from selfsni.api import public_panel_url
 from selfsni.core import require, save, run, free_port, wait_for, InstallError
 
 p=argparse.ArgumentParser()
@@ -49,7 +50,14 @@ try:
         verify_sub_response(kind,*http(f'https://{s["domain"]}:{s["sub_port"]}{s["sub_path"]}{s["client"]["subId"]}',agent))
         report['checks'].append(kind+' external subscription: HTTPS + Base64/JSON/deeplink')
     require(http('https://'+s['domain']+'/')[0]==200,'Public decoy unavailable')
-    require(http(f'https://{s["domain"]}:{s["panel_port"]}{s["panel_path"]}')[0]==200,'Public panel unavailable')
+    require(http(public_panel_url(s))[0]==200,'Public panel unavailable')
+    if s.get('panel_access') == 'https-443':
+        try:
+            with socket.create_connection((s['ipv4'], s['panel_port']), timeout=3):
+                raise InstallError('Internal panel port is publicly reachable')
+        except (ConnectionError, TimeoutError, socket.timeout):
+            pass
+        report['checks'].append('Internal panel port rejects external TCP connections')
     with tempfile.TemporaryDirectory(prefix='selfsni-external-') as d:
         port=free_port({40000})
         config={'log':{'loglevel':'warning'},'inbounds':[{'listen':'127.0.0.1','port':port,'protocol':'socks','settings':{'auth':'noauth'}}],
