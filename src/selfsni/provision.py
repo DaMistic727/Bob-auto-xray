@@ -22,10 +22,11 @@ from .core import (ROOT, CommandError, InstallError, configure_diagnostics, reda
                    configure_activity)
 from .certbot_errors import explain as explain_certbot
 from .apt import AptRunner
-from .menu_upstream import check_official_menu, install_menu
+from .menu_upstream import OFFICIAL_REPOSITORY, check_official_menu, install_menu
 from . import menu_warp
-from .install_state import (InstallerLock, checkpoint, fail, initialize, load,
-                            upgrade_legacy_apt_failure, validate_resume, warp_mode)
+from .install_state import (RESUMABLE_FAILURE_STAGES, STAGES, InstallerLock, checkpoint, fail,
+                            initialize, load, upgrade_legacy_apt_failure, validate_resume,
+                            warp_mode)
 from .ui import InstallerUI, interactive_wizard
 from .geodata import GEODATA_TIMEZONE, verify_server_geodata
 from .portal import generate
@@ -72,6 +73,112 @@ CONTROLLED_PATHS = [
     str(bbr.MODULE_CONFIG), str(ipv6.CONFIG),
 ]
 
+NGINX_ROOT = Path('/etc/nginx')
+PROC_ROOT = Path('/proc')
+NGINX_BINARY = '/usr/sbin/nginx'
+NGINX_CGROUP = '/system.slice/nginx.service'
+# APT_INSTALL installs nginx with its default site; certificate() swaps it for
+# Bob's HTTP-01 site. Nothing else may exist before NGINX_PORTAL.
+NGINX_RESUME_SITES = {'APT_INSTALL': ('default',), 'WARP': ('default',),
+                      'CERTIFICATE': ('default', 'selfsni-http')}
+
+
+def check_resume_nginx_config(stage, root=None):
+    root = Path(root or NGINX_ROOT)
+    enabled, conf_d = root / 'sites-enabled', root / 'conf.d'
+    for entry in (enabled.iterdir() if enabled.is_dir() else ()):
+        target = root / 'sites-available' / entry.name
+        require(entry.name in NGINX_RESUME_SITES[stage] and entry.is_symlink() and
+                target.is_file() and not target.is_symlink() and
+                os.path.realpath(entry) == os.path.realpath(target),
+                'Чужая nginx-конфигурация обнаружена во время resume')
+    require(not (conf_d.is_dir() and any(conf_d.iterdir())),
+            'Чужая nginx-конфигурация обнаружена во время resume')
+
+
+def owned_nginx_http(resume_state, listeners, command=run, proc_root=None, nginx_root=None):
+    """True only when every TCP/80 listener is the packaged nginx.service of this run.
+
+    A process name or binary path alone is not ownership: a container or a
+    hand-started nginx has both. The unit's MainPID must listen and every
+    listening PID must live in the nginx.service cgroup.
+    """
+    lines = [line for line in listeners.splitlines()
+             if int(line.split()[3].rsplit(':', 1)[1]) == 80]
+    if not (lines and resume_state and resume_state.get('stage') in NGINX_RESUME_SITES and
+            '/etc/nginx' in resume_state.get('absent_paths', ()) and
+            Path(nginx_root or NGINX_ROOT).is_dir()):
+        return False
+    pids = set()
+    for line in lines:
+        users = re.findall(r'\("([^"]*)",pid=(\d+),fd=\d+\)', line)
+        if line.split()[3] not in ('0.0.0.0:80', '[::]:80') or not users or \
+                any(name != 'nginx' for name, _ in users):
+            return False
+        pids.update(pid for _, pid in users)
+    main_pid = command('systemctl', 'show', 'nginx.service', '--property=MainPID', '--value').strip()
+    if main_pid not in pids:
+        return False
+    proc_root = Path(proc_root or PROC_ROOT)
+    for pid in pids:
+        try:
+            cgroups = [line.split(':', 2) for line in
+                       (proc_root / pid / 'cgroup').read_text().splitlines()]
+            executable = os.readlink(proc_root / pid / 'exe')
+        except OSError:
+            return False
+        # cgroup v2 unified line or the v1 name=systemd hierarchy.
+        units = [row[2] for row in cgroups if len(row) == 3 and row[1] in ('', 'name=systemd')]
+        if executable != NGINX_BINARY or not units or any(unit != NGINX_CGROUP for unit in units):
+            return False
+    return True
+
+
+def _carried(state, key, valid):
+    value = state.get(key)
+    try:
+        ok = isinstance(value, dict) and bool(valid(value))
+    except (OSError, TypeError, KeyError, ValueError):
+        ok = False
+    require(ok, f'Результат этапа ({key}) отсутствует или не совпадает с системой; resume запрещён')
+    return value
+
+
+def carried_results(state, ipv6_report):
+    """Validated results of completed stages that the resumed run will not repeat.
+
+    Live checks (bbr_preflight, ipv6_preflight, WARP health) are always
+    recomputed; only durable stage outputs are carried, after re-reading the
+    managed files they describe.
+    """
+    stage = state.get('stage')
+    require(stage in RESUMABLE_FAILURE_STAGES and
+            state.get('last_completed_stage') in STAGES[STAGES.index(stage) - 1:STAGES.index(stage) + 1],
+            f'Этап {stage} не согласован с last_completed_stage; resume запрещён')
+    if stage not in ('WARP', 'CERTIFICATE'):
+        return {}
+    results = dict(
+        ipv6=_carried(state, 'ipv6', lambda r:
+            r['persistentConfig'] == str(ipv6.CONFIG) and ipv6.CONFIG.read_text() == ipv6.CONTENT and
+            r['networkDropin'] == ipv6_report.get('networkDropin') and
+            Path(r['networkDropin']).name == ipv6.NETWORK_DROPIN and
+            Path(r['networkDropin']).read_text() == ipv6.NETWORK_CONTENT and
+            isinstance(r['interfaces'], list) and all(isinstance(x, str) for x in r['interfaces'])),
+        bbr=_carried(state, 'bbr', lambda r:
+            r['runtime'] == bbr.DESIRED and r['persistentConfig'] == str(bbr.SYSCTL_CONFIG) and
+            bbr.SYSCTL_CONFIG.read_text() == ''.join(f'{k} = {v}\n' for k, v in bbr.DESIRED.items())),
+        swap=_carried(state, 'swap', lambda r:
+            (r['status'] == 'created' and r['path'] == str(swap.FILE) and r['bytes'] == swap.SIZE) or
+            (r['status'] == 'existing' and r['path'] == str(swap.FILE)) or
+            (r['status'] == 'skipped' and isinstance(r['reason'], str))))
+    swap.verify(results['swap'])
+    # install re-checks health only; adopt re-resolves the menu and overwrites it.
+    if stage == 'CERTIFICATE' and warp_mode(state) != 'skip':
+        results['menu_revision'] = _carried(state, 'menu_revision', lambda r:
+            r['origin'] == OFFICIAL_REPOSITORY and r['branch'] == 'main' and
+            re.fullmatch(r'[0-9a-f]{40}', r['commit']) is not None and isinstance(r['resolved_at'], str))
+    return results
+
 
 def preflight(args, resume_state=None):
     require(os.geteuid() == 0, 'Run as root on the test/clean VPS')
@@ -94,11 +201,7 @@ def preflight(args, resume_state=None):
                 allowed_resume_paths.add('/var/lib/selfsni-acme')
             if p in allowed_resume_paths:
                 if p == '/etc/nginx':
-                    enabled = Path('/etc/nginx/sites-enabled')
-                    entries = list(enabled.iterdir()) if enabled.exists() else []
-                    expected = {'selfsni-http'} if resume_state.get('stage') == 'CERTIFICATE' else {'default'}
-                    require(all(x.name in expected for x in entries),
-                            'Чужая nginx-конфигурация обнаружена во время resume')
+                    check_resume_nginx_config(resume_state['stage'])
                 if p == '/etc/letsencrypt':
                     le = Path('/etc/letsencrypt')
                     foreign = [x for name in ('live', 'archive', 'renewal')
@@ -114,7 +217,6 @@ def preflight(args, resume_state=None):
         require(not Path(p).exists(), 'Existing installation/configuration: ' + p)
     warp_present = shutil.which('warp-cli') is not None if args.warp_mode != 'skip' else False
     warp_resume = bool(args.warp_mode == 'install' and resume_state and resume_state.get('stage') in ('WARP', 'CERTIFICATE'))
-    certificate_resume = bool(resume_state and resume_state.get('stage') == 'CERTIFICATE')
     require(not warp_present or args.warp_mode in ('adopt', 'skip') or warp_resume,
             'Existing WARP: needs explicit --adopt-warp')
     require(args.warp_mode != 'adopt' or warp_present, '--adopt-warp requires an existing installation')
@@ -141,13 +243,14 @@ def preflight(args, resume_state=None):
         # A pre-existing WARP daemon is outside this installation's ownership.
         allowed.update(int(line.split()[3].rsplit(':', 1)[1]) for line in listeners.splitlines()
                        if 'warp-svc' in line)
-    if certificate_resume:
+    nginx_http = owned_nginx_http(resume_state, listeners, run)
+    if nginx_http:
         allowed.add(80)
     for line in listeners.splitlines():
         port = int(line.split()[3].rsplit(':', 1)[1])
         require(port in allowed, f'Foreign TCP listener on port {port}')
     for port in [80,443,62789,11111]:
-        if certificate_resume and port == 80:
+        if nginx_http and port == 80:
             continue
         with socket.socket() as s:
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -203,6 +306,7 @@ def preflight(args, resume_state=None):
                      'installation_id', 'schema', 'absent_paths', 'resume_count', 'stage',
                      'last_completed_stage', 'legacy_resume')
         fresh.update({key: resume_state[key] for key in preserved if key in resume_state})
+        fresh.update(carried_results(resume_state, ipv6_report))
     return fresh
 
 def firewall(s, public=False):
