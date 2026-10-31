@@ -18,7 +18,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install validation tools
-        run: sudo apt-get update && sudo apt-get install -y shellcheck nginx openssl
+        run: sudo apt-get update && sudo apt-get install -y shellcheck nginx openssl jq
       - name: Check sources
         env:
           PYTHONPATH: src
@@ -26,6 +26,7 @@ jobs:
           python -m unittest discover -s tests -v
           python tools/test_panel_proxy.py
           python tools/test_client_api.py
+          python tools/test_menu_latest.py
           python -m compileall -q src tools tests
           bash -n install.sh
           shellcheck install.sh

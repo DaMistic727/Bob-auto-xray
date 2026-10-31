@@ -23,9 +23,8 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(lock['xui_version'],'v3.10.2')
         self.assertEqual(lock['menu_repository'],
                          'https://github.com/Diman6267/VPS-Server-Menu.git')
-        self.assertEqual(lock['menu_commit'], '3ed5166bbc5b4fb4cc3bb26616bc4db3bbe2734c')
-        self.assertEqual(lock['menu_archive_sha256'],
-                         '9d7a2aced39fe206a9cb4cd46481ee6876471458a63988b9fca152238fa7ec29')
+        self.assertNotIn('menu_commit',lock)
+        self.assertNotIn('menu_archive_sha256',lock)
         self.assertNotIn('menu_branch', lock)
         self.assertNotIn('menu.tar.gz', lock['downloads'])
         self.assertEqual(set(lock['server_geodata']['files']), set(REQUIRED))

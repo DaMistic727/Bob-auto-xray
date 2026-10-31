@@ -1,3 +1,5 @@
+> VPS-Server-Menu v0.3.8: только актуальная официальная `Diman6267/VPS-Server-Menu/main`, разрешённая при установке. Статического menu pin больше нет. Оригинальный installer создаёт команды; main tracking origin/main сохраняет штатный updater (пункт 9). Фактическая ревизия и время находятся в root-only state `menu_revision`. Dirty/diverged/неизвестный checkout отклоняется без reset/clean; старый detached checkout автоматически не мигрирует. Xray/3x-ui/GeoData/routing pins не изменены. Будущая main может оказаться несовместимой: Bob прекращает установку, не откатываясь скрыто к старому pin.
+
 <p align="center"><img src="assets/banner.svg" alt="Bob Auto Xray — Self-SNI, automated." width="100%"></p>
 
 <p align="center">
@@ -13,7 +15,7 @@
 
 Одноразовый установщик разворачивает 3x-ui, HTTPS-заглушку частного облака и подписки для Happ/INCY. Cloudflare WARP выбирается отдельно; без него AI/IP-check идёт через обычный DIRECT. Конфигурации и первый VPN-клиент `admin` создаются автоматически; его подключение и подписку можно получить в панели. Дополнительных клиентов вы добавляете через 3x-ui.
 
-> **v0.3.7 Preview.** Подписки Happ/INCY доступны на общем HTTPS/443 без отдельного публичного порта. Внутренние web/subscription servers используют loopback HTTPS. Сохранены `vless by bob`, постоянный `admin` и GeoSite ads block. Установленные старые ноды не мигрируют автоматически. VPS E2E и reboot этой сборки NOT TESTED.
+> **v0.3.8 Preview.** Подписки Happ/INCY доступны на общем HTTPS/443 без отдельного публичного порта. Внутренние web/subscription servers используют loopback HTTPS. Сохранены `vless by bob`, постоянный `admin` и GeoSite ads block. Установленные старые ноды не мигрируют автоматически. VPS E2E и reboot этой сборки NOT TESTED.
 
 ## Что получится
 
@@ -45,10 +47,10 @@ UFW открывает SSH, 80 и 443; порт панели не открыва
 3. **Запустите установщик одной командой** от root:
 
    ```bash
-   bash <(curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' https://github.com/DaMistic727/Bob-auto-xray/releases/download/v0.3.7/install.sh)
+   bash <(curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' https://github.com/DaMistic727/Bob-auto-xray/releases/download/v0.3.8/install.sh)
    ```
 
-   v0.3.7 запускает мастер с вопросами о домене и сертификате, показывает живой статус длительных операций и объясняет ошибки Certbot. Bootstrap загружает **конкретный релиз** и проверяет закреплённый SHA256 архива до выполнения модулей.
+   v0.3.8 запускает мастер с вопросами о домене и сертификате, показывает живой статус длительных операций и объясняет ошибки Certbot. Bootstrap загружает **конкретный релиз** и проверяет закреплённый SHA256 архива до выполнения модулей.
 
 4. **Сохраните HTTPS-ссылку, логин и пароль**, которые появятся после успешных проверок. На VPS результат хранится в root-only `/var/lib/selfsni/state.json`.
 5. **Откройте `vless by bob` в 3x-ui:** VPN-клиент `admin` уже создан с Vision, без лимита IP/устройств/трафика и срока действия. Получите его подключение или подписку. Дополнительных клиентов можно добавить через панель. Учётная запись панели имеет отдельные случайные username/password.
