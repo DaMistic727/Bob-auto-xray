@@ -112,7 +112,8 @@ class InstallerUI:
         checks.append('Локальные проверки пройдены')
         mark = '✓' if self.unicode else 'OK'
         print('\n' + '\n'.join(f'{mark} {item}' for item in checks), file=self.stream)
-        print(f'\nПанель управления:\nhttps://{state["domain"]}:{state["panel_port"]}{state["panel_path"]}',
+        from .api import public_panel_url
+        print(f'\nПанель управления:\n{public_panel_url(state)}',
               file=self.stream)
         if self.tty:
             print(f'\nЛогин:  {state["username"]}\nПароль: {state["password"]}', file=self.stream)

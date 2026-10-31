@@ -17,7 +17,8 @@ import tempfile
 import urllib.parse
 import uuid
 
-from .api import LocalTLS, Panel, request
+from .api import PANEL_ACCESS, LocalTLS, Panel, public_panel_port, request
+from .panel_checks import panel_login, panel_network, panel_routes
 from .bbr import verify as verify_bbr
 from .ipv6 import verify as verify_ipv6
 from .swap import verify as verify_swap
@@ -201,7 +202,17 @@ def verify(s):
                 'Xray did not inherit the pinned UTC timezone')
         require(GEODATA_CRON == '0 0 * * *', '03:00 Moscow cron mapping changed')
     check('Native geodata process timezone and 03:00 Europe/Moscow schedule', geodata_timezone)
-    check('HTTPS panel certificate and response', lambda: expect(request(s['domain'],s['panel_port'],s['panel_path'])[0] == 200,'Panel unavailable'))
+    panel_port = public_panel_port(s)
+    check('HTTPS panel certificate and response', lambda: expect(request(s['domain'],panel_port,s['panel_path'])[0] == 200,'Panel unavailable'))
+    if s.get('panel_access') == PANEL_ACCESS:
+        check('Panel loopback binding, process ownership and firewall isolation', lambda: panel_network(s))
+        check('Public panel routes, assets, privacy and unauthenticated API', lambda: panel_routes(s))
+        check('Public login, CSRF, session API, WebSocket and logout', lambda: panel_login(s))
+        def panel_binding_settings():
+            settings = api.call('setting/all', {}, method='POST')
+            require(settings.get('webListen') == '127.0.0.1' and
+                    settings.get('trustedProxyCIDRs') == '127.0.0.1/32', 'Unsafe panel settings')
+        check('Persisted loopback binding and restricted trusted proxy', panel_binding_settings)
     def credential_login():
         require(s['username'] != 'admin' and len(s['password']) >= 32 and len(s['panel_path']) >= 48, 'Weak bootstrap credentials')
         status, headers, body = request(s['domain'], s['panel_port'], s['panel_path']+'csrf-token')

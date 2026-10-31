@@ -1,4 +1,31 @@
-# Отчёт о тестировании · 25 октября 2026
+# Отчёт о тестировании · v0.3.5 Preview · 31 октября 2026
+
+## Финальный v0.3.5: область проверки
+
+Новые проверки ограничены локальными unit/integration/mock, статическим анализом, release build и GitHub Actions. Ни SSH, ни VPS, ни installer на хосте разработки не использовались. PR #11/Bob Doctor не включён.
+
+- Python unittest: API, bootstrap, TLS, exact path routing, panel security/UFW, WARP install/adopt/skip, routing, GeoData, BBR, swap и resume.
+- IPv6 regression: повторная инициализация с перезаписью ens3, fail-closed verify, link-local, повторное применение, legacy rollback и чужой generation policy. [Причина, усиление и оставшийся риск](IPV6-PERSISTENCE.md).
+- Ubuntu CI Python 3.10/3.12: весь unittest suite и настоящий Nginx proxy harness (7 групп), compileall, Bash syntax, ShellCheck, две сборки и SHA256.
+- Release workflow повторяет unittest, Nginx, syntax, ShellCheck и воспроизводимость перед публикацией.
+
+Точные результаты финального прогона записаны в [V035-VALIDATION.md](V035-VALIDATION.md). Workflow links доступны в GitHub Actions по SHA тега v0.3.5.
+
+**NOT TESTED для финальной сборки:** clean install, reboot, фактическая IPv6 persistence, внешний REALITY/Vision и изоляция panel port, Certbot issue/renew, WARP install/adopt/skip на VPS, GeoData scheduled update/rollback на VPS, реальные Happ/INCY, SSH/UFW/Fail2ban и BBR/swap после reboot. Владелец проверит после публикации Preview. Исторический P1 IPv6 не объявляется устранённым; локальная модель не заменяет наблюдение реального networkd.
+
+## Ручной E2E владельца
+
+1. Чистая поддерживаемая Ubuntu, DNS A без AAAA: запустить versioned bootstrap v0.3.5; проверить exit 0, HEALTHY_LOCAL и root-only state/log/credentials. Повтор успешной установки должен безопасно отказаться, допустимый ранний resume сохраняет credentials.
+2. HTTPS/443: `/` показывает заглушку, секретный URL открывает панель с действительным сертификатом, неизвестные пути дают 404. Login, CSRF, API, WebSocket и logout работают. Извне внутренний panel port недоступен; TCP connect без TLS/fingerprint не является доказательством.
+3. В UI сохранить inbound и сравнить Target `/run/selfsni/nginx.sock`, xver=1, Vision, Firefox uTLS, Short ID. Проверить независимым внешним REALITY-клиентом.
+4. Проверить Happ/INCY URL на отдельном порту, routing presets и реальные приложения. Проверить DIRECT/WARP/BLOCK: RU/UA/private/BitTorrent и AI/IP-check.
+5. На отдельных чистых установках проверить WARP install/adopt/skip; adopt сохраняет регистрацию и настройки, skip не трогает WARP. Активный SOCKS5 только `127.0.0.1:40000`.
+6. Проверить Certbot renewal, GeoData hot reload/rollback, UFW/Fail2ban. После reboot повторить SSH, HTTPS, panel, REALITY, subscriptions, routing и WARP.
+7. Проверить IPv6 на **каждом** интерфейсе и отсутствие link-local, `tcp_congestion_control=bbr`, `default_qdisc=fq`, swap 2 GiB и `/etc/fstab`, если swap выбран. При IPv6 FAIL сохранить данные из IPV6-PERSISTENCE.md.
+
+## Исторические проверки (не результаты v0.3.5)
+
+Ниже сохранены прежние отчёты для их исходных ревизий; даже исторический PASS после reboot не отменяет позднее обнаруженный ens3 P1 и не подтверждает новый архив.
 
 ## v0.3.4 · Smoke E2E #1: официальный WARP
 
@@ -245,3 +272,58 @@ v0.2.0 проверялся на Ubuntu 24.04.5 LTS amd64 с уже сущест
 - Полный прогон выполнен на кандидате от `v0.3.2` с исправлением минимального BBR preflight из текущего PR; неизменённый опубликованный архив после этого исправления отдельно не разворачивался.
 - Подключение с подтверждённого российского source IP и UDP через WARP SOCKS отдельно не проверялись.
 - Классификация GeoIP/GeoSite зависит от upstream; установщик и E2E проверяют digest/структуру и все используемые категории.
+
+## Кандидат: панель через Self-SNI HTTPS/443
+
+Новые проверки не меняют старые отчёты о других версиях. Архитектура и модель
+угроз — [PANEL-HTTPS.md](PANEL-HTTPS.md), результаты текущего кандидата —
+[PANEL-HTTPS-REPORT.md](PANEL-HTTPS-REPORT.md), безопасные числовые доказательства —
+[panel-https-evidence.json](panel-https-evidence.json).
+
+Локально: `PYTHONPATH=src python3 -m unittest discover -s tests -v`, ShellCheck,
+Bash syntax, compileall, diff-check и два идентичных локальных release build.
+Сборка локальная и не публикует release; feature-ветка уже отправлена в GitHub.
+`tests/test_panel_proxy.py` покрывает URL/internal endpoint, отсутствие UFW
+allow для панели, bootstrap gate и порядок TLS/loopback/проверенного ядра.
+`tests/test_panel_checks.py` проверяет fail-closed probes, PWA asset и валидный
+16-byte WebSocket handshake key.
+
+На одноразовой Linux VPS с уже установленными Nginx и OpenSSL:
+`PYTHONPATH=src python3 tools/test_panel_proxy.py`. Изолированный harness
+создаёт временный Unix socket, loopback HTTPS upstream и тестовые сертификаты.
+Он проверяет реальные Nginx URI/Host/IP headers, redirects, POST >8 KiB,
+WebSocket frame, login 429 и две ошибки upstream TLS (hostname/trust).
+Публичных тестовых TCP listener нет; временные процессы завершаются в finally.
+
+После запуска/рестарта x-ui дождитесь ответа внутреннего HTTPS, затем запускайте
+`PYTHONPATH=src python3 -m selfsni.acceptance`. Немедленный вызов после
+`systemctl restart` может попасть в окно инициализации API: состояние active
+не гарантирует готовность listener. Для `--e2e --geodata-e2e` разрешены только
+одноразовые zero-client VPS. Повторите приёмку после reboot и отдельно проверьте
+внешний браузер, внешний Vision и недоступность внутреннего порта. Не считайте
+моки, локальный Nginx harness или on-host Vision внешним E2E.
+
+### Code-review ревизия внешнего пробника, 29 октября 2026
+
+Новые regression tests: `test_external_probe.py`, `test_external_acceptance.py`
+и `test_panel_bootstrap.py`. Они проверяют TCP refusal/timeout, реальный
+loopback TLS+SNI, untrusted/wrong-name/другой доверенный сертификат, возможный
+TCP interception, INCONCLUSIVE JSON/exit 2, продолжение независимых checks,
+частичный create/lost response, ownership, marker retention и process cleanup.
+Для TLS используются временные сертификаты OpenSSL, не credentials VPS.
+Явный TCP refusal дополнительно тестируется детерминированной инъекцией:
+если реальный localhost refusal фильтруется текущей сетью, соответствующий
+live-local case отмечается skipped/NOT VERIFIED, а не PASS. Это не проверка VPS.
+
+Полная локальная команда требует разрешённых loopback bind/connect. В Codex
+sandbox без сети используйте штатное разрешение на запуск тестов; не заменяйте
+реальный TLS mock-результатом. macOS без Nginx: новый Nginx integration
+NOT TESTED локально. CI на Ubuntu 24.04 устанавливает существующие runtime
+Nginx/OpenSSL и запускает настоящий proxy harness в обеих Python 3.10/3.12 jobs.
+CI должен подтвердить результат фактически; наличие job ещё не означает PASS.
+Статусы и exit codes нового probe описаны в [PANEL-HTTPS.md](PANEL-HTTPS.md).
+
+Исторические 136/136, Nginx 7/7, браузер и VPS 32/32 → 31/32 после reboot
+не переносятся на новые байты. Новый clean install, reboot и внешний Vision
+этой ревизии не запускались. P1 IPv6 ens3 остаётся отдельным release blocker;
+ipv6.py, sysctl, networkd и Netplan в этой ревизии не изменяются.

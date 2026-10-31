@@ -7,12 +7,13 @@ import platform
 import re
 import shutil
 import socket
+import ssl
 import subprocess
 import sys
 import tempfile
 import time
 
-from .api import Panel, request
+from .api import PANEL_ACCESS, Panel, request
 from . import bbr, ipv6, swap
 from .core import (ROOT, CommandError, InstallError, configure_diagnostics, redact,
                    register_secrets, require, run, write, save, token, free_port,
@@ -176,6 +177,8 @@ def preflight(args, resume_state=None):
         sub_port = int(resume_state['sub_port'])
         require(panel_port not in excluded and sub_port not in excluded,
                 'Сохранённые порты конфликтуют с системными')
+        require(1024 <= panel_port <= 65535 and 1024 <= sub_port <= 65535 and panel_port != sub_port,
+                'Сохранённые порты некорректны или совпадают')
     else:
         panel_port = free_port(excluded)
         sub_port = free_port(excluded | {panel_port})
@@ -190,6 +193,7 @@ def preflight(args, resume_state=None):
     fresh = dict(domain=domain, ipv4=public, ubuntu=info['VERSION_ID'], codename=info['VERSION_CODENAME'],
                 arch='amd64' if platform.machine() == 'x86_64' else 'arm64',
                 ssh_ports=sorted(ssh_ports), panel_port=panel_port, sub_port=sub_port,
+                panel_access=PANEL_ACCESS,
                 warp_mode=args.warp_mode, adopt_warp=args.warp_mode == 'adopt',
                 bbr_preflight=bbr_report, ipv6_preflight=ipv6_report, **credentials,
                 status='INSTALLING')
@@ -206,8 +210,8 @@ def firewall(s, public=False):
     run('ufw', 'allow', '80/tcp')
     run('ufw', 'allow', '443/tcp')
     if public:
-        for port in [s['panel_port'], s['sub_port']]:
-            run('ufw', 'allow', str(port) + '/tcp')
+        # Only subscriptions retain their existing separate public port.
+        run('ufw', 'allow', str(s['sub_port']) + '/tcp')
     run('ufw', 'default', 'deny', 'incoming')
     run('ufw', 'default', 'allow', 'outgoing')
     run('ufw', '--force', 'enable')
@@ -277,7 +281,14 @@ def decoy(s):
           f'fastcgi_param HTTPS on;\nfastcgi_pass unix:{sockets[0]};\n', 0o644)
     write('/etc/tmpfiles.d/selfsni.conf', 'd /run/selfsni 0750 root root -\n', 0o644)
     run('systemd-tmpfiles', '--create', '/etc/tmpfiles.d/selfsni.conf')
-    write('/etc/nginx/conf.d/selfsni-tls.conf', render('nginx-tls.conf', dict(values, DOMAIN=s['domain'])), 0o644)
+    require(re.fullmatch(r'/[0-9a-f]{48}/', s['panel_path']) is not None,
+            'Panel path must contain exactly 48 lowercase hex characters')
+    require(isinstance(s['panel_port'], int) and 1024 <= s['panel_port'] <= 65535,
+            'Invalid internal panel port')
+    panel_values = dict(DOMAIN=s['domain'], PANEL_PORT=s['panel_port'],
+                        PANEL_PATH=s['panel_path'], PANEL_NO_SLASH=s['panel_path'][:-1])
+    write('/etc/nginx/snippets/selfsni-panel.conf', render('nginx-panel.conf', panel_values))
+    write('/etc/nginx/conf.d/selfsni-tls.conf', render('nginx-tls.conf', dict(values, **panel_values)))
     write('/etc/systemd/system/nginx.service.d/selfsni.conf',
           '[Service]\nUMask=0007\nExecStartPre=/usr/bin/install -d -m 0750 -o root -g root /run/selfsni\n', 0o644)
     run('systemctl','daemon-reload')
@@ -308,15 +319,19 @@ def panel(s, lock, work):
                XUI_ENABLE_FAIL2BAN='false', XUI_DB_TYPE='sqlite', XUI_SERVER_IP=s['ipv4'],
                XUI_USERNAME=s['username'], XUI_PASSWORD=s['password'],
                XUI_PANEL_PORT=str(s['panel_port']), XUI_WEB_BASE_PATH=s['panel_path'].strip('/'))
-    # UFW already blocks the temporary plaintext panel during official bootstrap.
+    # The stock installer starts x-ui before Bob can bind it or enable TLS.
+    # An absent root-only marker blocks EVERY service start throughout bootstrap.
+    require(not (STATE/'panel-ready').exists(), 'Unexpected panel bootstrap marker')
+    write('/etc/systemd/system/x-ui.service.d/20-selfsni.conf',
+          xui_unit_override(s.get('warp_mode', 'install')), 0o644)
+    run('systemctl', 'daemon-reload')
     run('bash', ROOT / 'vendor/3x-ui/install.sh', lock['xui_version'], env=env, timeout=900)
     s['xray_sha256'] = install_pinned_xray(lock, s['arch'], work)
     cert = f'/etc/letsencrypt/live/{s["domain"]}/'
     run('/usr/local/x-ui/x-ui','setting','-webCert',cert+'fullchain.pem','-webCertKey',cert+'privkey.pem',
-        '-listenIP','0.0.0.0')
-    write('/etc/systemd/system/x-ui.service.d/20-selfsni.conf',
-          xui_unit_override(s.get('warp_mode', 'install')),
-          0o644)
+        '-listenIP','127.0.0.1')
+    verify_panel_bootstrap(s)
+    write(STATE/'panel-ready', 'loopback TLS configured\n')
     run('systemctl','daemon-reload')
     run('systemctl','restart','x-ui')
     wait_for(lambda: request(s['domain'], s['panel_port'], s['panel_path'])[0] == 200, 'HTTPS panel')
@@ -329,13 +344,33 @@ def panel(s, lock, work):
     configure_panel(s, lock)
 
 
+def verify_panel_bootstrap(s):
+    # The pinned CLI can exit 0 after failed settings writes. Read them back
+    # while the service is still gated, and validate the actual certificate/key.
+    cert = f'/etc/letsencrypt/live/{s["domain"]}/'
+    output = run('/usr/local/x-ui/x-ui', 'setting', '-getListen', '-getCert', '-show')
+    for key, value in (('listenIP', '127.0.0.1'), ('cert', cert+'fullchain.pem'),
+                       ('key', cert+'privkey.pem'), ('port', str(s['panel_port'])),
+                       ('webBasePath', s['panel_path']), ('hasDefaultCredential', 'false')):
+        require(re.findall(r'^'+key+r':[ \t]*([^\r\n]*)$', output, re.M) == [value],
+                'Panel bootstrap settings verification failed')
+    try:
+        ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER).load_cert_chain(cert+'fullchain.pem', cert+'privkey.pem')
+    except (OSError, ssl.SSLError) as error:
+        raise InstallError('Panel bootstrap TLS certificate/key validation failed') from error
+
+
 def xui_unit_override(mode):
     require(mode in ('install', 'adopt', 'skip'), 'Unknown WARP mode')
     warp_unit = ' warp-svc.service' if mode != 'skip' else ''
     return (f'[Unit]\nAfter=nginx.service{warp_unit} network-online.target\n'
             f'Wants=nginx.service{warp_unit} network-online.target\n'
+            'ConditionPathExists=/var/lib/selfsni/panel-ready\n'
             '[Service]\nEnvironment=TZ=' + GEODATA_TIMEZONE + '\n'
-            'ExecStartPre=/usr/bin/test -S /run/selfsni/nginx.sock\n')
+            'ExecStartPre=/usr/bin/test -S /run/selfsni/nginx.sock\n'
+            'ExecStartPre=/usr/local/x-ui/x-ui setting -listenIP 127.0.0.1\n'
+            'ExecStartPre=/bin/sh -ec \'/usr/local/x-ui/x-ui setting -getListen | '
+            '/usr/bin/grep -Fx "listenIP: 127.0.0.1"\'\n')
 
 
 def version_packages(mode):
@@ -357,7 +392,7 @@ def configure_panel(s, lock):
         subHappAutoDetect=True, subHappTunType='xray', subHappLocalProxyAuth='auto',
         subIncyAppAutoDetect=True,
         subJsonEnable=False, subJsonAutoDetect=False, subClashEnable=False,
-        webListen='0.0.0.0')
+        webListen='127.0.0.1', trustedProxyCIDRs='127.0.0.1/32')
     api.call('setting/update', settings)
     # Keep the stock databases from the SHA256-pinned 3x-ui archive. Happ/INCY
     # profiles use their separately pinned DigneZzZ mobile datasets.
