@@ -169,16 +169,17 @@ def atomic_write(path, content, mode=0o600):
     require(not path.is_symlink(), f'Refusing symlink: {path}')
     fd, temporary = tempfile.mkstemp(prefix='.' + path.name + '.', dir=path.parent)
     try:
-        # Until the file object owns fd, every failure must close it here.
+        # fd belongs to this function alone until os.fdopen() is called.
         try:
             info = os.fstat(fd)
+            os.fchmod(fd, mode)
         except BaseException:
             os.close(fd)
             raise
         try:
-            os.fchmod(fd, mode)
             handle = os.fdopen(fd, 'w')
         except BaseException:
+            # A failed fdopen() may already have closed fd.
             _close_unowned(fd, (info.st_dev, info.st_ino))
             raise
         with handle as f:

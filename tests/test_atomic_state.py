@@ -1,9 +1,11 @@
 """state.json must never be left truncated by an interrupted write."""
+import errno
 import json
 import os
 import stat
 import tempfile
 import unittest
+from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import patch
 
@@ -12,6 +14,7 @@ from selfsni.core import InstallError, save
 from selfsni.install_state import checkpoint, fail, initialize, load
 
 REAL_FDOPEN = os.fdopen
+REAL_FSTAT = os.fstat  # unaffected by fault injection into core.os.fstat
 
 
 def state():
@@ -137,30 +140,63 @@ class AtomicWriteDescriptorTests(unittest.TestCase):
 
         def mkstemp(*args, **kwargs):
             fd, name = real_mkstemp(*args, **kwargs)
+            info = REAL_FSTAT(fd)
             self.descriptors.append(fd)
+            # A leaked temporary descriptor must not outlive a failing test.
+            self.addCleanup(self.close_if_same, fd, (info.st_dev, info.st_ino))
             return fd, name
         patcher = patch.object(core.tempfile, 'mkstemp', side_effect=mkstemp)
         patcher.start()
         self.addCleanup(patcher.stop)
 
+    @staticmethod
+    def close_if_same(fd, identity):
+        try:
+            current = REAL_FSTAT(fd)
+        except OSError:
+            return
+        if (current.st_dev, current.st_ino) == identity:
+            os.close(fd)
+
     def assertClosed(self, fd):
         with self.assertRaises(OSError) as raised:
-            os.fstat(fd)
-        self.assertEqual(raised.exception.errno, 9)  # EBADF
+            REAL_FSTAT(fd)
+        self.assertEqual(raised.exception.errno, errno.EBADF)
 
     def assertPreviousStateOnly(self):
         self.assertEqual(self.path.read_bytes(), self.previous)
         self.assertEqual(sorted(p.name for p in self.root.iterdir()), ['state.json'])
 
-    def test_fchmod_failure_closes_descriptor(self):
-        with patch.object(core.os, 'fchmod', side_effect=OSError(5, 'Input/output error')), \
-             self.assertRaisesRegex(OSError, 'Input/output error'):
+    def fstat_failing_after(self, calls):
+        """Real fstat for the first `calls` invocations, EIO afterwards."""
+        seen = []
+
+        def fstat(fd):
+            seen.append(fd)
+            if len(seen) > calls:
+                raise OSError(errno.EIO, 'Input/output error')
+            return REAL_FSTAT(fd)
+        return patch.object(core.os, 'fstat', side_effect=fstat)
+
+    def test_fchmod_failure_closes_owned_descriptor(self):
+        for error in (OSError(errno.EIO, 'Input/output error'), KeyboardInterrupt()):
+            for cleanup_fstat_fails in (False, True):
+                with self.subTest(error=type(error).__name__, cleanup_fstat_fails=cleanup_fstat_fails):
+                    with patch.object(core.os, 'fchmod', side_effect=error), \
+                         (self.fstat_failing_after(1) if cleanup_fstat_fails else nullcontext()), \
+                         self.assertRaises(type(error)):
+                        save(self.path, state())
+                    self.assertClosed(self.descriptors[-1])
+                    self.assertPreviousStateOnly()
+
+    def test_initial_fstat_failure_closes_descriptor(self):
+        with self.fstat_failing_after(0), self.assertRaisesRegex(OSError, 'Input/output error'):
             save(self.path, state())
         self.assertClosed(self.descriptors[-1])
         self.assertPreviousStateOnly()
 
     def test_fdopen_failure_before_ownership_closes_descriptor(self):
-        for error in (OSError(24, 'Too many open files'), KeyboardInterrupt()):
+        for error in (OSError(errno.EMFILE, 'Too many open files'), KeyboardInterrupt()):
             with self.subTest(error=type(error).__name__), \
                  patch.object(core.os, 'fdopen', side_effect=error), \
                  self.assertRaises(type(error)):
@@ -168,32 +204,27 @@ class AtomicWriteDescriptorTests(unittest.TestCase):
             self.assertClosed(self.descriptors[-1])
             self.assertPreviousStateOnly()
 
-    def test_fdopen_failure_after_ownership_never_closes_twice(self):
+    def test_fdopen_failure_after_ownership_never_closes_reused_descriptor(self):
         # The file object already closed the descriptor, and its number was
         # reused by an unrelated file. That file must stay open.
         foreign = self.root / 'foreign'
-        holders = []
 
         def fdopen(fd, *args, **kwargs):
             REAL_FDOPEN(fd, *args, **kwargs).close()
             holder = open(foreign, 'w')
+            self.addCleanup(holder.close)
             if holder.fileno() != fd:
                 os.dup2(holder.fileno(), fd)
-            holders.append(holder)
+                info = REAL_FSTAT(fd)
+                self.addCleanup(self.close_if_same, fd, (info.st_dev, info.st_ino))
             raise MemoryError('wrapper allocation failed')
 
         with patch.object(core.os, 'fdopen', side_effect=fdopen), \
              self.assertRaises(MemoryError):
             save(self.path, state())
-        fd = self.descriptors[-1]
-        try:
-            self.assertEqual(os.fstat(fd).st_ino, foreign.stat().st_ino)
-        finally:
-            if holders[0].fileno() != fd:
-                os.close(fd)
-            holders[0].close()
-        foreign.unlink()
-        self.assertPreviousStateOnly()
+        self.assertEqual(os.fstat(self.descriptors[-1]).st_ino, foreign.stat().st_ino)
+        self.assertEqual(sorted(p.name for p in self.root.iterdir()), ['foreign', 'state.json'])
+        self.assertEqual(self.path.read_bytes(), self.previous)
 
     def test_successful_write_closes_descriptor_once(self):
         closes = []
