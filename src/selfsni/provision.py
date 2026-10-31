@@ -15,6 +15,7 @@ import time
 
 from .api import PANEL_ACCESS, Panel, request
 from . import bbr, ipv6, swap
+from .clients import ensure_admin, verify_admin_runtime, verify_admin_subscriptions
 from .core import (ROOT, CommandError, InstallError, configure_diagnostics, redact,
                    register_secrets, require, run, write, save, token, free_port,
                    fqdn, download, verify_bundle, wait_for, digest,
@@ -419,8 +420,11 @@ def configure_panel(s, lock):
     register_secrets(s['reality_private'], s['reality_public'], s['short_id'])
     save(STATE/'state.json',s)
     api.call('inbounds/add', inbound(s['domain'], s['reality_private'], s['reality_public'], s['short_id']))
+    ensure_admin(s, api, lambda state: save(STATE/'state.json', state))
     run('systemctl','restart','x-ui')
     wait_for(lambda: request(s['domain'],s['sub_port'],s['sub_path']+'missing')[0] in (400,404), 'TLS subscriptions')
+    verify_admin_runtime(s, json.loads(Path('/usr/local/x-ui/bin/config.json').read_text()))
+    verify_admin_subscriptions(s)
     s['xray_version'] = run(s['xray_bin'], 'version').splitlines()[0]
     s['xui_version'] = lock['xui_version']
 

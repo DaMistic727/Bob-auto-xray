@@ -102,6 +102,7 @@ class InstallerTests(unittest.TestCase):
             self.assertIn('category-ai-!cn',found['geosite.dat'])
             self.assertIn('category-ip-geo-detect',found['geosite.dat'])
             self.assertIn('category-ads-all',found['geosite_RU.dat'])
+            self.assertIn('category-ads-all',found['geosite.dat'])
             self.assertIn('ru-available-only-inside',found['geosite_RU.dat'])
             self.assertIn('ru',categories(root/'geoip_RU.dat'))
 
@@ -154,6 +155,7 @@ class InstallerTests(unittest.TestCase):
         self.assertTrue(sniffing['routeOnly'])
         self.assertFalse(json.loads(inbound('test.example','priv','pub','aabb',False)['sniffing'])['routeOnly'])
         self.assertEqual(i['tag'],TAG)
+        self.assertEqual(i['remark'], 'vless by bob')
 
     def test_reality_target_is_present_in_web_editor_model(self):
         generated = inbound('test.example','priv','pub','aabb')

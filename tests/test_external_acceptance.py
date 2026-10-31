@@ -13,11 +13,15 @@ from selfsni.core import InstallError
 from tools import external_acceptance as external
 from tools.remote_fixture import cleanup_fixture, create_fixture
 
+ADMIN = {'email': 'admin', 'id': 'bc026b34-8565-4320-93eb-efad05e288f5',
+         'subId': 'b'*48, 'flow': 'xtls-rprx-vision', 'enable': True,
+         'limitIp': 0, 'limitHwid': 0, 'totalGB': 0, 'expiryTime': 0, 'reset': 0}
+
 
 def state():
     return dict(domain='panel.test', ipv4='192.0.2.1', panel_port=21000, sub_port=22000,
                 panel_path='/secret-path/', sub_path='/subscription/', panel_access='https-443',
-                warp_mode='skip', client={'id': 'client-id', 'subId': 'sub-id'},
+                warp_mode='skip', admin_client=dict(ADMIN), client={'id': 'client-id', 'subId': 'sub-id'},
                 reality_public='public-key', short_id='short-id')
 
 
@@ -124,8 +128,8 @@ class RunnerTests(unittest.TestCase):
 
 class FixtureAPI:
     def __init__(self):
-        self.clients = []
-        self.catalog = []
+        self.clients = [dict(ADMIN)]
+        self.catalog = [dict(ADMIN)]
         self.lose_add_response = False
         self.partial_delete = False
         self.available = True
@@ -134,9 +138,10 @@ class FixtureAPI:
         if not self.available:
             raise InstallError('API unavailable')
         if endpoint == 'inbounds/list':
-            return [{'id': 1, 'settings': json.dumps({'clients': self.clients})}]
+            return [{'id': 1, 'port': 443, 'protocol': 'vless', 'remark': 'vless by bob',
+                     'settings': json.dumps({'clients': self.clients})}]
         if endpoint == 'clients/list':
-            return [{'email': c['email'], 'uuid': c['id'], 'subId': c['subId']} for c in self.catalog]
+            return [dict(c, uuid=c['id'], id=index+1, inboundIds=[1]) for index, c in enumerate(self.catalog)]
         if endpoint == 'clients/add':
             self.clients.append(data['client'])
             self.catalog.append(dict(data['client']))
@@ -162,7 +167,7 @@ class OwnedFixtureTests(unittest.TestCase):
             api = FixtureAPI(); api.lose_add_response = True
             with self.assertRaises(InstallError):
                 self.create(api, fixture)
-            self.assertEqual(api.clients, [])
+            self.assertEqual(api.clients, [ADMIN])
             self.assertFalse(fixture.exists())
 
     def test_restart_failure_also_cleans_created_client(self):
@@ -172,7 +177,7 @@ class OwnedFixtureTests(unittest.TestCase):
                  patch('tools.remote_fixture.panel_certificate_fingerprint', return_value='0'*64):
                 with self.assertRaises(InstallError):
                     create_fixture(state(), api, fixture, 'a'*32)
-            self.assertEqual(api.clients, [])
+            self.assertEqual(api.clients, [ADMIN])
             self.assertFalse(fixture.exists())
 
     def test_other_run_cannot_delete_fixture(self):
@@ -183,16 +188,16 @@ class OwnedFixtureTests(unittest.TestCase):
             with self.assertRaises(InstallError):
                 cleanup_fixture(api, fixture, 'b'*32)
             self.assertEqual(fixture.read_bytes(), before)
-            self.assertEqual(len(api.clients), 1)
+            self.assertEqual(len(api.clients), 2)
 
     def test_cleanup_is_idempotent_and_keeps_other_clients(self):
         with tempfile.TemporaryDirectory() as directory:
             fixture = Path(directory)/'fixture.json'; api = FixtureAPI()
-            self.create(api, fixture)
             api.clients.append({'id': 'other-id', 'email': 'other-user'})
+            self.create(api, fixture)
             cleanup_fixture(api, fixture, 'a'*32)
             cleanup_fixture(api, fixture, 'a'*32)
-            self.assertEqual(api.clients, [{'id': 'other-id', 'email': 'other-user'}])
+            self.assertEqual(api.clients, [ADMIN, {'id': 'other-id', 'email': 'other-user'}])
             self.assertFalse(fixture.exists())
 
     def test_unavailable_api_retains_recovery_marker(self):
@@ -203,25 +208,25 @@ class OwnedFixtureTests(unittest.TestCase):
             with self.assertRaises(InstallError):
                 cleanup_fixture(api, fixture, 'a'*32)
             self.assertTrue(fixture.exists())
-            self.assertEqual(len(api.clients), 1)
+            self.assertEqual(len(api.clients), 2)
 
     def test_replaced_client_identity_is_not_deleted(self):
         with tempfile.TemporaryDirectory() as directory:
             fixture = Path(directory)/'fixture.json'; api = FixtureAPI()
             self.create(api, fixture)
-            api.clients[0]['id'] = 'changed-id'
+            api.clients[-1]['id'] = 'changed-id'
             with self.assertRaises(InstallError):
                 cleanup_fixture(api, fixture, 'a'*32)
             self.assertTrue(fixture.exists())
-            self.assertEqual(api.clients[0]['id'], 'changed-id')
+            self.assertEqual(api.clients[-1]['id'], 'changed-id')
 
     def test_catalog_only_client_is_removed_before_cleanup_confirmation(self):
         with tempfile.TemporaryDirectory() as directory:
             fixture = Path(directory)/'fixture.json'; api = FixtureAPI()
             self.create(api, fixture)
-            api.clients.clear()
+            api.clients[:] = [c for c in api.clients if c['email'] == 'admin']
             cleanup_fixture(api, fixture, 'a'*32)
-            self.assertEqual(api.catalog, [])
+            self.assertEqual(api.catalog, [ADMIN])
             self.assertFalse(fixture.exists())
 
     def test_retry_after_partial_delete_also_removes_catalog(self):
@@ -231,9 +236,9 @@ class OwnedFixtureTests(unittest.TestCase):
             api.partial_delete = True
             with self.assertRaises(InstallError):
                 cleanup_fixture(api, fixture, 'a'*32)
-            self.assertEqual(api.clients, [])
-            self.assertEqual(len(api.catalog), 1)
+            self.assertEqual(api.clients, [ADMIN])
+            self.assertEqual(len(api.catalog), 2)
             self.assertTrue(fixture.exists())
             cleanup_fixture(api, fixture, 'a'*32)
-            self.assertEqual(api.catalog, [])
+            self.assertEqual(api.catalog, [ADMIN])
             self.assertFalse(fixture.exists())

@@ -25,6 +25,7 @@ jobs:
         run: |
           python -m unittest discover -s tests -v
           python tools/test_panel_proxy.py
+          python tools/test_client_api.py
           python -m compileall -q src tools tests
           bash -n install.sh
           shellcheck install.sh
