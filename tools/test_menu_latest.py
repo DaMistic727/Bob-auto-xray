@@ -29,11 +29,12 @@ def main():
                  VPS_MENU_SKIP_DEPS='1',VPS_MENU_ALLOW_NON_ROOT_TEST='1')
         git('clone','--branch','main','--single-branch',origin,target)
         git('-C',target,'remote','set-url','origin',OFFICIAL_REPOSITORY)
+        git('-C',target,'config','--local','core.filemode','false')
         (root/'bashrc').write_text('# unchanged\n')
         subprocess.run(['bash',str(target/'install.sh'),'--non-interactive','--no-autostart','--source-dir',str(target)],env=env,check=True,stdout=subprocess.DEVNULL)
         assert git('-C',target,'branch','--show-current')=='main'
         assert git('-C',target,'rev-parse','--abbrev-ref','@{upstream}')=='origin/main'
-        assert not git('-c','core.filemode=false','-C',target,'status','--porcelain')
+        assert not git('-C',target,'status','--porcelain')
         script=(target/'server-menu').read_text()
         state_function=script[script.index('function menu_git_state'):script.index('function check_for_updates')]
         def state():return subprocess.check_output(['bash','-c',state_function+'\nmenu_git_state'],env=env,text=True).strip()
@@ -47,6 +48,7 @@ def main():
         condition=script[start+3:script.index('; then',start)]
         subprocess.run(['bash','-ec','state=behind\n'+condition],env=env,check=True,stdout=subprocess.DEVNULL)
         assert state()=='current' and git('-C',target,'rev-parse','HEAD')==git('-C',origin,'rev-parse','HEAD')
+        assert not git('-C',target,'status','--porcelain')
         assert (root/'bashrc').read_text()=='# unchanged\n'
         assert (root/'bin/server-menu').is_symlink() and (root/'bin/menu_warp.sh').is_symlink()
         print('PASS official main revision '+revision+': main tracking origin/main; official installer; item 9 current/behind/fast-forward/current; bashrc unchanged')

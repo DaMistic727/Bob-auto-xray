@@ -113,3 +113,5 @@ Public: только SSH TCP, HTTP TCP/80, Xray REALITY/HTTPS TCP/443. Internal:
 Pinned 3x-ui поддерживает assets под LinksPath: [sub.go](https://github.com/MHSanaei/3x-ui/blob/608ef4e4010bf83e2e78328e08f77efc051ad4d7/internal/sub/sub.go). HTML генерирует ссылки с этим prefix. Не требуется переписывать upstream HTML или разрешать глобальные assets.
 
 subscription_access=https-443 добавляется только новой установке/разрешённому раннему resume. public_subscription_url() для старого state сохраняет прежний нестандартный порт. Завершённые v0.3.6 не меняют URLs, firewall или listeners автоматически. UUID/subId admin остаются прежними. TLS на backend проверяется отдельно от публичного пути; ошибка любого шага не считается HEALTHY_LOCAL.
+
+Menu checkout использует локальный core.filemode=false: официальный installer делает chmod для scripts с Git mode 0644. Это сохраняет обычный git status --porcelain чистым после установки/пункта 9; изменения содержимого, untracked/ignored файлы по-прежнему отклоняются. Глобальный Git config не изменяется.
