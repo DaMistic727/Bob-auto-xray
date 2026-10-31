@@ -29,6 +29,15 @@ CONFIG = '/usr/local/x-ui/bin/config.json'
 SOCKET = '/run/selfsni/nginx.sock'
 SCHEMA_VERSION = 1
 CA_BUNDLE = '/etc/ssl/certs/ca-certificates.crt'
+# State markers written by v0.3.5 (panel) and v0.3.7 (subscriptions); older
+# nodes keep their original public ports and are never migrated automatically.
+HTTPS_443 = 'https-443'
+# Added to the server routing by v0.3.6 together with the permanent admin client.
+GLOBAL_ADS = 'geosite:category-ads-all'
+NGINX_TLS = '/etc/nginx/conf.d/selfsni-tls.conf'
+PANEL_SNIPPET = '/etc/nginx/snippets/selfsni-panel.conf'
+SUB_SNIPPET = '/etc/nginx/snippets/selfsni-subscription.conf'
+UFW_RULES = ('/etc/ufw/user.rules', '/etc/ufw/user6.rules')
 SUGGEST = {
     'state': 'Проверьте завершение установки и права root; не запускайте resume без выяснения причины.',
     'service': 'Проверьте статус и журнал службы вручную; Doctor её не перезапускает.',
@@ -93,6 +102,18 @@ class Probe:
         try:
             conn.request('GET', path, headers={'Connection': 'close'})
             return conn.getresponse().status
+        finally:
+            conn.close()
+
+    def public_get(self, domain, path):
+        # The public route through REALITY fallback and nginx on 443; only the
+        # status and headers are kept, the body is never read.
+        from .api import LocalTLS
+        conn = LocalTLS(domain, 443, timeout=7, context=verified_context())
+        try:
+            conn.request('GET', path, headers={'Connection': 'close'})
+            response = conn.getresponse()
+            return response.status, {k.lower(): v for k, v in response.getheaders()}
         finally:
             conn.close()
 
@@ -220,12 +241,20 @@ class Doctor:
             if value.get('xray_bin') not in ('/usr/local/x-ui/bin/xray-linux-amd64',
                                               '/usr/local/x-ui/bin/xray-linux-arm64'):
                 raise ValueError('xray_bin')
+            for key in ('panel_access', 'subscription_access'):
+                if value.get(key) not in (None, HTTPS_443):
+                    raise ValueError(key)
+            # v0.3.7 moved subscriptions behind the v0.3.5 panel proxy, never alone.
+            if value.get('subscription_access') and not value.get('panel_access'):
+                raise ValueError('access markers')
         except (ValueError, KeyError, TypeError, InstallError):
             return self.answer('UNKNOWN', 'В состоянии установки отсутствуют необходимые параметры.',
                                suggestion=SUGGEST['state'])
         self.state = {key: value.get(key) for key in (
             'domain', 'panel_port', 'sub_port', 'panel_path', 'sub_path',
-            'php_service', 'xray_bin', 'ipv6', 'swap')}
+            'php_service', 'xray_bin', 'ipv6', 'swap', 'panel_access', 'subscription_access')}
+        # Only the presence of the permanent client is kept, never its identity.
+        self.state['admin_client'] = isinstance(value.get('admin_client'), dict)
         self.mode = mode
         return self.answer('PASS', 'Установка Bob завершена.', {'warpMode': mode})
 
@@ -429,9 +458,13 @@ class Doctor:
         if route.get('domainStrategy') != 'IPOnDemand':
             return self.answer('FAIL', 'Routing domainStrategy не соответствует защитному правилу.',
                                suggestion=SUGGEST['routing'])
+        # Nodes installed before v0.3.6 have no global ads block; it is reported
+        # as an older policy, but every rule they did receive is still required.
+        legacy_policy = not self.state['admin_client']
+        domains = [x for x in BLOCKED_DOMAINS if not (legacy_policy and x == GLOBAL_ADS)]
         expected = [('blocked', 'ip', BLOCKED_IPS),
                     ('blocked', 'protocol', ['bittorrent']),
-                    ('blocked', 'domain', BLOCKED_DOMAINS)]
+                    ('blocked', 'domain', domains)]
         if self.mode != 'skip':
             expected.append(('warp-outbound', 'domain', WARP_DOMAINS))
         if not rules or rules[0].get('outboundTag') != 'api' or rules[0].get('inboundTag') not in ('api', ['api']):
@@ -448,6 +481,9 @@ class Doctor:
                                suggestion=SUGGEST['routing'])
         if self.mode == 'skip' and any(x.get('outboundTag') == 'warp-outbound' for x in rules):
             return self.answer('FAIL', 'Правило WARP осталось в режиме skip.',
+                               suggestion=SUGGEST['routing'])
+        if legacy_policy and GLOBAL_ADS not in rules[positions[2]]['domain']:
+            return self.answer('WARN', 'Старая политика без глобальной блокировки рекламы GeoSite.',
                                suggestion=SUGGEST['routing'])
         return self.answer('PASS', 'Критические routing invariants соблюдены.')
 
@@ -578,6 +614,95 @@ class Doctor:
                                    suggestion=SUGGEST['security'])
         return self.answer('PASS', 'Секретные файлы доступны только root.')
 
+    def _internal_ports(self):
+        """Ports that must stay loopback-only on this node's schema."""
+        ports = []
+        if self.state['panel_access'] == HTTPS_443:
+            ports.append(int(self.state['panel_port']))
+        if self.state['subscription_access'] == HTTPS_443:
+            ports.append(int(self.state['sub_port']))
+        return ports
+
+    def internal_listeners(self):
+        ports = self._internal_ports()
+        if not ports:
+            return self.answer('WARN', 'Старая схема: панель на отдельном публичном порту.',
+                               suggestion=SUGGEST['security'])
+        code, output = self.p.command('ss', '-H', '-lntp')
+        if code:
+            return self.answer('UNKNOWN', 'Список TCP listeners недоступен.',
+                               suggestion=SUGGEST['listener'])
+        code, pid = self.p.command('systemctl', 'show', 'x-ui', '--property=MainPID', '--value')
+        pid = pid.strip()
+        if code or not pid.isdigit() or int(pid) == 0:
+            return self.answer('UNKNOWN', 'PID службы x-ui не удалось определить.',
+                               suggestion=SUGGEST['service'])
+        rows = [line.split() for line in output.splitlines() if len(line.split()) >= 6]
+        for port in ports:
+            owned = [row for row in rows if row[3].rsplit(':', 1)[-1] == str(port)]
+            if not owned:
+                return self.answer('FAIL', 'Внутренний HTTPS listener панели или подписок отсутствует.',
+                                   suggestion=SUGGEST['service'])
+            for row in owned:
+                if row[3] != f'127.0.0.1:{port}':
+                    return self.answer('FAIL', 'Внутренний порт панели или подписок доступен не только '
+                                       'через loopback.', suggestion=SUGGEST['security'])
+                if f'pid={pid},' not in ' '.join(row[5:]):
+                    return self.answer('FAIL', 'Внутренний порт панели или подписок принадлежит '
+                                       'другому процессу.', suggestion=SUGGEST['security'])
+        return self.answer('PASS', 'Панель и подписки слушают только loopback от x-ui.')
+
+    def internal_firewall(self):
+        ports = self._internal_ports()
+        if not ports:
+            return self.answer('SKIP', 'Старая схема: правило UFW для порта панели ожидаемо.')
+        for name in UFW_RULES:
+            try:
+                text = self.p.read(name)
+            except FileNotFoundError:
+                return self.answer('UNKNOWN', 'Правила UFW недоступны.', suggestion=SUGGEST['security'])
+            if any(re.search(r'--dport\s+' + str(port) + r'\b', text) for port in ports):
+                return self.answer('FAIL', 'UFW открывает внутренний порт панели или подписок.',
+                                   suggestion=SUGGEST['security'])
+        return self.answer('PASS', 'UFW не открывает внутренние порты панели и подписок.')
+
+    def public_routes_config(self):
+        if self.state['panel_access'] != HTTPS_443:
+            return self.answer('SKIP', 'Старая схема без панели на HTTPS/443.')
+        routes = [(self.state['panel_path'], PANEL_SNIPPET, self.state['panel_port'])]
+        if self.state['subscription_access'] == HTTPS_443:
+            routes.append((self.state['sub_path'], SUB_SNIPPET, self.state['sub_port']))
+        try:
+            server = self.p.read(NGINX_TLS)
+            for path, snippet, port in routes:
+                location = (re.escape('location ^~ ' + path + ' {') + r'\s*' +
+                            re.escape('include ' + snippet + ';'))
+                upstream = self.p.read(snippet)
+                if (not re.search(location, server) or
+                        not re.search(r'(?m)^proxy_pass https://127\.0\.0\.1:' + str(int(port)) + r';$',
+                                      upstream) or
+                        not re.search(r'(?m)^proxy_ssl_verify on;$', upstream)):
+                    return self.answer('FAIL', 'Публичный маршрут nginx к панели или подпискам изменён.',
+                                       suggestion=SUGGEST['config'])
+        except FileNotFoundError:
+            return self.answer('FAIL', 'Конфигурация публичного маршрута nginx отсутствует.',
+                               suggestion=SUGGEST['config'])
+        return self.answer('PASS', 'Nginx проксирует панель и подписки на внутренний HTTPS.')
+
+    def public_route(self, path, expected, label):
+        try:
+            status, headers = self.p.public_get(self.state['domain'], path)
+        except (socket.timeout, TimeoutError, ConnectionError, OSError):
+            return self.answer('UNKNOWN', label + ': ответ не получен.', suggestion=SUGGEST['deep'])
+        # Only the protected proxy locations add both headers; nginx's own
+        # fallback 404 for an unknown path has neither.
+        proxied = (headers.get('cache-control') == 'no-store' and
+                   headers.get('referrer-policy') == 'no-referrer')
+        if status in expected and proxied:
+            return self.answer('PASS', label + ': маршрут через nginx работает.', {'httpStatus': status})
+        return self.answer('FAIL', label + ': маршрут не проходит через защищённый proxy nginx.',
+                           {'httpStatus': status}, SUGGEST['deep'])
+
     def bbr(self):
         expected = {'net.ipv4.tcp_congestion_control': 'bbr', 'net.core.default_qdisc': 'fq'}
         for key, value in expected.items():
@@ -629,7 +754,12 @@ class Doctor:
             return self.answer('FAIL', 'Networkd drop-in заменён ссылкой.',
                                suggestion=SUGGEST['ipv6'])
         try:
-            if self.p.read(path) != ipv6.NETWORK_CONTENT:
+            dropin = self.p.read(path)
+            # v0.3.4 wrote the drop-in without the link-local generation mode;
+            # v0.3.5 (the panel_access release) and later must have the current one.
+            legacy_dropin = (dropin == ipv6.LEGACY_NETWORK_CONTENT and
+                             self.state['panel_access'] is None)
+            if dropin != ipv6.NETWORK_CONTENT and not legacy_dropin:
                 return self.answer('FAIL', 'Управляемый networkd drop-in изменён.',
                                    suggestion=SUGGEST['ipv6'])
         except FileNotFoundError:
@@ -645,6 +775,9 @@ class Doctor:
         if any(value != '1' for value in values.values()) or any(
                 row.get('addr_info') for row in addresses):
             return self.answer('FAIL', 'IPv6 включён на интерфейсе или имеет global address.',
+                               suggestion=SUGGEST['ipv6'])
+        if legacy_dropin:
+            return self.answer('WARN', 'IPv6 отключён, но networkd drop-in старого формата v0.3.4.',
                                suggestion=SUGGEST['ipv6'])
         return self.answer('PASS', 'IPv6 отключён на текущих интерфейсах и закреплён.')
 
@@ -749,6 +882,7 @@ class Doctor:
                 self.add('geodata.schedule', 'geodata', self.geodata_schedule)
             self.add('core.port443', 'listener', self.listener)
             self.add('core.socket', 'socket', self.unix_socket)
+            self.add('core.publicRoutes', 'config', self.public_routes_config)
             self.add('tls.certificate', 'cert', self.certificate)
             self.add('tls.listeners', 'cert', self.tls_listeners)
             self.add('tls.timer', 'service', lambda: self.service('certbot.timer', timer=True))
@@ -762,6 +896,8 @@ class Doctor:
             self.add('security.fail2ban', 'service', lambda: self.service('fail2ban'))
             self.add('security.jails', 'security', self.fail2ban_jails)
             self.add('security.permissions', 'security', self.secret_permissions)
+            self.add('security.internalListeners', 'security', self.internal_listeners)
+            self.add('security.internalFirewall', 'security', self.internal_firewall)
             self.add('system.bbr', 'system', self.bbr)
             self.add('system.ipv6', 'ipv6', self.ipv6_check)
             self.add('system.swap', 'swap', self.swap_check)
@@ -773,6 +909,18 @@ class Doctor:
                 self.add('deep.subscription', 'deep', lambda: self.deep_get(
                     self.state['sub_port'], self.state['sub_path'] + 'missing',
                     'Подписки', (400, 404)))
+                if self.state['panel_access'] == HTTPS_443:
+                    self.add('deep.publicPanel', 'deep', lambda: self.public_route(
+                        self.state['panel_path'], (200,), 'Публичная панель'))
+                else:
+                    self.checks.append(_result('deep.publicPanel', 'deep', 'SKIP',
+                                               'Старая схема без панели на HTTPS/443.'))
+                if self.state['subscription_access'] == HTTPS_443:
+                    self.add('deep.publicSubscription', 'deep', lambda: self.public_route(
+                        self.state['sub_path'] + 'missing', (400, 404), 'Публичные подписки'))
+                else:
+                    self.checks.append(_result('deep.publicSubscription', 'deep', 'SKIP',
+                                               'Старая схема без подписок на HTTPS/443.'))
                 if self.mode == 'skip':
                     self.checks.append(_result('deep.warp', 'warp', 'SKIP', 'WARP намеренно отключён в Bob.'))
                 else:

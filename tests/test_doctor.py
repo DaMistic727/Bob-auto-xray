@@ -46,7 +46,10 @@ class FakeProbe:
                  'php_service': 'php8.4-fpm',
                  'xray_bin': '/usr/local/x-ui/bin/xray-linux-amd64',
                  'ipv6': {'networkDropin': str(self.network_path)},
-                 'swap': {'status': 'created', 'path': '/swapfile', 'bytes': swap.SIZE}}
+                 'swap': {'status': 'created', 'path': '/swapfile', 'bytes': swap.SIZE},
+                 # Current main (v0.3.7+): panel and subscriptions behind nginx on 443.
+                 'panel_access': 'https-443', 'subscription_access': 'https-443',
+                 'admin_client': {'id': 'SECRET_ADMIN_UUID', 'subId': 'c' * 48}}
         config = server_template({'outbounds': [
             {'tag': 'direct', 'protocol': 'freedom'},
             {'tag': 'blocked', 'protocol': 'blackhole'}],
@@ -70,6 +73,24 @@ class FakeProbe:
             str(self.network_path): ipv6.NETWORK_CONTENT,
             str(swap.FSTAB): swap.LINE + '\n',
         }
+        # Real templates, so a template change that breaks Doctor's parsing fails here.
+        nginx_values = dict(DOMAIN='vpn.example.com', PANEL_PORT=21000, SUB_PORT=22000,
+                            PANEL_PATH=state['panel_path'], PANEL_NO_SLASH=state['panel_path'][:-1],
+                            SUB_PATH=state['sub_path'], AUTH='sauth', STYLE='sstyle', ICON='sicon')
+        self.files.update({
+            '/etc/nginx/conf.d/selfsni-tls.conf': provision.render('nginx-tls.conf', nginx_values),
+            '/etc/nginx/snippets/selfsni-panel.conf': provision.render('nginx-panel.conf', nginx_values),
+            '/etc/nginx/snippets/selfsni-subscription.conf': provision.render('nginx-subscription.conf', nginx_values),
+            '/etc/ufw/user.rules': '-A ufw-user-input -p tcp --dport 22 -j ACCEPT\n'
+                                   '-A ufw-user-input -p tcp --dport 80 -j ACCEPT\n'
+                                   '-A ufw-user-input -p tcp --dport 443 -j ACCEPT\n',
+            '/etc/ufw/user6.rules': '-A ufw6-user-input -p tcp --dport 22 -j ACCEPT\n',
+        })
+        self.public_calls = []
+        self.public_error = None
+        proxied = {'cache-control': 'no-store', 'referrer-policy': 'no-referrer'}
+        self.public_responses = {state['panel_path']: (200, dict(proxied)),
+                                 state['sub_path'] + 'missing': (404, dict(proxied))}
         self.commands = {}
         self.stats = {}
         self.missing_stats = set()
@@ -79,7 +100,10 @@ class FakeProbe:
         self.commands[('systemctl', 'show', 'x-ui', '--property=Environment', '--value')] = (0, 'TZ=Etc/UTC\n')
         self.commands[('ss', '-H', '-lntp')] = (0,
             'LISTEN 0 4096 0.0.0.0:443 0.0.0.0:* users:(("xray",pid=111,fd=7))\n'
-            'LISTEN 0 4096 127.0.0.1:40000 0.0.0.0:* users:(("warp-svc",pid=222,fd=8))\n')
+            'LISTEN 0 4096 127.0.0.1:40000 0.0.0.0:* users:(("warp-svc",pid=222,fd=8))\n'
+            'LISTEN 0 4096 127.0.0.1:21000 0.0.0.0:* users:(("x-ui",pid=333,fd=9))\n'
+            'LISTEN 0 4096 127.0.0.1:22000 0.0.0.0:* users:(("x-ui",pid=333,fd=10))\n')
+        self.commands[('systemctl', 'show', 'x-ui', '--property=MainPID', '--value')] = (0, '333\n')
         self.commands[('ss', '-H', '-xl')] = (0,
             'u_str LISTEN 0 511 /run/selfsni/nginx.sock 12345 * 0\n')
         self.commands[('warp-cli', '--accept-tos', '--json', 'status')] = (0, '{"status":"Connected"}')
@@ -143,6 +167,17 @@ class FakeProbe:
         if self.get_error:
             raise self.get_error
         return 404 if port == 22000 else 200
+
+    def public_get(self, domain, path):
+        self.public_calls.append(path)
+        if self.public_error:
+            raise self.public_error
+        return self.public_responses.get(path, (404, {}))
+
+    def sync(self):
+        """Persist edits of self.state/self.config into the files Doctor reads."""
+        self.files[doctor.STATE] = json.dumps(self.state)
+        self.files[doctor.CONFIG] = json.dumps(self.config)
 
     def disk_free(self):
         return self.free
