@@ -153,8 +153,11 @@ def main():
                     with socket.create_connection(('127.0.0.1',sub_port),timeout=5) as plain:
                         plain.sendall(('GET '+sub_path+state['admin_client']['subId']+' HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n').encode())
                         reply=plain.recv(512)
-                        require(not reply or re.match(rb'HTTP/[0-9.]+ (400|403|404|426)\b',reply),
-                                'Subscription plaintext was not rejected')
+                        status = re.search(rb'HTTP/[0-9.]+ ([0-9]{3})',reply)
+                        tls_alert = reply.startswith(b'\x15\x03')
+                        require(not reply or tls_alert or (status and status.group(1) in (b'400',b'403',b'404',b'426')),
+                                'Subscription plaintext rejection unrecognized; prefix='+reply[:8].hex()+
+                                '; status='+(status.group(1).decode() if status else 'none'))
                 except OSError:
                     pass
                 stored = api.call('setting/all', {}, method='POST')
