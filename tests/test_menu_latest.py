@@ -47,6 +47,8 @@ class LatestTests(unittest.TestCase):
             self.assertEqual(second['commit'],git('-C',origin,'rev-parse','HEAD').strip())
             (target/'local').write_text('local');self.commit(target)
             with self.assertRaises(subprocess.CalledProcessError):menu.install_menu(LOCK,root,target,bin_dir,command)
+            (origin/'remote-fork').write_text('remote diverges');self.commit(origin)
+            with self.assertRaises(subprocess.CalledProcessError):menu.install_menu(LOCK,root,target,bin_dir,command)
             git('-C',target,'remote','set-url','origin','https://example.invalid/fork')
             with self.assertRaisesRegex(InstallError,'origin'):menu.inspect_existing_menu(LOCK,target,command)
     def test_dirty_symlink_corrupt_conflicting_command_and_network(self):
