@@ -173,7 +173,9 @@ def atomic_write(path, content, mode=0o600):
             os.unlink(temporary)
 
 def save(path, obj):
-    write(path, json.dumps(obj, ensure_ascii=False, indent=2) + '\n')
+    # Installer state is rewritten at every checkpoint; a crash must leave the
+    # previous complete JSON, never a truncated file that blocks resume.
+    atomic_write(path, json.dumps(obj, ensure_ascii=False, indent=2) + '\n')
 
 def digest(path):
     h = hashlib.sha256()
