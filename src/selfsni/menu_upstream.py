@@ -105,6 +105,10 @@ def install_menu(lock, work, target=MENU_DIR, bin_dir=BIN_DIR, command=run):
         else:
             require(not target.exists() and not target.is_symlink(), 'VPS-Server-Menu: путь уже занят')
             source.rename(target)
+    # The official installer chmods shipped scripts whose Git modes are 0644.
+    # Persist this repository-only setting so plain status and native updates
+    # remain clean while content/untracked changes are still refused.
+    command('git','-C',target,'config','--local','core.filemode','false')
     command('bash',target/'install.sh','--non-interactive','--no-autostart','--source-dir',target,timeout=900)
     inspect_existing_menu(lock,target,command)
     require(command('git','-C',target,'rev-parse','HEAD').strip()==command('git','-C',target,'rev-parse','origin/main').strip(),

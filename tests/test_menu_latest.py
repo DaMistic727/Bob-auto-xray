@@ -35,6 +35,8 @@ class LatestTests(unittest.TestCase):
                 return git('-c','url.'+str(origin)+'.insteadOf='+menu.OFFICIAL_REPOSITORY,*args[1:])
             first=menu.install_menu(LOCK,root,target,bin_dir,command)
             self.assertEqual(first['branch'],'main')
+            self.assertEqual(git('-C',target,'config','--local','--get','core.filemode').strip(),'false')
+            self.assertFalse(git('-C',target,'status','--porcelain').strip())
             self.assertEqual(git('-C',target,'rev-parse','--abbrev-ref','@{upstream}').strip(),'origin/main')
             self.assertEqual(git('-C',target,'remote','get-url','origin').strip(),menu.OFFICIAL_REPOSITORY)
             menu.install_menu(LOCK,root,target,bin_dir,command)
