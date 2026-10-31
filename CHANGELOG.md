@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.3.8 — 2026-10-31 · Preview
+
+- VPS-Server-Menu получает актуальную официальную main во время установки Bob, без статического commit/SHA256 pin или скрытого fallback. Остальные зависимости остаются pinned.
+- Checkout /root/VPS-Server-Menu находится на main tracking origin/main. Bob вызывает оригинальный install.sh с --non-interactive --no-autostart --source-dir, без --pinned-commit. Штатные команды/symlinks и пункт 9 обновления сохраняются.
+- Проверяются origin, branch/upstream, чистота и обычные файлы/каталоги, конфликтующие команды и CLI contract. Существующая main продвигается только fast-forward; dirty/unknown/diverged state, network/installer/CLI errors прекращают установку. Нет reset --hard, clean или замены чужого origin.
+- Фактические origin/branch/full SHA и UTC resolution time сохраняются root-only в menu_revision. Один релиз Bob в разные дни намеренно может установить разные upstream revisions; совместимость будущего upstream не гарантируется. Runtime WARP health/JSON/exit/outbound и независимый warp=on acceptance сохранены.
+- Без VPS/SSH/deploy/reboot. Старая detached pinned установка меню требует ручного решения: Bob не переключает её branch принудительно.
+
 ## v0.3.7 — 2026-10-31 · Preview
 
 - Новые установки отдают Happ/INCY подписки на общем HTTPS/443: Xray REALITY → PROXY v1 → Nginx Unix socket → HTTPS 127.0.0.1:<sub_port>. Внутренний случайный порт и TLS сохранены; subURI больше не содержит нестандартного порта.

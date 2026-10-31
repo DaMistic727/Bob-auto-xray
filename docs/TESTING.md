@@ -1,3 +1,13 @@
+# v0.3.8 · rolling official menu
+
+Локальный unittest Python 3.12: 189 tests, 188 PASS / 1 macOS refusal SKIP. Git fixtures проверяют main/upstream, свежую установку, повтор, FF, ahead/diverged отказ, dirty/corrupt/symlink/origin/command conflicts, network error и несовместимый CLI. Прежние WARP JSON/exit/health/install/adopt/skip regressions сохранены.
+
+CI дополнительно выполняет tools/test_menu_latest.py: настоящий официальный installer в temporary target/bin/bashrc без APT, затем точное условие пункта 9 с временным локальным origin. Проверяются current → behind → fast-forward → current, main tracking origin/main, symlinks и неизменный bashrc. В лог выводится фактический официальный SHA; это проверка этой ревизии, а не гарантия будущей main. Остальные Nginx, pinned 3x-ui, syntax/security/reproducible checks сохранены.
+
+VPS, SSH, production WARP install, deploy/reboot не выполнялись. Изолированный installer/updater test не заменяет реальный VPS E2E.
+
+> VPS-Server-Menu v0.3.8: только актуальная официальная `Diman6267/VPS-Server-Menu/main`, разрешённая при установке. Статического menu pin больше нет. Оригинальный installer создаёт команды; main tracking origin/main сохраняет штатный updater (пункт 9). Фактическая ревизия и время находятся в root-only state `menu_revision`. Dirty/diverged/неизвестный checkout отклоняется без reset/clean; старый detached checkout автоматически не мигрирует. Xray/3x-ui/GeoData/routing pins не изменены. Будущая main может оказаться несовместимой: Bob прекращает установку, не откатываясь скрыто к старому pin.
+
 # v0.3.7 Preview · subscription consolidation
 
 Проверки: unittest Python 3.10/3.12 в Ubuntu CI, real Nginx HTTPS upstream harness, pinned 3x-ui/Xray API и TLS subscription/browser assets harness; локальный полный Python 3.12 suite, compileall, Bash/ShellCheck, diff/secret audit и две независимые сборки Python 3.12/3.15. Фактические CI результаты привязаны к SHA тега в GitHub Actions, а не к истории v0.3.6.

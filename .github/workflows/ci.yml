@@ -38,6 +38,10 @@ jobs:
         env:
           PYTHONPATH: src
         run: python tools/test_client_api.py
+      - name: Current official menu installer and updater (dynamic revision)
+        env:
+          PYTHONPATH: src
+        run: python tools/test_menu_latest.py
       - name: Syntax and ShellCheck
         run: |
           shellcheck install.sh

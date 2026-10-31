@@ -223,13 +223,13 @@ def install_apt_key(source, target):
 
 def install_warp(s, lock, work):
     stage('WARP: официальный VPS-Server-Menu')
-    install_menu(lock, work)
+    s['menu_revision'] = install_menu(lock, work)
     s['warp_health'] = menu_warp.install()
 
 
 def adopt_warp(s, lock, work):
     """Install/check the menu, then use its read-only health command."""
-    install_menu(lock, work)
+    s['menu_revision'] = install_menu(lock, work)
     s['warp_health'] = menu_warp.health()
 
 def certificate(s, email):
