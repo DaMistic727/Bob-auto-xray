@@ -332,7 +332,7 @@ def verify(s):
     check('Persistent IPv4-only sysctl and all IPv6 interfaces disabled', verify_ipv6)
     if 'swap' in s:
         check('Managed 2 GiB swap, when installed', lambda: verify_swap(s['swap']))
-    return {'scope':'on-host; no external client/reboot claims', 'checks':checks,
+    return {'menuRevision': s.get('menu_revision'), 'scope':'on-host; no external client/reboot claims', 'checks':checks,
             'tcpBbr': bbr_report}
 
 
