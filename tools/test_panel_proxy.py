@@ -171,7 +171,7 @@ def main():
                 assert h['profile-update-interval'] == '12' and h['cache-control'] == 'no-store'
                 assert send(path, 'HEAD')[2] == b''
             assert send(sub_secret+'id', headers={'Host':'evil.test'})[0] == 404
-            for path in ('/assets/x.js','/api/x',sub_secret[:-1]+'extra/id',sub_secret+'%2e%2e/id',sub_secret+'id%2felse'):
+            for path in ('/assets/x.js','/api/x',sub_secret[:-1]+'extra/id',sub_secret+'%2e%2e/id',sub_secret+'../',sub_secret+'id%2felse'):
                 assert send(path)[0] == 404
             checks.append('Subscription GET/HEAD, encoded queries, User-Agent/custom headers, spoofing, exact prefix and traversal isolation')
             stop()

@@ -19,7 +19,7 @@ def verify_settings(state, settings):
                     subDomain=state['domain'], subPath=state['sub_path'],
                     subURI=public_subscription_url(state), subCertFile=cert+'fullchain.pem',
                     subKeyFile=cert+'privkey.pem')
-    require(all(settings.get(k) == v for k, v in expected.items()),
+    require(all(settings.get(k) == v and type(settings.get(k)) is type(v) for k, v in expected.items()),
             'Subscription persisted TLS/binding/URL settings mismatch')
 
 
