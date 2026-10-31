@@ -1,0 +1,913 @@
+{
+  "scope": "disposable Ubuntu 26.04 amd64; PR #17 resume preflight; install mode; command-level fault shims",
+  "candidate": {
+    "pr": "DaMistic727/Bob-auto-xray#17",
+    "commit": "6f71b5fae7fe558a0ee9165229ef8eeb46a945a8",
+    "archiveSha256": "f70f670ab6f22d2c2a9d3107d9fb678a9ed26f56f78c0b2b5e932f42de62808a"
+  },
+  "environment": {
+    "cgroupFs": "cgroup2fs",
+    "kernel": "7.0.0-30-generic",
+    "nginx": "nginx version: nginx/1.28.3 (Ubuntu)",
+    "osVersion": "26.04",
+    "ss": "ss utility, iproute2-6.19.0",
+    "systemd": "systemd 259 (259.9-0ubuntu0.1)"
+  },
+  "menuRevision": "852aae86d88dd694460ae6633bbac929df4b7a07",
+  "deviation": "owner-added /etc/ssh/sshd_config.d drop-in disabling password SSH (not a Bob-managed path)",
+  "steps": [
+    {
+      "step": "S0",
+      "verdict": "PASS",
+      "installerExit": 0,
+      "state": null,
+      "identitySha256": null,
+      "stageResultSha256": null,
+      "ownedNginxHttpBeforeRun": false,
+      "faultsTotal": {},
+      "checks": [
+        {
+          "name": "installer exit code",
+          "passed": true
+        },
+        {
+          "name": "no state before or after",
+          "passed": true
+        },
+        {
+          "name": "no files created",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "step": "S1",
+      "verdict": "PASS",
+      "installerExit": 1,
+      "state": {
+        "status": "FAILED",
+        "stage": "APT_INSTALL",
+        "lastCompletedStage": "APT_UPGRADE",
+        "resumeCount": 0
+      },
+      "identitySha256": "77227e064676c9d6f1e0998d3cdfc6878451dad22f8c2b2773ab5afdefd9d014",
+      "stageResultSha256": {
+        "bbr": null,
+        "ipv6": null,
+        "menu_revision": null,
+        "swap": null
+      },
+      "ownedNginxHttpBeforeRun": false,
+      "faultsTotal": {
+        "apt-install-after-nginx": 1
+      },
+      "checks": [
+        {
+          "name": "installer exit code",
+          "passed": true
+        },
+        {
+          "name": "state reached expected stage",
+          "passed": true
+        },
+        {
+          "name": "last_completed_stage",
+          "passed": true
+        },
+        {
+          "name": "status",
+          "passed": true
+        },
+        {
+          "name": "own nginx not reported as foreign",
+          "passed": true
+        },
+        {
+          "name": "exactly one injected fault fired",
+          "passed": true
+        },
+        {
+          "name": "ipv6 absent from state",
+          "passed": true
+        },
+        {
+          "name": "bbr absent from state",
+          "passed": true
+        },
+        {
+          "name": "swap absent from state",
+          "passed": true
+        },
+        {
+          "name": "menu_revision absent from state",
+          "passed": true
+        },
+        {
+          "name": "fresh state",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "step": "N1a",
+      "verdict": "PASS",
+      "installerExit": 1,
+      "state": {
+        "status": "FAILED",
+        "stage": "APT_INSTALL",
+        "lastCompletedStage": "APT_UPGRADE",
+        "resumeCount": 0
+      },
+      "identitySha256": "77227e064676c9d6f1e0998d3cdfc6878451dad22f8c2b2773ab5afdefd9d014",
+      "stageResultSha256": {
+        "bbr": null,
+        "ipv6": null,
+        "menu_revision": null,
+        "swap": null
+      },
+      "ownedNginxHttpBeforeRun": false,
+      "faultsTotal": {
+        "apt-install-after-nginx": 1
+      },
+      "checks": [
+        {
+          "name": "installer exit code",
+          "passed": true
+        },
+        {
+          "name": "expected refusal message",
+          "passed": true
+        },
+        {
+          "name": "state.json unchanged",
+          "passed": true
+        },
+        {
+          "name": "install.log unchanged",
+          "passed": true
+        },
+        {
+          "name": "FAILED marker unchanged",
+          "passed": true
+        },
+        {
+          "name": "no fault injected",
+          "passed": true
+        },
+        {
+          "name": "live ownership probe refuses",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "step": "N2a",
+      "verdict": "PASS",
+      "installerExit": 1,
+      "state": {
+        "status": "FAILED",
+        "stage": "APT_INSTALL",
+        "lastCompletedStage": "APT_UPGRADE",
+        "resumeCount": 0
+      },
+      "identitySha256": "77227e064676c9d6f1e0998d3cdfc6878451dad22f8c2b2773ab5afdefd9d014",
+      "stageResultSha256": {
+        "bbr": null,
+        "ipv6": null,
+        "menu_revision": null,
+        "swap": null
+      },
+      "ownedNginxHttpBeforeRun": false,
+      "faultsTotal": {
+        "apt-install-after-nginx": 1
+      },
+      "checks": [
+        {
+          "name": "installer exit code",
+          "passed": true
+        },
+        {
+          "name": "expected refusal message",
+          "passed": true
+        },
+        {
+          "name": "state.json unchanged",
+          "passed": true
+        },
+        {
+          "name": "install.log unchanged",
+          "passed": true
+        },
+        {
+          "name": "FAILED marker unchanged",
+          "passed": true
+        },
+        {
+          "name": "no fault injected",
+          "passed": true
+        },
+        {
+          "name": "live ownership probe refuses",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "step": "S2",
+      "verdict": "PASS",
+      "installerExit": 1,
+      "state": {
+        "status": "FAILED",
+        "stage": "WARP",
+        "lastCompletedStage": "FIREWALL",
+        "resumeCount": 1
+      },
+      "identitySha256": "77227e064676c9d6f1e0998d3cdfc6878451dad22f8c2b2773ab5afdefd9d014",
+      "stageResultSha256": {
+        "bbr": "4a0d439b8fd219a41a628c804913a9a63409d91f92ce11471ad6bad41f2d2999",
+        "ipv6": "4864a4f0189c7e93030a6bbb7fbd543cdcf7cc7432a431b0748c9ec66eb802dc",
+        "menu_revision": null,
+        "swap": "fe713419174c40e058d0a8d90c7e67539114a9fd6e97ac0f737967a2527065df"
+      },
+      "ownedNginxHttpBeforeRun": true,
+      "faultsTotal": {
+        "apt-install-after-nginx": 1,
+        "menu-after-install": 1
+      },
+      "checks": [
+        {
+          "name": "installer exit code",
+          "passed": true
+        },
+        {
+          "name": "state reached expected stage",
+          "passed": true
+        },
+        {
+          "name": "last_completed_stage",
+          "passed": true
+        },
+        {
+          "name": "status",
+          "passed": true
+        },
+        {
+          "name": "own nginx not reported as foreign",
+          "passed": true
+        },
+        {
+          "name": "exactly one injected fault fired",
+          "passed": true
+        },
+        {
+          "name": "ipv6 present in state",
+          "passed": true
+        },
+        {
+          "name": "bbr present in state",
+          "passed": true
+        },
+        {
+          "name": "swap present in state",
+          "passed": true
+        },
+        {
+          "name": "menu_revision absent from state",
+          "passed": true
+        },
+        {
+          "name": "identity, credentials and ports unchanged",
+          "passed": true
+        },
+        {
+          "name": "resume_count incremented by one",
+          "passed": true
+        },
+        {
+          "name": "live ownership probe accepted own nginx before resume",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "step": "N3",
+      "verdict": "PASS",
+      "installerExit": 1,
+      "state": {
+        "status": "FAILED",
+        "stage": "WARP",
+        "lastCompletedStage": "FIREWALL",
+        "resumeCount": 1
+      },
+      "identitySha256": "77227e064676c9d6f1e0998d3cdfc6878451dad22f8c2b2773ab5afdefd9d014",
+      "stageResultSha256": {
+        "bbr": "4a0d439b8fd219a41a628c804913a9a63409d91f92ce11471ad6bad41f2d2999",
+        "ipv6": "4864a4f0189c7e93030a6bbb7fbd543cdcf7cc7432a431b0748c9ec66eb802dc",
+        "menu_revision": null,
+        "swap": "fe713419174c40e058d0a8d90c7e67539114a9fd6e97ac0f737967a2527065df"
+      },
+      "ownedNginxHttpBeforeRun": true,
+      "faultsTotal": {
+        "apt-install-after-nginx": 1,
+        "menu-after-install": 1
+      },
+      "checks": [
+        {
+          "name": "installer exit code",
+          "passed": true
+        },
+        {
+          "name": "expected refusal message",
+          "passed": true
+        },
+        {
+          "name": "state.json unchanged",
+          "passed": true
+        },
+        {
+          "name": "install.log unchanged",
+          "passed": true
+        },
+        {
+          "name": "FAILED marker unchanged",
+          "passed": true
+        },
+        {
+          "name": "no fault injected",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "step": "S3",
+      "verdict": "PASS",
+      "installerExit": 1,
+      "state": {
+        "status": "FAILED",
+        "stage": "CERTIFICATE",
+        "lastCompletedStage": "WARP",
+        "resumeCount": 2
+      },
+      "identitySha256": "77227e064676c9d6f1e0998d3cdfc6878451dad22f8c2b2773ab5afdefd9d014",
+      "stageResultSha256": {
+        "bbr": "4a0d439b8fd219a41a628c804913a9a63409d91f92ce11471ad6bad41f2d2999",
+        "ipv6": "4864a4f0189c7e93030a6bbb7fbd543cdcf7cc7432a431b0748c9ec66eb802dc",
+        "menu_revision": "2333e2e98cb813a7b577f3dad61091eb863993db2168ef72470e754a14456ed0",
+        "swap": "fe713419174c40e058d0a8d90c7e67539114a9fd6e97ac0f737967a2527065df"
+      },
+      "ownedNginxHttpBeforeRun": true,
+      "faultsTotal": {
+        "apt-install-after-nginx": 1,
+        "certbot-dns": 1,
+        "menu-after-install": 1
+      },
+      "checks": [
+        {
+          "name": "installer exit code",
+          "passed": true
+        },
+        {
+          "name": "state reached expected stage",
+          "passed": true
+        },
+        {
+          "name": "last_completed_stage",
+          "passed": true
+        },
+        {
+          "name": "status",
+          "passed": true
+        },
+        {
+          "name": "own nginx not reported as foreign",
+          "passed": true
+        },
+        {
+          "name": "exactly one injected fault fired",
+          "passed": true
+        },
+        {
+          "name": "menu_revision present in state",
+          "passed": true
+        },
+        {
+          "name": "ipv6 carried unchanged",
+          "passed": true
+        },
+        {
+          "name": "bbr carried unchanged",
+          "passed": true
+        },
+        {
+          "name": "swap carried unchanged",
+          "passed": true
+        },
+        {
+          "name": "sites-enabled",
+          "passed": true
+        },
+        {
+          "name": "identity, credentials and ports unchanged",
+          "passed": true
+        },
+        {
+          "name": "resume_count incremented by one",
+          "passed": true
+        },
+        {
+          "name": "live ownership probe accepted own nginx before resume",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "step": "N1b",
+      "verdict": "PASS",
+      "installerExit": 1,
+      "state": {
+        "status": "FAILED",
+        "stage": "CERTIFICATE",
+        "lastCompletedStage": "WARP",
+        "resumeCount": 2
+      },
+      "identitySha256": "77227e064676c9d6f1e0998d3cdfc6878451dad22f8c2b2773ab5afdefd9d014",
+      "stageResultSha256": {
+        "bbr": "4a0d439b8fd219a41a628c804913a9a63409d91f92ce11471ad6bad41f2d2999",
+        "ipv6": "4864a4f0189c7e93030a6bbb7fbd543cdcf7cc7432a431b0748c9ec66eb802dc",
+        "menu_revision": "2333e2e98cb813a7b577f3dad61091eb863993db2168ef72470e754a14456ed0",
+        "swap": "fe713419174c40e058d0a8d90c7e67539114a9fd6e97ac0f737967a2527065df"
+      },
+      "ownedNginxHttpBeforeRun": false,
+      "faultsTotal": {
+        "apt-install-after-nginx": 1,
+        "certbot-dns": 1,
+        "menu-after-install": 1
+      },
+      "checks": [
+        {
+          "name": "installer exit code",
+          "passed": true
+        },
+        {
+          "name": "expected refusal message",
+          "passed": true
+        },
+        {
+          "name": "state.json unchanged",
+          "passed": true
+        },
+        {
+          "name": "install.log unchanged",
+          "passed": true
+        },
+        {
+          "name": "FAILED marker unchanged",
+          "passed": true
+        },
+        {
+          "name": "no fault injected",
+          "passed": true
+        },
+        {
+          "name": "live ownership probe refuses",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "step": "N2b",
+      "verdict": "PASS",
+      "installerExit": 1,
+      "state": {
+        "status": "FAILED",
+        "stage": "CERTIFICATE",
+        "lastCompletedStage": "WARP",
+        "resumeCount": 2
+      },
+      "identitySha256": "77227e064676c9d6f1e0998d3cdfc6878451dad22f8c2b2773ab5afdefd9d014",
+      "stageResultSha256": {
+        "bbr": "4a0d439b8fd219a41a628c804913a9a63409d91f92ce11471ad6bad41f2d2999",
+        "ipv6": "4864a4f0189c7e93030a6bbb7fbd543cdcf7cc7432a431b0748c9ec66eb802dc",
+        "menu_revision": "2333e2e98cb813a7b577f3dad61091eb863993db2168ef72470e754a14456ed0",
+        "swap": "fe713419174c40e058d0a8d90c7e67539114a9fd6e97ac0f737967a2527065df"
+      },
+      "ownedNginxHttpBeforeRun": false,
+      "faultsTotal": {
+        "apt-install-after-nginx": 1,
+        "certbot-dns": 1,
+        "menu-after-install": 1
+      },
+      "checks": [
+        {
+          "name": "installer exit code",
+          "passed": true
+        },
+        {
+          "name": "expected refusal message",
+          "passed": true
+        },
+        {
+          "name": "state.json unchanged",
+          "passed": true
+        },
+        {
+          "name": "install.log unchanged",
+          "passed": true
+        },
+        {
+          "name": "FAILED marker unchanged",
+          "passed": true
+        },
+        {
+          "name": "no fault injected",
+          "passed": true
+        },
+        {
+          "name": "live ownership probe refuses",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "step": "S4",
+      "verdict": "PASS",
+      "installerExit": 1,
+      "state": {
+        "status": "FAILED",
+        "stage": "CERTIFICATE",
+        "lastCompletedStage": "WARP",
+        "resumeCount": 3
+      },
+      "identitySha256": "77227e064676c9d6f1e0998d3cdfc6878451dad22f8c2b2773ab5afdefd9d014",
+      "stageResultSha256": {
+        "bbr": "4a0d439b8fd219a41a628c804913a9a63409d91f92ce11471ad6bad41f2d2999",
+        "ipv6": "4864a4f0189c7e93030a6bbb7fbd543cdcf7cc7432a431b0748c9ec66eb802dc",
+        "menu_revision": "2333e2e98cb813a7b577f3dad61091eb863993db2168ef72470e754a14456ed0",
+        "swap": "fe713419174c40e058d0a8d90c7e67539114a9fd6e97ac0f737967a2527065df"
+      },
+      "ownedNginxHttpBeforeRun": true,
+      "faultsTotal": {
+        "apt-install-after-nginx": 1,
+        "certbot-dns": 2,
+        "menu-after-install": 1
+      },
+      "checks": [
+        {
+          "name": "installer exit code",
+          "passed": true
+        },
+        {
+          "name": "state reached expected stage",
+          "passed": true
+        },
+        {
+          "name": "last_completed_stage",
+          "passed": true
+        },
+        {
+          "name": "status",
+          "passed": true
+        },
+        {
+          "name": "own nginx not reported as foreign",
+          "passed": true
+        },
+        {
+          "name": "exactly one injected fault fired",
+          "passed": true
+        },
+        {
+          "name": "ipv6 carried unchanged",
+          "passed": true
+        },
+        {
+          "name": "bbr carried unchanged",
+          "passed": true
+        },
+        {
+          "name": "swap carried unchanged",
+          "passed": true
+        },
+        {
+          "name": "menu_revision carried unchanged",
+          "passed": true
+        },
+        {
+          "name": "sites-enabled",
+          "passed": true
+        },
+        {
+          "name": "identity, credentials and ports unchanged",
+          "passed": true
+        },
+        {
+          "name": "resume_count incremented by one",
+          "passed": true
+        },
+        {
+          "name": "live ownership probe accepted own nginx before resume",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "step": "S5",
+      "verdict": "PASS",
+      "installerExit": 0,
+      "state": {
+        "status": "HEALTHY_LOCAL",
+        "stage": "HEALTHY_LOCAL",
+        "lastCompletedStage": "HEALTHY_LOCAL",
+        "resumeCount": 4
+      },
+      "identitySha256": "77227e064676c9d6f1e0998d3cdfc6878451dad22f8c2b2773ab5afdefd9d014",
+      "stageResultSha256": {
+        "bbr": "4a0d439b8fd219a41a628c804913a9a63409d91f92ce11471ad6bad41f2d2999",
+        "ipv6": "4864a4f0189c7e93030a6bbb7fbd543cdcf7cc7432a431b0748c9ec66eb802dc",
+        "menu_revision": "2333e2e98cb813a7b577f3dad61091eb863993db2168ef72470e754a14456ed0",
+        "swap": "fe713419174c40e058d0a8d90c7e67539114a9fd6e97ac0f737967a2527065df"
+      },
+      "ownedNginxHttpBeforeRun": true,
+      "faultsTotal": {
+        "apt-install-after-nginx": 1,
+        "certbot-dns": 2,
+        "menu-after-install": 1
+      },
+      "checks": [
+        {
+          "name": "installer exit code",
+          "passed": true
+        },
+        {
+          "name": "state reached expected stage",
+          "passed": true
+        },
+        {
+          "name": "last_completed_stage",
+          "passed": true
+        },
+        {
+          "name": "status",
+          "passed": true
+        },
+        {
+          "name": "own nginx not reported as foreign",
+          "passed": true
+        },
+        {
+          "name": "no fault injected",
+          "passed": true
+        },
+        {
+          "name": "ipv6 carried unchanged",
+          "passed": true
+        },
+        {
+          "name": "bbr carried unchanged",
+          "passed": true
+        },
+        {
+          "name": "swap carried unchanged",
+          "passed": true
+        },
+        {
+          "name": "menu_revision carried unchanged",
+          "passed": true
+        },
+        {
+          "name": "identity, credentials and ports unchanged",
+          "passed": true
+        },
+        {
+          "name": "resume_count incremented by one",
+          "passed": true
+        },
+        {
+          "name": "live ownership probe accepted own nginx before resume",
+          "passed": true
+        },
+        {
+          "name": "acceptance: all checks passed",
+          "passed": true
+        },
+        {
+          "name": "acceptance: swap check executed",
+          "passed": true
+        },
+        {
+          "name": "acceptance: menuRevision equals carried state",
+          "passed": true
+        },
+        {
+          "name": "FAILED marker removed",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "step": "S6",
+      "verdict": "PASS",
+      "installerExit": 1,
+      "state": {
+        "status": "HEALTHY_LOCAL",
+        "stage": "HEALTHY_LOCAL",
+        "lastCompletedStage": "HEALTHY_LOCAL",
+        "resumeCount": 4
+      },
+      "identitySha256": "77227e064676c9d6f1e0998d3cdfc6878451dad22f8c2b2773ab5afdefd9d014",
+      "stageResultSha256": {
+        "bbr": "4a0d439b8fd219a41a628c804913a9a63409d91f92ce11471ad6bad41f2d2999",
+        "ipv6": "4864a4f0189c7e93030a6bbb7fbd543cdcf7cc7432a431b0748c9ec66eb802dc",
+        "menu_revision": "2333e2e98cb813a7b577f3dad61091eb863993db2168ef72470e754a14456ed0",
+        "swap": "fe713419174c40e058d0a8d90c7e67539114a9fd6e97ac0f737967a2527065df"
+      },
+      "ownedNginxHttpBeforeRun": false,
+      "faultsTotal": {
+        "apt-install-after-nginx": 1,
+        "certbot-dns": 2,
+        "menu-after-install": 1
+      },
+      "checks": [
+        {
+          "name": "installer exit code",
+          "passed": true
+        },
+        {
+          "name": "expected refusal message",
+          "passed": true
+        },
+        {
+          "name": "state.json unchanged",
+          "passed": true
+        },
+        {
+          "name": "install.log unchanged",
+          "passed": true
+        },
+        {
+          "name": "FAILED marker unchanged",
+          "passed": true
+        },
+        {
+          "name": "no fault injected",
+          "passed": true
+        }
+      ]
+    }
+  ],
+  "nginxFacts": {
+    "afterS1_APT_INSTALL": {
+      "port80": [
+        "LISTEN 0      511          0.0.0.0:80 0.0.0.0:* users:((\"nginx\",pid=25802,fd=5),(\"nginx\",pid=25801,fd=5),(\"nginx\",pid=25798,fd=5))",
+        "LISTEN 0      511             [::]:80    [::]:* users:((\"nginx\",pid=25802,fd=6),(\"nginx\",pid=25801,fd=6),(\"nginx\",pid=25798,fd=6))"
+      ],
+      "processes": {
+        "25798": {
+          "cgroup": [
+            "0::/system.slice/nginx.service"
+          ],
+          "comm": "nginx",
+          "exe": "/usr/sbin/nginx"
+        },
+        "25801": {
+          "cgroup": [
+            "0::/system.slice/nginx.service"
+          ],
+          "comm": "nginx",
+          "exe": "/usr/sbin/nginx"
+        },
+        "25802": {
+          "cgroup": [
+            "0::/system.slice/nginx.service"
+          ],
+          "comm": "nginx",
+          "exe": "/usr/sbin/nginx"
+        }
+      },
+      "nginxUnit": {
+        "ActiveState": "active",
+        "ControlGroup": "/system.slice/nginx.service",
+        "MainPID": "25798"
+      },
+      "sitesEnabled": [
+        "default"
+      ],
+      "confD": []
+    },
+    "afterS2_WARP_ipv6Disabled": {
+      "port80": [
+        "LISTEN 0      511          0.0.0.0:80 0.0.0.0:* users:((\"nginx\",pid=26363,fd=5),(\"nginx\",pid=26362,fd=5),(\"nginx\",pid=26361,fd=5))",
+        "LISTEN 0      511             [::]:80    [::]:* users:((\"nginx\",pid=26363,fd=6),(\"nginx\",pid=26362,fd=6),(\"nginx\",pid=26361,fd=6))"
+      ],
+      "processes": {
+        "26361": {
+          "cgroup": [
+            "0::/system.slice/nginx.service"
+          ],
+          "comm": "nginx",
+          "exe": "/usr/sbin/nginx"
+        },
+        "26362": {
+          "cgroup": [
+            "0::/system.slice/nginx.service"
+          ],
+          "comm": "nginx",
+          "exe": "/usr/sbin/nginx"
+        },
+        "26363": {
+          "cgroup": [
+            "0::/system.slice/nginx.service"
+          ],
+          "comm": "nginx",
+          "exe": "/usr/sbin/nginx"
+        }
+      },
+      "nginxUnit": {
+        "ActiveState": "active",
+        "ControlGroup": "/system.slice/nginx.service",
+        "MainPID": "26361"
+      },
+      "sitesEnabled": [
+        "default"
+      ],
+      "confD": []
+    },
+    "afterS3_CERTIFICATE": {
+      "port80": [
+        "LISTEN 0      511          0.0.0.0:80    0.0.0.0:* users:((\"nginx\",pid=36652,fd=5),(\"nginx\",pid=36651,fd=5),(\"nginx\",pid=26361,fd=5))",
+        "LISTEN 0      511             [::]:80       [::]:* users:((\"nginx\",pid=36652,fd=6),(\"nginx\",pid=36651,fd=6),(\"nginx\",pid=26361,fd=6))"
+      ],
+      "processes": {
+        "26361": {
+          "cgroup": [
+            "0::/system.slice/nginx.service"
+          ],
+          "comm": "nginx",
+          "exe": "/usr/sbin/nginx"
+        },
+        "36651": {
+          "cgroup": [
+            "0::/system.slice/nginx.service"
+          ],
+          "comm": "nginx",
+          "exe": "/usr/sbin/nginx"
+        },
+        "36652": {
+          "cgroup": [
+            "0::/system.slice/nginx.service"
+          ],
+          "comm": "nginx",
+          "exe": "/usr/sbin/nginx"
+        }
+      },
+      "nginxUnit": {
+        "ActiveState": "active",
+        "ControlGroup": "/system.slice/nginx.service",
+        "MainPID": "26361"
+      },
+      "sitesEnabled": [
+        "selfsni-http"
+      ],
+      "confD": []
+    },
+    "N1b_foreignPython": {
+      "36859": {
+        "cgroup": [
+          "0::/system.slice/bob-e2e-foreign80.service"
+        ],
+        "exe": "/usr/bin/python3.14",
+        "isMainPid": false
+      }
+    },
+    "N2b_fakeNginx": {
+      "37103": {
+        "cgroup": [
+          "0::/system.slice/bob-e2e-fake-nginx.service"
+        ],
+        "exe": "/usr/sbin/nginx",
+        "isMainPid": false
+      },
+      "37107": {
+        "cgroup": [
+          "0::/system.slice/bob-e2e-fake-nginx.service"
+        ],
+        "exe": "/usr/sbin/nginx",
+        "isMainPid": false
+      }
+    }
+  },
+  "acceptance": {
+    "checks": 38,
+    "allPassed": true,
+    "swapCheckExecuted": true
+  },
+  "notTested": [
+    "bootstrap download path",
+    "external REALITY/Vision client",
+    "reboot and IPv6 persistence",
+    "certificate renewal",
+    "adopt/skip modes on VPS",
+    "arm64, Ubuntu 22.04/24.04",
+    "real APT/DNS/ACME outages, interrupted dpkg"
+  ]
+}

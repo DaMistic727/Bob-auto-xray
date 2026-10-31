@@ -1,27 +1,17 @@
-"""Pinned official VPS-Server-Menu checkout and archive verification."""
+"""Official rolling main checkout; no Bob revision pin or parallel updater."""
 import shutil
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
-
-from .core import digest, download, extract, require, run
+from .core import digest, require, run
 
 OFFICIAL_REPOSITORY = 'https://github.com/Diman6267/VPS-Server-Menu.git'
-SUPPORTED_COMMIT = '3ed5166bbc5b4fb4cc3bb26616bc4db3bbe2734c'
-SUPPORTED_SHA256 = '9d7a2aced39fe206a9cb4cd46481ee6876471458a63988b9fca152238fa7ec29'
 MENU_DIR = Path('/root/VPS-Server-Menu')
 BIN_DIR = Path('/usr/local/bin')
 
 
-def pinned_menu_archive(lock):
-    require(lock.get('menu_repository') == OFFICIAL_REPOSITORY and
-            'menu_branch' not in lock and 'menu_installer_url' not in lock and
-            'menu.tar.gz' not in lock.get('downloads', {}),
-            'WARP требует только официальный VPS-Server-Menu с закреплённым commit')
-    require(lock.get('menu_commit') == SUPPORTED_COMMIT and
-            lock.get('menu_archive_sha256') == SUPPORTED_SHA256,
-            'Неподдерживаемый commit или SHA256 официального VPS-Server-Menu')
-    return (f'https://codeload.github.com/Diman6267/VPS-Server-Menu/tar.gz/{SUPPORTED_COMMIT}',
-            SUPPORTED_SHA256)
+def _official(lock):
+    require(lock.get('menu_repository') == OFFICIAL_REPOSITORY, 'VPS-Server-Menu: origin не официальный')
 
 
 def _manifest(root):
@@ -39,54 +29,44 @@ def _manifest(root):
 
 
 def inspect_existing_menu(lock, target=MENU_DIR, command=run):
-    """Read-only check before Bob touches state, APT, or system services."""
-    pinned_menu_archive(lock)
-    target = Path(target)
-    require(not target.is_symlink(), 'VPS-Server-Menu: путь checkout является symlink')
-    if not target.exists():
-        return False
-    require(target.is_dir() and (target / '.git').is_dir() and
-            not (target / '.git').is_symlink(),
-            'VPS-Server-Menu: существующий путь не является обычным Git checkout; перенесите его вручную')
-    require(command('git', '-C', target, 'config', '--local', '--get-all',
-                    'remote.origin.url').splitlines() == [OFFICIAL_REPOSITORY],
-            'VPS-Server-Menu: origin не официальный; миграция существующего checkout только вручную')
-    require(command('git', '-C', target, 'rev-parse', 'HEAD').strip() == SUPPORTED_COMMIT,
-            'VPS-Server-Menu: HEAD не совпадает с закреплённым commit; миграция только вручную')
-    require(not command('git', '--no-optional-locks', '-c', 'core.fsmonitor=false',
-                        '-c', 'core.filemode=false', '-C', target,
-                        'status', '--porcelain', '--untracked-files=all').strip(),
-            'VPS-Server-Menu: рабочее дерево изменено; устраните изменения вручную')
+    _official(lock)
+    target=Path(target)
+    require(not target.is_symlink(), 'VPS-Server-Menu: checkout symlink')
+    if not target.exists(): return False
+    require(target.is_dir() and (target/'.git').is_dir() and not (target/'.git').is_symlink(),
+            'VPS-Server-Menu: повреждённый или неизвестный checkout')
+    require(command('git','-C',target,'config','--local','--get-all','remote.origin.url').splitlines()==[OFFICIAL_REPOSITORY],
+            'VPS-Server-Menu: origin не официальный')
+    require(command('git','-C',target,'branch','--show-current').strip()=='main' and
+            command('git','-C',target,'rev-parse','--abbrev-ref','@{upstream}').strip()=='origin/main',
+            'VPS-Server-Menu: требуется main tracking origin/main; миграция только вручную')
+    require(not command('git','--no-optional-locks','-c','core.fsmonitor=false','-c','core.filemode=false','-C',target,
+                        'status','--porcelain','--untracked-files=all').strip(), 'VPS-Server-Menu: рабочее дерево изменено')
+    require(not command('git','-C',target,'ls-files','--others','--ignored','--exclude-standard').strip(),
+            'VPS-Server-Menu: неизвестные ignored файлы; очистите вручную')
     _manifest(target)
     return True
 
 
-def _archive_source(lock, work, fetch=download):
-    url, checksum = pinned_menu_archive(lock)
-    archive = Path(work) / 'menu.tar.gz'
-    fetch(url, archive, checksum)
-    require(digest(archive) == checksum, 'SHA256 архива VPS-Server-Menu не совпадает')
-    unpacked = Path(work) / 'menu-archive'
-    unpacked.mkdir()
-    extract(archive, unpacked)
-    children = list(unpacked.iterdir())
-    require(len(children) == 1 and children[0].is_dir(), 'Некорректная структура архива VPS-Server-Menu')
-    source = children[0]
-    require((source / 'install.sh').is_file() and (source / 'server-menu').is_file() and
-            (source / 'menu_warp.sh').is_file(), 'В архиве нет официального WARP API')
-    return source
+def _compatible(source):
+    for name in ('install.sh','server-menu','menu_warp.sh'):
+        require((source/name).is_file(), 'VPS-Server-Menu: отсутствует '+name)
+    installer=(source/'install.sh').read_text()
+    require(all(flag in installer for flag in ('--non-interactive','--no-autostart','--source-dir')),
+            'VPS-Server-Menu: несовместимый unattended installer')
+    require('xray-outbound' in (source/'menu_warp.sh').read_text() and '--json' in (source/'menu_warp.sh').read_text(),
+            'VPS-Server-Menu: несовместимый WARP CLI')
 
 
-def check_official_menu(lock, command=run, fetch=download, target=MENU_DIR):
-    """Verify pin, archive bytes and existing checkout before system changes."""
-    existing = inspect_existing_menu(lock, target, command)
+def check_official_menu(lock, command=run, target=MENU_DIR):
+    inspect_existing_menu(lock,target,command)
     with tempfile.TemporaryDirectory(prefix='bob-menu-check-') as directory:
-        source = _archive_source(lock, directory, fetch)
-        if existing:
-            require(_manifest(source) == _manifest(Path(target)),
-                    'VPS-Server-Menu checkout отличается от проверенного архива')
-        _check_links(source, Path(target), BIN_DIR)
-    return SUPPORTED_COMMIT
+        source=Path(directory)/'source'
+        command('git','clone','--branch','main','--single-branch',OFFICIAL_REPOSITORY,source,timeout=300)
+        inspect_existing_menu(lock,source,command)
+        _compatible(source)
+        _check_links(source,Path(target),BIN_DIR)
+        return command('git','-C',source,'rev-parse','HEAD').strip()
 
 
 def _check_links(source, target, bin_dir):
@@ -104,39 +84,35 @@ def _check_links(source, target, bin_dir):
     return needs_install
 
 
-def install_menu(lock, work, target=MENU_DIR, bin_dir=BIN_DIR, command=run, fetch=download):
-    """Install from a verified Git checkout without replacing existing data."""
-    target, bin_dir = Path(target), Path(bin_dir)
-    existing = inspect_existing_menu(lock, target, command)
-    source = _archive_source(lock, work, fetch)
-    if existing:
-        require(_manifest(source) == _manifest(target),
-                'VPS-Server-Menu checkout отличается от проверенного архива')
-    needs_install = _check_links(source, target, bin_dir)
-    if not existing:
-        require(not target.exists() and not target.is_symlink(),
-                'VPS-Server-Menu: путь уже занят; миграция только вручную')
-        require(target.parent.is_dir() and not target.parent.is_symlink(),
-                'Некорректный родительский каталог VPS-Server-Menu')
-        staging = Path(tempfile.mkdtemp(prefix='.bob-menu-', dir=target.parent))
-        try:
-            command('git', '-C', staging, 'init')
-            command('git', '-C', staging, 'remote', 'add', 'origin', OFFICIAL_REPOSITORY)
-            command('git', '-C', staging, 'fetch', '--depth=1', 'origin', SUPPORTED_COMMIT, timeout=300)
-            command('git', '-C', staging, 'checkout', '--detach', 'FETCH_HEAD')
-            inspect_existing_menu(lock, staging, command)
-            require(_manifest(source) == _manifest(staging),
-                    'Git checkout меню отличается от SHA256-проверенного архива')
-            require(not target.exists() and not target.is_symlink(),
-                    'VPS-Server-Menu: путь появился во время подготовки; установка остановлена')
-            staging.rename(target)
-        finally:
-            if staging.exists():
-                shutil.rmtree(staging)
-        needs_install = True
-    if needs_install:
-        command('bash', target / 'install.sh', '--non-interactive', '--no-autostart',
-                '--source-dir', target, '--pinned-commit', SUPPORTED_COMMIT, timeout=900)
-        inspect_existing_menu(lock, target, command)
-        require(not _check_links(source, target, bin_dir), 'Установщик меню не создал нужные ссылки')
-    return SUPPORTED_COMMIT
+def install_menu(lock, work, target=MENU_DIR, bin_dir=BIN_DIR, command=run):
+    target,bin_dir=Path(target),Path(bin_dir)
+    existing=inspect_existing_menu(lock,target,command)
+    require(target.parent.is_dir() and not target.parent.is_symlink(), 'VPS-Server-Menu: неверный parent')
+    with tempfile.TemporaryDirectory(prefix='.bob-menu-',dir=target.parent) as directory:
+        source=Path(directory)/'source'
+        command('git','clone','--branch','main','--single-branch',OFFICIAL_REPOSITORY,source,timeout=300)
+        inspect_existing_menu(lock,source,command)
+        _compatible(source)
+        _check_links(source,target,bin_dir)
+        if existing:
+            command('git','-C',target,'fetch','origin','main',timeout=300)
+            # Reject ahead/diverged histories; never reset/clean foreign work.
+            command('git','-C',target,'merge-base','--is-ancestor','HEAD','origin/main')
+            command('git','-c','core.filemode=false','-C',target,'merge','--ff-only','origin/main')
+            inspect_existing_menu(lock,target,command)
+            _compatible(target)
+            _check_links(target,target,bin_dir)
+        else:
+            require(not target.exists() and not target.is_symlink(), 'VPS-Server-Menu: путь уже занят')
+            source.rename(target)
+    # The official installer chmods shipped scripts whose Git modes are 0644.
+    # Persist this repository-only setting so plain status and native updates
+    # remain clean while content/untracked changes are still refused.
+    command('git','-C',target,'config','--local','core.filemode','false')
+    command('bash',target/'install.sh','--non-interactive','--no-autostart','--source-dir',target,timeout=900)
+    inspect_existing_menu(lock,target,command)
+    require(command('git','-C',target,'rev-parse','HEAD').strip()==command('git','-C',target,'rev-parse','origin/main').strip(),
+            'VPS-Server-Menu: HEAD отличается от разрешённого origin/main')
+    require(not _check_links(target,target,bin_dir), 'Установщик меню не создал нужные ссылки')
+    return dict(origin=OFFICIAL_REPOSITORY,branch='main',commit=command('git','-C',target,'rev-parse','HEAD').strip(),
+                resolved_at=datetime.now(timezone.utc).isoformat())

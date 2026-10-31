@@ -1,4 +1,4 @@
-"""Strict consumer of the pinned official server-menu WARP CLI."""
+"""Strict consumer of the current official server-menu WARP CLI."""
 import json
 import os
 import signal

@@ -30,7 +30,7 @@ with tarfile.open(fileobj=buffer,mode='w') as tf:
         with p.open('rb') as f: tf.addfile(info,f)
 archive=out/f'selfsni-{version}.tar.gz'
 with archive.open('wb') as f:
-    with gzip.GzipFile(filename='',mode='wb',fileobj=f,mtime=0) as gz: gz.write(buffer.getvalue())
+    with gzip.GzipFile(filename='',mode='wb',fileobj=f,mtime=0,compresslevel=9) as gz: gz.write(buffer.getvalue())
 sha=hashlib.sha256(archive.read_bytes()).hexdigest()
 (archive.with_suffix('.gz.sha256')).write_text(sha+'  '+archive.name+'\n')
 print(archive)

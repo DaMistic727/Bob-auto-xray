@@ -149,6 +149,19 @@ def write(path, content, mode=0o600):
         f.write(content)
     path.chmod(mode)
 
+def _close_unowned(fd, identity):
+    """Close fd only while it still refers to the temporary file.
+
+    A failed os.fdopen() may already have closed it, and its number may then
+    belong to an unrelated file that must stay open.
+    """
+    try:
+        current = os.fstat(fd)
+    except OSError:
+        return
+    if (current.st_dev, current.st_ino) == identity:
+        os.close(fd)
+
 def atomic_write(path, content, mode=0o600):
     """Replace a regular file atomically without following a target symlink."""
     path = Path(path)
@@ -156,8 +169,20 @@ def atomic_write(path, content, mode=0o600):
     require(not path.is_symlink(), f'Refusing symlink: {path}')
     fd, temporary = tempfile.mkstemp(prefix='.' + path.name + '.', dir=path.parent)
     try:
-        os.fchmod(fd, mode)
-        with os.fdopen(fd, 'w') as f:
+        # fd belongs to this function alone until os.fdopen() is called.
+        try:
+            info = os.fstat(fd)
+            os.fchmod(fd, mode)
+        except BaseException:
+            os.close(fd)
+            raise
+        try:
+            handle = os.fdopen(fd, 'w')
+        except BaseException:
+            # A failed fdopen() may already have closed fd.
+            _close_unowned(fd, (info.st_dev, info.st_ino))
+            raise
+        with handle as f:
             f.write(content)
             f.flush()
             os.fsync(f.fileno())
@@ -173,7 +198,9 @@ def atomic_write(path, content, mode=0o600):
             os.unlink(temporary)
 
 def save(path, obj):
-    write(path, json.dumps(obj, ensure_ascii=False, indent=2) + '\n')
+    # Installer state is rewritten at every checkpoint; a crash must leave the
+    # previous complete JSON, never a truncated file that blocks resume.
+    atomic_write(path, json.dumps(obj, ensure_ascii=False, indent=2) + '\n')
 
 def digest(path):
     h = hashlib.sha256()

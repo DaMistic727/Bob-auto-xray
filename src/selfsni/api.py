@@ -5,6 +5,20 @@ import ssl
 import urllib.parse
 from .core import InstallError, require
 
+PANEL_ACCESS = 'https-443'
+
+
+def public_panel_port(state):
+    """Missing marker denotes an older installation, never silently migrate it."""
+    return 443 if state.get('panel_access') == PANEL_ACCESS else state['panel_port']
+
+
+def public_panel_url(state):
+    port = public_panel_port(state)
+    authority = state['domain'] + ('' if port == 443 else ':' + str(port))
+    return 'https://' + authority + state['panel_path']
+
+
 class LocalTLS(http.client.HTTPSConnection):
     def connect(self):
         raw = socket.create_connection(('127.0.0.1', self.port), self.timeout)
@@ -21,6 +35,7 @@ def request(domain, port, path, method='GET', data=None, headers=None):
         conn.close()
 
 class Panel:
+    """Provisioning always uses the internal TLS endpoint, including before Xray."""
     def __init__(self, state):
         self.s = state
 
@@ -43,3 +58,13 @@ class Panel:
             raise InstallError('Panel returned invalid JSON: ' + endpoint) from e
         require(result.get('success') is True, 'Panel API rejected: ' + endpoint)
         return result.get('obj')
+
+
+def public_subscription_port(state):
+    return 443 if state.get('subscription_access') == 'https-443' else state['sub_port']
+
+
+def public_subscription_url(state, sub_id=''):
+    port = public_subscription_port(state)
+    authority = state['domain'] + ('' if port == 443 else ':' + str(port))
+    return 'https://' + authority + state['sub_path'] + sub_id

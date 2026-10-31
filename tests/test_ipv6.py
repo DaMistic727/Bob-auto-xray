@@ -44,7 +44,8 @@ class Kernel:
             return ''
         if args == ('ss', '-H', '-6', '-tnp', 'state', 'established'):
             return ''
-        if args == ('ip', '-j', '-6', 'address', 'show', 'scope', 'global'):
+        if args in (('ip', '-j', '-6', 'address', 'show', 'scope', 'global'),
+                    ('ip', '-j', '-6', 'address', 'show')):
             return '[]'
         if args == ('ip', '-j', '-4', 'address', 'show', 'scope', 'global'):
             return '[{"ifname":"ens3","addr_info":[{"local":"192.0.2.1"}]}]'
@@ -129,6 +130,52 @@ class IPv6Tests(unittest.TestCase):
             self.assertFalse((etc / 'systemd/network/10-netplan-ens3.network.d' /
                               ipv6.NETWORK_DROPIN).exists())
             self.assertEqual(kernel.reloads, 2)
+
+    def test_reinitialized_interface_cannot_pass_verification_if_reenabled(self):
+        # Model the observed lifecycle: sysctl succeeds, then a network manager
+        # reinitializes ens3 and overwrites its per-interface value.
+        with tempfile.TemporaryDirectory() as d:
+            etc, run_root, config = self.paths(Path(d)); kernel = Kernel()
+            self.apply(kernel, etc, run_root, config)
+            kernel.values['net.ipv6.conf.ens3.disable_ipv6'] = '0'
+            with self.assertRaisesRegex(InstallError, 'IPv6 remains enabled'):
+                ipv6.verify(kernel, config, etc, run_root)
+            # A permitted repeat reapplies the policy without cycling the link.
+            self.apply(kernel, etc, run_root, config)
+            self.assertEqual(kernel.values['net.ipv6.conf.ens3.disable_ipv6'], '1')
+
+    def test_link_local_is_not_hidden_by_global_address_filter(self):
+        with tempfile.TemporaryDirectory() as d:
+            etc, run_root, config = self.paths(Path(d)); kernel = Kernel()
+            self.apply(kernel, etc, run_root, config)
+            def command(*args):
+                if args == ('ip', '-j', '-6', 'address', 'show'):
+                    return '[{"ifname":"ens3","addr_info":[{"local":"fe80::1","scope":"link"}]}]'
+                return kernel(*args)
+            with self.assertRaisesRegex(InstallError, 'including link-local'):
+                ipv6.verify(command, config, etc, run_root)
+
+    def test_legacy_owned_dropin_can_be_extended_and_rolled_back(self):
+        with tempfile.TemporaryDirectory() as d:
+            etc, run_root, config = self.paths(Path(d)); kernel = Kernel()
+            dropin = etc / 'systemd/network/10-netplan-ens3.network.d' / ipv6.NETWORK_DROPIN
+            dropin.parent.mkdir(parents=True)
+            dropin.write_text(ipv6.LEGACY_NETWORK_CONTENT)
+            _, before = self.apply(kernel, etc, run_root, config)
+            self.assertIn('IPv6LinkLocalAddressGenerationMode=none', dropin.read_text())
+            ipv6.rollback(before, kernel, config)
+            self.assertEqual(dropin.read_text(), ipv6.LEGACY_NETWORK_CONTENT)
+
+    def test_foreign_address_generation_policy_is_not_overwritten(self):
+        with tempfile.TemporaryDirectory() as d:
+            etc, run_root, config = self.paths(Path(d)); kernel = Kernel()
+            directory = etc / 'systemd/network/10-netplan-ens3.network.d'
+            directory.mkdir(parents=True)
+            (directory / '80-foreign.conf').write_text(
+                '[Network]\nIPv6LinkLocalAddressGenerationMode=stable-privacy\n')
+            with self.assertRaisesRegex(InstallError, 'Foreign networkd'):
+                self.apply(kernel, etc, run_root, config)
+            self.assertFalse(config.exists())
 
     def test_ipv6_ssh_and_aaaa_refused(self):
         with tempfile.TemporaryDirectory() as d:

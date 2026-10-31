@@ -3,8 +3,42 @@
 ## Unreleased
 
 - Добавлен Bob Doctor (`bob doctor [--deep] [--json]`) для локальной диагностики без автоматического исправления. Он читает фактические Xray/WARP, TLS, GeoData, BBR/FQ, IPv6, SWAP и службы, не вызывает изменяющий API 3x-ui и сохраняет `UNKNOWN` при недостатке данных. Deep-режим ограничен GET и trace; возможны обычные логи и PHP-сессия. Безопасный E2E на отдельной VPS и CI кандидата должны быть зафиксированы до релиза.
-- Исправлена read-only проверка активного SWAP: на Ubuntu 26.04.1 `swapon --output=NAME` недоступен; установщик и Doctor используют проверенный `swapon --show=NAME --noheadings --raw`.
 - Исправлена проверка WARP на живой Ubuntu 26.04.1: установленный `warp-cli` требует `--accept-tos` также для JSON status/settings. На тестовой установке эти запросы не изменили регистрационные файлы или настройки WARP. После reboot Doctor обнаружил реальный сбой IPv6 persistence на `ens3`; следующий релиз заблокирован до отдельного исправления и повторного E2E.
+
+## v0.3.8 — 2026-10-31 · Preview
+
+- VPS-Server-Menu получает актуальную официальную main во время установки Bob, без статического commit/SHA256 pin или скрытого fallback. Остальные зависимости остаются pinned.
+- Checkout /root/VPS-Server-Menu находится на main tracking origin/main. Bob вызывает оригинальный install.sh с --non-interactive --no-autostart --source-dir, без --pinned-commit. Штатные команды/symlinks и пункт 9 обновления сохраняются.
+- Проверяются origin, branch/upstream, чистота и обычные файлы/каталоги, конфликтующие команды и CLI contract. Существующая main продвигается только fast-forward; dirty/unknown/diverged state, network/installer/CLI errors прекращают установку. Нет reset --hard, clean или замены чужого origin.
+- Фактические origin/branch/full SHA и UTC resolution time сохраняются root-only в menu_revision. Один релиз Bob в разные дни намеренно может установить разные upstream revisions; совместимость будущего upstream не гарантируется. Runtime WARP health/JSON/exit/outbound и независимый warp=on acceptance сохранены.
+- Без VPS/SSH/deploy/reboot. Старая detached pinned установка меню требует ручного решения: Bob не переключает её branch принудительно.
+
+## v0.3.7 — 2026-10-31 · Preview
+
+- Новые установки отдают Happ/INCY подписки на общем HTTPS/443: Xray REALITY → PROXY v1 → Nginx Unix socket → HTTPS 127.0.0.1:<sub_port>. Внутренний случайный порт и TLS сохранены; subURI больше не содержит нестандартного порта.
+- UFW новых установок открывает только обнаруженные SSH TCP, 80 и 443; subscription и panel ports остаются loopback. Acceptance проверяет сохранённые настройки, фактические sockets, TLS backend и публичную подписку независимо.
+- Отдельный subscription snippet сохраняет URI/query, User-Agent и upstream metadata; TLS/SNI/chain verification обязательны, секретные responses no-store, URI logs выключены. Assets HTML-страницы доступны только под subscription secret; неизвестные глобальные routes закрыты.
+- State marker subscription_access=https-443 управляет публичными URL. Старый state без маркера сохраняет URL с отдельным портом; автоматической миграции v0.3.6 и других завершённых установок нет.
+- Сохранены vless by bob, постоянный admin, GeoSite ads block, routing/WARP, pinned components, panel/decoy, IPv6/BBR/swap и модель installer resume. VPS E2E/reboot этой версии не выполнялись; исторические результаты не приписываются новой сборке.
+
+## v0.3.6 — 2026-10-31 · Preview
+
+- Основной inbound новых установок называется точно `vless by bob`; изменён только remark, параметры REALITY/Self-SNI, TCP/443, Vision и Firefox сохранены.
+- В существующее серверное правило `blocked` добавлена глобальная `geosite:category-ads-all` из основного Loyalsoldier GeoSite рядом с прежней RU-категорией. Блокировки по-прежнему предшествуют WARP; IPOnDemand, четыре источника GeoData, расписание, DIRECT/WARP и мобильные профили не изменены. Наличие категории проверено в закреплённом архиве и обязательно проверяется перед настройкой. Покрытие ограничено используемым GeoSite, полной блокировки всей рекламы не обещается.
+- Новая установка создаёт через `clients/add` одного постоянного VPN-клиента `admin`: случайные UUID v4 и subId, Vision, enable=true, нулевые IP/HWID/traffic/expiry/reset лимиты. Это не учётная запись панели; её генерация не меняется. Идентичность сохраняется root-only до записи, неоднозначный ответ API проверяется чтением inbound и каталога; существующие записи не заменяются. До успешного завершения проверяются Xray runtime и подписки.
+- Acceptance и E2E учитывают постоянного `admin`. Удаляется только временный клиент с совпавшими owner/UUID/subId; после очистки проверяются неизменность постоянных параметров и attachments. Автоматической миграции завершённых старых установок нет.
+- Проверки выполняются локально и в GitHub Actions, включая настоящий pinned 3x-ui API в отдельной временной БД на loopback. Новые VPS/SSH/install/reboot не выполнялись. Сообщённая владельцем работоспособность v0.3.5 не приписывается v0.3.6. IPv6 persistence остаётся отдельным непроверенным на новой VPS ограничением Preview.
+
+## v0.3.5 — 2026-10-31 · Preview
+
+- Панель новых установок доступна на `https://<domain>/<48-hex-secret>/` через существующий REALITY TCP/443 → PROXY v1 → Nginx Unix socket. HTTPS upstream 3x-ui привязан только к `127.0.0.1`; отдельный публичный admin port отсутствует. Заглушка, API, WebSocket, подписки и точный REALITY Target сохранены; старые установки автоматически не мигрируют.
+- Перед первым стартом панели проверяются сохранённые TLS/listen IP, internal port, webBasePath и отсутствие стандартной пары admin/admin, затем загружается сертификат/ключ. Несовпадение после exit-zero ошибки CLI оставляет service gate закрытым. Настоящий вход с сгенерированными credentials проверяется acceptance.
+- IPv6: в управляемый networkd drop-in добавлен `IPv6LinkLocalAddressGenerationMode=none`, конфликтующий чужой параметр отклоняется. Проверка адресов теперь включает link-local; регрессии моделируют повторную инициализацию интерфейса, отказ проверки, повторное применение и rollback. Это обоснованное усиление политики, **не подтверждение устранения исторического P1 после reboot**: точная причина того сбоя остаётся не установлена без наблюдения на VPS.
+- Для воспроизводимости между версиями Python явно закреплён gzip compresslevel=9 (Python 3.15 изменил default).
+- Генератор notes использует раздел текущей версии CHANGELOG вместо истории v0.3.4. Release workflow выполняет Nginx harness, compileall и проверку воспроизводимости, как CI.
+- Закреплённые версии Xray, 3x-ui, WARP menu и routing не изменены. WARP install/adopt/skip, routing presets, GeoData, BBR/FQ, resume и root-only данные сохранены. Bob Doctor из PR #11 исключён.
+- Чистую установку и reboot финального v0.3.5 проверит владелец вручную после публикации; новые VPS E2E не проводились.
+
 - На этапе IPv6 и BBR/FQ добавлена необязательная установка swap-файла `/swapfile` на 2 ГиБ. Он создаётся только при запасе не менее 2 ГиБ свободного места после выделения файла, включается сразу и закрепляется в `/etc/fstab`. Уже существующий swap-файл не удаляется и не перезаписывается; при нехватке места этап пропускается. Доступны read-only preflight, проверка результата и откат при ошибке.
 
 ## v0.3.4 — 2026-10-25 · Preview

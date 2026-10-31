@@ -17,7 +17,8 @@ import tempfile
 import urllib.parse
 import uuid
 
-from .api import LocalTLS, Panel, request
+from .api import PANEL_ACCESS, LocalTLS, Panel, public_panel_port, request, public_subscription_port
+from .panel_checks import panel_login, panel_network, panel_routes
 from .bbr import verify as verify_bbr
 from .ipv6 import verify as verify_ipv6
 from .swap import verify as verify_swap
@@ -28,6 +29,8 @@ from .geodata import (GEODATA_ASSETS, GEODATA_CRON, GEODATA_TIMEZONE,
 from .routing import (BLOCKED_DOMAINS, BLOCKED_IPS, WARP_DOMAINS, TAG, profile,
                       server_template)
 from .xray_pin import pinned_xray_spec
+from .clients import (main_inbound, read_clients, validate_admin, verify_admin_runtime,
+                      verify_admin_subscriptions, snapshot_clients, cleanup_owned_client)
 
 
 def check_warp():
@@ -89,7 +92,7 @@ def verify(s):
         ins = api.call('inbounds/list')
         require(len(ins) == 1 and ins[0]['port'] == 443 and ins[0]['enable'], 'Expected one REALITY inbound')
         i = ins[0]
-        require(json_obj(i['settings'])['clients'] == [], 'Permanent clients must not be created')
+        validate_admin(s, ins, api.call('clients/list'), only_admin=True)
         stream = json_obj(i['streamSettings'])
         r = stream['realitySettings']
         require(editor_reality_target(i) == '/run/selfsni/nginx.sock',
@@ -105,7 +108,7 @@ def verify(s):
                              'routeOnly': True}, 'Sniffing settings mismatch')
         require(i['tag'] in (TAG, 'in-443-tcp'), 'Unexpected REALITY inbound tag')
         require(not api.call('hosts/list'), 'Fresh install must not contain Host fingerprint overrides')
-    check('one inbound, zero clients, Self-SNI + Firefox parameters', basic_inbound)
+    check('one inbound, permanent admin, Self-SNI + Firefox parameters', basic_inbound)
 
     def inbound_editor_roundtrip():
         before = api.call('inbounds/list')[0]
@@ -124,6 +127,8 @@ def verify(s):
         after = api.call('inbounds/list')[0]
         require(editor_reality_target(after) == '/run/selfsni/nginx.sock',
                 'REALITY Target was lost after API save')
+        validate_admin(s, [after], api.call('clients/list'), only_admin=True)
+        require(after['remark'] == before['remark'] == 'vless by bob', 'Inbound remark changed after API save')
     check('REALITY Target in API/DB/editor model survives inbound save', inbound_editor_roundtrip)
 
     def routing_roundtrip():
@@ -184,6 +189,7 @@ def verify(s):
                         if item.get('port') == 443
                         and item.get('streamSettings', {}).get('security') == 'reality'), None)
         require(inbound is not None, 'Runtime REALITY inbound is missing')
+        verify_admin_runtime(s, config)
         reality = inbound['streamSettings']['realitySettings']
         require(reality.get('target') == '/run/selfsni/nginx.sock' and 'dest' not in reality,
                 'Runtime Xray JSON lost REALITY Target')
@@ -201,7 +207,24 @@ def verify(s):
                 'Xray did not inherit the pinned UTC timezone')
         require(GEODATA_CRON == '0 0 * * *', '03:00 Moscow cron mapping changed')
     check('Native geodata process timezone and 03:00 Europe/Moscow schedule', geodata_timezone)
-    check('HTTPS panel certificate and response', lambda: expect(request(s['domain'],s['panel_port'],s['panel_path'])[0] == 200,'Panel unavailable'))
+    panel_port = public_panel_port(s)
+    if s.get('subscription_access') == PANEL_ACCESS:
+        from .subscriptions import verify_network, verify_public_routes, verify_settings
+        check('Subscription loopback binding and firewall isolation', lambda: verify_network(s))
+        check('Subscription persisted TLS and URI settings', lambda: verify_settings(s, api.call('setting/all', {}, method='POST')))
+        check('Subscription public routes', lambda: verify_public_routes(s))
+        check('Public admin Happ/INCY on HTTPS/443', lambda: verify_admin_subscriptions(s, public=True))
+    check('Permanent admin Happ/INCY subscription identity and Vision', lambda: verify_admin_subscriptions(s))
+    check('HTTPS panel certificate and response', lambda: expect(request(s['domain'],panel_port,s['panel_path'])[0] == 200,'Panel unavailable'))
+    if s.get('panel_access') == PANEL_ACCESS:
+        check('Panel loopback binding, process ownership and firewall isolation', lambda: panel_network(s))
+        check('Public panel routes, assets, privacy and unauthenticated API', lambda: panel_routes(s))
+        check('Public login, CSRF, session API, WebSocket and logout', lambda: panel_login(s))
+        def panel_binding_settings():
+            settings = api.call('setting/all', {}, method='POST')
+            require(settings.get('webListen') == '127.0.0.1' and
+                    settings.get('trustedProxyCIDRs') == '127.0.0.1/32', 'Unsafe panel settings')
+        check('Persisted loopback binding and restricted trusted proxy', panel_binding_settings)
     def credential_login():
         require(s['username'] != 'admin' and len(s['password']) >= 32 and len(s['panel_path']) >= 48, 'Weak bootstrap credentials')
         status, headers, body = request(s['domain'], s['panel_port'], s['panel_path']+'csrf-token')
@@ -280,6 +303,7 @@ def verify(s):
     def routes():
         cases = [
             ({'domain':'yandex.ru'}, 'blocked'),
+            ({'domain':'doubleclick.net'}, 'blocked'),
             ({'domain':'test.su'}, 'blocked'),
             ({'domain':'пример.рф'.encode('idna').decode()}, 'blocked'),
             ({'ip':'77.88.8.8'}, 'blocked'),
@@ -308,7 +332,7 @@ def verify(s):
     check('Persistent IPv4-only sysctl and all IPv6 interfaces disabled', verify_ipv6)
     if 'swap' in s:
         check('Managed 2 GiB swap, when installed', lambda: verify_swap(s['swap']))
-    return {'scope':'on-host; no external client/reboot claims', 'checks':checks,
+    return {'menuRevision': s.get('menu_revision'), 'scope':'on-host; no external client/reboot claims', 'checks':checks,
             'tcpBbr': bbr_report}
 
 
@@ -446,8 +470,8 @@ def verify_sub_response(kind, status, headers, body):
 def e2e(s):
     mode = s.get('warp_mode', 'adopt' if s.get('adopt_warp') else 'install')
     api = Panel(s)
-    original = api.call('inbounds/list')[0]
-    require(json_obj(original['settings'])['clients'] == [], 'E2E requires a disposable zero-client server')
+    original, _ = validate_admin(s, *read_clients(api))
+    protected = snapshot_clients(api)
     client = {'id':str(uuid.uuid4()),'flow':'xtls-rprx-vision','email':'selfsni-e2e-'+token(6),
               'enable':True,'subId':token(16),'limitIp':0,'totalGB':0,'expiryTime':0,'reset':0}
     try:
@@ -455,7 +479,7 @@ def e2e(s):
         run('systemctl','restart','x-ui')
         wait_for(lambda: bool(api.call('inbounds/list')), 'client activation')
         for kind, agent in [('happ','Happ/3.0.0 (iOS)'),('incy','INCY/1.0.0/ios')]:
-            status,headers,body = request(s['domain'],s['sub_port'],s['sub_path']+client['subId'],headers={'User-Agent':agent})
+            status,headers,body = request(s['domain'],public_subscription_port(s),s['sub_path']+client['subId'],headers={'User-Agent':agent})
             verify_sub_response(kind,status,headers,body)
         with tempfile.TemporaryDirectory(prefix='selfsni-e2e-') as wd:
             port = free_port({40000})
@@ -488,7 +512,7 @@ def e2e(s):
                         raise InstallError('RU destination was reachable through VLESS')
 
                 def set_route_only(value):
-                    current = copy.deepcopy(api.call('inbounds/list')[0])
+                    current = copy.deepcopy(main_inbound(api.call('inbounds/list')))
                     sniffing = json_obj(current['sniffing'])
                     sniffing['routeOnly'] = value
                     current['sniffing'] = json.dumps(sniffing)
@@ -537,7 +561,7 @@ def e2e(s):
                 else:
                     raise InstallError('routeOnly=true unexpectedly rewrote destination')
             finally:
-                current = copy.deepcopy(api.call('inbounds/list')[0])
+                current = copy.deepcopy(main_inbound(api.call('inbounds/list')))
                 sniffing = json_obj(current['sniffing'])
                 sniffing['routeOnly'] = True
                 current['sniffing'] = json.dumps(sniffing)
@@ -549,13 +573,12 @@ def e2e(s):
                     process.kill()
                     process.wait(timeout=5)
     finally:
-        api.call('clients/del/'+client['email'], {})
-        require(json_obj(api.call('inbounds/list')[0]['settings'])['clients'] == [], 'Temporary-client cleanup failed')
+        cleanup_owned_client(api, client, protected)
     return {'subscriptions':'real HTTP for Happ + INCY; Base64/JSON/deeplinks verified',
             'reality':'real Vision connection with Firefox fingerprint from second Xray process on same VPS',
             'sniffing':'GeoSite routing passed with routeOnly false/true; final true preserves the requested IP against SNI rewriting',
             'routing':'DIRECT example/trace + ' + ('DIRECT' if mode == 'skip' else 'WARP') + ' IP-check + RU blocked',
-            'cleanup':'zero clients restored', 'external_client':'not covered by on-host test'}
+            'cleanup':'owned temporary client removed; permanent client parameters unchanged', 'external_client':'not covered by on-host test'}
 
 def main():
     parser=argparse.ArgumentParser()

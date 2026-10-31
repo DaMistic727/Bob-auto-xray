@@ -8,23 +8,26 @@ import re
 import shlex
 import shutil
 import socket
+import ssl
 import subprocess
 import sys
 import tempfile
 import time
 
-from .api import Panel, request
+from .api import PANEL_ACCESS, Panel, request, public_subscription_url
 from . import bbr, ipv6, swap
+from .clients import ensure_admin, verify_admin_runtime, verify_admin_subscriptions
 from .core import (ROOT, CommandError, InstallError, configure_diagnostics, redact,
                    register_secrets, require, run, write, save, token, free_port,
                    fqdn, download, verify_bundle, wait_for, digest,
                    configure_activity)
 from .certbot_errors import explain as explain_certbot
 from .apt import AptRunner
-from .menu_upstream import check_official_menu, install_menu
+from .menu_upstream import OFFICIAL_REPOSITORY, check_official_menu, install_menu
 from . import menu_warp
-from .install_state import (InstallerLock, checkpoint, fail, initialize, load,
-                            upgrade_legacy_apt_failure, validate_resume, warp_mode)
+from .install_state import (RESUMABLE_FAILURE_STAGES, STAGES, InstallerLock, checkpoint, fail,
+                            initialize, load, upgrade_legacy_apt_failure, validate_resume,
+                            warp_mode)
 from .ui import InstallerUI, interactive_wizard
 from .geodata import GEODATA_TIMEZONE, verify_server_geodata
 from .portal import generate
@@ -100,6 +103,113 @@ def install_doctor_cli():
     return True
 
 
+NGINX_ROOT = Path('/etc/nginx')
+PROC_ROOT = Path('/proc')
+NGINX_BINARY = '/usr/sbin/nginx'
+NGINX_CGROUP = '/system.slice/nginx.service'
+# APT_INSTALL installs nginx with its default site; certificate() swaps it for
+# Bob's HTTP-01 site. Nothing else may exist before NGINX_PORTAL.
+NGINX_RESUME_SITES = {'APT_INSTALL': ('default',), 'WARP': ('default',),
+                      'CERTIFICATE': ('default', 'selfsni-http')}
+
+
+def check_resume_nginx_config(stage, root=None):
+    root = Path(root or NGINX_ROOT)
+    enabled, conf_d = root / 'sites-enabled', root / 'conf.d'
+    for entry in (enabled.iterdir() if enabled.is_dir() else ()):
+        target = root / 'sites-available' / entry.name
+        require(entry.name in NGINX_RESUME_SITES[stage] and entry.is_symlink() and
+                target.is_file() and not target.is_symlink() and
+                os.path.realpath(entry) == os.path.realpath(target),
+                'Чужая nginx-конфигурация обнаружена во время resume')
+    require(not (conf_d.is_dir() and any(conf_d.iterdir())),
+            'Чужая nginx-конфигурация обнаружена во время resume')
+
+
+def owned_nginx_http(resume_state, listeners, command=run, proc_root=None, nginx_root=None):
+    """True only when every TCP/80 listener is the packaged nginx.service of this run.
+
+    A process name or binary path alone is not ownership: a container or a
+    hand-started nginx has both. The unit's MainPID must listen and every
+    listening PID must live in the nginx.service cgroup.
+    """
+    lines = [line for line in listeners.splitlines()
+             if int(line.split()[3].rsplit(':', 1)[1]) == 80]
+    if not (lines and resume_state and resume_state.get('stage') in NGINX_RESUME_SITES and
+            '/etc/nginx' in resume_state.get('absent_paths', ()) and
+            Path(nginx_root or NGINX_ROOT).is_dir()):
+        return False
+    pids = set()
+    for line in lines:
+        users = re.findall(r'\("([^"]*)",pid=(\d+),fd=\d+\)', line)
+        if line.split()[3] not in ('0.0.0.0:80', '[::]:80') or not users or \
+                any(name != 'nginx' for name, _ in users):
+            return False
+        pids.update(pid for _, pid in users)
+    main_pid = command('systemctl', 'show', 'nginx.service', '--property=MainPID', '--value').strip()
+    if main_pid not in pids:
+        return False
+    proc_root = Path(proc_root or PROC_ROOT)
+    for pid in pids:
+        try:
+            cgroups = [line.split(':', 2) for line in
+                       (proc_root / pid / 'cgroup').read_text().splitlines()]
+            executable = os.readlink(proc_root / pid / 'exe')
+        except OSError:
+            return False
+        # cgroup v2 unified line or the v1 name=systemd hierarchy.
+        units = [row[2] for row in cgroups if len(row) == 3 and row[1] in ('', 'name=systemd')]
+        if executable != NGINX_BINARY or not units or any(unit != NGINX_CGROUP for unit in units):
+            return False
+    return True
+
+
+def _carried(state, key, valid):
+    value = state.get(key)
+    try:
+        ok = isinstance(value, dict) and bool(valid(value))
+    except (OSError, TypeError, KeyError, ValueError):
+        ok = False
+    require(ok, f'Результат этапа ({key}) отсутствует или не совпадает с системой; resume запрещён')
+    return value
+
+
+def carried_results(state, ipv6_report):
+    """Validated results of completed stages that the resumed run will not repeat.
+
+    Live checks (bbr_preflight, ipv6_preflight, WARP health) are always
+    recomputed; only durable stage outputs are carried, after re-reading the
+    managed files they describe.
+    """
+    stage = state.get('stage')
+    require(stage in RESUMABLE_FAILURE_STAGES and
+            state.get('last_completed_stage') in STAGES[STAGES.index(stage) - 1:STAGES.index(stage) + 1],
+            f'Этап {stage} не согласован с last_completed_stage; resume запрещён')
+    if stage not in ('WARP', 'CERTIFICATE'):
+        return {}
+    results = dict(
+        ipv6=_carried(state, 'ipv6', lambda r:
+            r['persistentConfig'] == str(ipv6.CONFIG) and ipv6.CONFIG.read_text() == ipv6.CONTENT and
+            r['networkDropin'] == ipv6_report.get('networkDropin') and
+            Path(r['networkDropin']).name == ipv6.NETWORK_DROPIN and
+            Path(r['networkDropin']).read_text() == ipv6.NETWORK_CONTENT and
+            isinstance(r['interfaces'], list) and all(isinstance(x, str) for x in r['interfaces'])),
+        bbr=_carried(state, 'bbr', lambda r:
+            r['runtime'] == bbr.DESIRED and r['persistentConfig'] == str(bbr.SYSCTL_CONFIG) and
+            bbr.SYSCTL_CONFIG.read_text() == ''.join(f'{k} = {v}\n' for k, v in bbr.DESIRED.items())),
+        swap=_carried(state, 'swap', lambda r:
+            (r['status'] == 'created' and r['path'] == str(swap.FILE) and r['bytes'] == swap.SIZE) or
+            (r['status'] == 'existing' and r['path'] == str(swap.FILE)) or
+            (r['status'] == 'skipped' and isinstance(r['reason'], str))))
+    swap.verify(results['swap'])
+    # install re-checks health only; adopt re-resolves the menu and overwrites it.
+    if stage == 'CERTIFICATE' and warp_mode(state) != 'skip':
+        results['menu_revision'] = _carried(state, 'menu_revision', lambda r:
+            r['origin'] == OFFICIAL_REPOSITORY and r['branch'] == 'main' and
+            re.fullmatch(r'[0-9a-f]{40}', r['commit']) is not None and isinstance(r['resolved_at'], str))
+    return results
+
+
 def preflight(args, resume_state=None):
     require(os.geteuid() == 0, 'Run as root on the test/clean VPS')
     info = os_info()
@@ -121,11 +231,7 @@ def preflight(args, resume_state=None):
                 allowed_resume_paths.add('/var/lib/selfsni-acme')
             if p in allowed_resume_paths:
                 if p == '/etc/nginx':
-                    enabled = Path('/etc/nginx/sites-enabled')
-                    entries = list(enabled.iterdir()) if enabled.exists() else []
-                    expected = {'selfsni-http'} if resume_state.get('stage') == 'CERTIFICATE' else {'default'}
-                    require(all(x.name in expected for x in entries),
-                            'Чужая nginx-конфигурация обнаружена во время resume')
+                    check_resume_nginx_config(resume_state['stage'])
                 if p == '/etc/letsencrypt':
                     le = Path('/etc/letsencrypt')
                     foreign = [x for name in ('live', 'archive', 'renewal')
@@ -142,7 +248,6 @@ def preflight(args, resume_state=None):
                 'Existing installation/configuration: ' + p)
     warp_present = shutil.which('warp-cli') is not None if args.warp_mode != 'skip' else False
     warp_resume = bool(args.warp_mode == 'install' and resume_state and resume_state.get('stage') in ('WARP', 'CERTIFICATE'))
-    certificate_resume = bool(resume_state and resume_state.get('stage') == 'CERTIFICATE')
     require(not warp_present or args.warp_mode in ('adopt', 'skip') or warp_resume,
             'Existing WARP: needs explicit --adopt-warp')
     require(args.warp_mode != 'adopt' or warp_present, '--adopt-warp requires an existing installation')
@@ -169,13 +274,14 @@ def preflight(args, resume_state=None):
         # A pre-existing WARP daemon is outside this installation's ownership.
         allowed.update(int(line.split()[3].rsplit(':', 1)[1]) for line in listeners.splitlines()
                        if 'warp-svc' in line)
-    if certificate_resume:
+    nginx_http = owned_nginx_http(resume_state, listeners, run)
+    if nginx_http:
         allowed.add(80)
     for line in listeners.splitlines():
         port = int(line.split()[3].rsplit(':', 1)[1])
         require(port in allowed, f'Foreign TCP listener on port {port}')
     for port in [80,443,62789,11111]:
-        if certificate_resume and port == 80:
+        if nginx_http and port == 80:
             continue
         with socket.socket() as s:
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -206,6 +312,8 @@ def preflight(args, resume_state=None):
         sub_port = int(resume_state['sub_port'])
         require(panel_port not in excluded and sub_port not in excluded,
                 'Сохранённые порты конфликтуют с системными')
+        require(1024 <= panel_port <= 65535 and 1024 <= sub_port <= 65535 and panel_port != sub_port,
+                'Сохранённые порты некорректны или совпадают')
     else:
         panel_port = free_port(excluded)
         sub_port = free_port(excluded | {panel_port})
@@ -220,6 +328,7 @@ def preflight(args, resume_state=None):
     fresh = dict(domain=domain, ipv4=public, ubuntu=info['VERSION_ID'], codename=info['VERSION_CODENAME'],
                 arch='amd64' if platform.machine() == 'x86_64' else 'arm64',
                 ssh_ports=sorted(ssh_ports), panel_port=panel_port, sub_port=sub_port,
+                panel_access=PANEL_ACCESS, subscription_access=PANEL_ACCESS,
                 warp_mode=args.warp_mode, adopt_warp=args.warp_mode == 'adopt',
                 bbr_preflight=bbr_report, ipv6_preflight=ipv6_report, **credentials,
                 status='INSTALLING')
@@ -228,6 +337,7 @@ def preflight(args, resume_state=None):
                      'installation_id', 'schema', 'absent_paths', 'resume_count', 'stage',
                      'last_completed_stage', 'legacy_resume')
         fresh.update({key: resume_state[key] for key in preserved if key in resume_state})
+        fresh.update(carried_results(resume_state, ipv6_report))
     return fresh
 
 def firewall(s, public=False):
@@ -235,9 +345,6 @@ def firewall(s, public=False):
         run('ufw', 'allow', str(port) + '/tcp', 'comment', 'Self-SNI SSH')
     run('ufw', 'allow', '80/tcp')
     run('ufw', 'allow', '443/tcp')
-    if public:
-        for port in [s['panel_port'], s['sub_port']]:
-            run('ufw', 'allow', str(port) + '/tcp')
     run('ufw', 'default', 'deny', 'incoming')
     run('ufw', 'default', 'allow', 'outgoing')
     run('ufw', '--force', 'enable')
@@ -251,13 +358,13 @@ def install_apt_key(source, target):
 
 def install_warp(s, lock, work):
     stage('WARP: официальный VPS-Server-Menu')
-    install_menu(lock, work)
+    s['menu_revision'] = install_menu(lock, work)
     s['warp_health'] = menu_warp.install()
 
 
 def adopt_warp(s, lock, work):
     """Install/check the menu, then use its read-only health command."""
-    install_menu(lock, work)
+    s['menu_revision'] = install_menu(lock, work)
     s['warp_health'] = menu_warp.health()
 
 def certificate(s, email):
@@ -307,7 +414,17 @@ def decoy(s):
           f'fastcgi_param HTTPS on;\nfastcgi_pass unix:{sockets[0]};\n', 0o644)
     write('/etc/tmpfiles.d/selfsni.conf', 'd /run/selfsni 0750 root root -\n', 0o644)
     run('systemd-tmpfiles', '--create', '/etc/tmpfiles.d/selfsni.conf')
-    write('/etc/nginx/conf.d/selfsni-tls.conf', render('nginx-tls.conf', dict(values, DOMAIN=s['domain'])), 0o644)
+    require(re.fullmatch(r'/[0-9a-f]{48}/', s['panel_path']) is not None,
+            'Panel path must contain exactly 48 lowercase hex characters')
+    require(isinstance(s['panel_port'], int) and 1024 <= s['panel_port'] <= 65535,
+            'Invalid internal panel port')
+    from .subscriptions import validate_paths
+    validate_paths(s)
+    panel_values = dict(SUB_PATH=s['sub_path'], SUB_PORT=s['sub_port'], DOMAIN=s['domain'], PANEL_PORT=s['panel_port'],
+                        PANEL_PATH=s['panel_path'], PANEL_NO_SLASH=s['panel_path'][:-1])
+    write('/etc/nginx/snippets/selfsni-subscription.conf', render('nginx-subscription.conf', panel_values))
+    write('/etc/nginx/snippets/selfsni-panel.conf', render('nginx-panel.conf', panel_values))
+    write('/etc/nginx/conf.d/selfsni-tls.conf', render('nginx-tls.conf', dict(values, **panel_values)))
     write('/etc/systemd/system/nginx.service.d/selfsni.conf',
           '[Service]\nUMask=0007\nExecStartPre=/usr/bin/install -d -m 0750 -o root -g root /run/selfsni\n', 0o644)
     run('systemctl','daemon-reload')
@@ -338,15 +455,19 @@ def panel(s, lock, work):
                XUI_ENABLE_FAIL2BAN='false', XUI_DB_TYPE='sqlite', XUI_SERVER_IP=s['ipv4'],
                XUI_USERNAME=s['username'], XUI_PASSWORD=s['password'],
                XUI_PANEL_PORT=str(s['panel_port']), XUI_WEB_BASE_PATH=s['panel_path'].strip('/'))
-    # UFW already blocks the temporary plaintext panel during official bootstrap.
+    # The stock installer starts x-ui before Bob can bind it or enable TLS.
+    # An absent root-only marker blocks EVERY service start throughout bootstrap.
+    require(not (STATE/'panel-ready').exists(), 'Unexpected panel bootstrap marker')
+    write('/etc/systemd/system/x-ui.service.d/20-selfsni.conf',
+          xui_unit_override(s.get('warp_mode', 'install')), 0o644)
+    run('systemctl', 'daemon-reload')
     run('bash', ROOT / 'vendor/3x-ui/install.sh', lock['xui_version'], env=env, timeout=900)
     s['xray_sha256'] = install_pinned_xray(lock, s['arch'], work)
     cert = f'/etc/letsencrypt/live/{s["domain"]}/'
     run('/usr/local/x-ui/x-ui','setting','-webCert',cert+'fullchain.pem','-webCertKey',cert+'privkey.pem',
-        '-listenIP','0.0.0.0')
-    write('/etc/systemd/system/x-ui.service.d/20-selfsni.conf',
-          xui_unit_override(s.get('warp_mode', 'install')),
-          0o644)
+        '-listenIP','127.0.0.1')
+    verify_panel_bootstrap(s)
+    write(STATE/'panel-ready', 'loopback TLS configured\n')
     run('systemctl','daemon-reload')
     run('systemctl','restart','x-ui')
     wait_for(lambda: request(s['domain'], s['panel_port'], s['panel_path'])[0] == 200, 'HTTPS panel')
@@ -359,13 +480,33 @@ def panel(s, lock, work):
     configure_panel(s, lock)
 
 
+def verify_panel_bootstrap(s):
+    # The pinned CLI can exit 0 after failed settings writes. Read them back
+    # while the service is still gated, and validate the actual certificate/key.
+    cert = f'/etc/letsencrypt/live/{s["domain"]}/'
+    output = run('/usr/local/x-ui/x-ui', 'setting', '-getListen', '-getCert', '-show')
+    for key, value in (('listenIP', '127.0.0.1'), ('cert', cert+'fullchain.pem'),
+                       ('key', cert+'privkey.pem'), ('port', str(s['panel_port'])),
+                       ('webBasePath', s['panel_path']), ('hasDefaultCredential', 'false')):
+        require(re.findall(r'^'+key+r':[ \t]*([^\r\n]*)$', output, re.M) == [value],
+                'Panel bootstrap settings verification failed')
+    try:
+        ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER).load_cert_chain(cert+'fullchain.pem', cert+'privkey.pem')
+    except (OSError, ssl.SSLError) as error:
+        raise InstallError('Panel bootstrap TLS certificate/key validation failed') from error
+
+
 def xui_unit_override(mode):
     require(mode in ('install', 'adopt', 'skip'), 'Unknown WARP mode')
     warp_unit = ' warp-svc.service' if mode != 'skip' else ''
     return (f'[Unit]\nAfter=nginx.service{warp_unit} network-online.target\n'
             f'Wants=nginx.service{warp_unit} network-online.target\n'
+            'ConditionPathExists=/var/lib/selfsni/panel-ready\n'
             '[Service]\nEnvironment=TZ=' + GEODATA_TIMEZONE + '\n'
-            'ExecStartPre=/usr/bin/test -S /run/selfsni/nginx.sock\n')
+            'ExecStartPre=/usr/bin/test -S /run/selfsni/nginx.sock\n'
+            'ExecStartPre=/usr/local/x-ui/x-ui setting -listenIP 127.0.0.1\n'
+            'ExecStartPre=/bin/sh -ec \'/usr/local/x-ui/x-ui setting -getListen | '
+            '/usr/bin/grep -Fx "listenIP: 127.0.0.1"\'\n')
 
 
 def version_packages(mode):
@@ -379,16 +520,18 @@ def configure_panel(s, lock):
     cert = f'/etc/letsencrypt/live/{s["domain"]}/'
     api = Panel(s)
     settings = api.call('setting/all', {}, method='POST')
-    settings.update(subEnable=True, subListen='0.0.0.0', subPort=s['sub_port'],
-        subDomain=s['domain'], subPath=s['sub_path'], subURI=f'https://{s["domain"]}:{s["sub_port"]}{s["sub_path"]}',
+    settings.update(subEnable=True, subListen='127.0.0.1', subPort=s['sub_port'],
+        subDomain=s['domain'], subPath=s['sub_path'], subURI=public_subscription_url(s),
         subCertFile=cert+'fullchain.pem', subKeyFile=cert+'privkey.pem',
         subEncrypt=True, subEnableRouting=True, subRoutingRules=deeplink('happ'),
         subIncyEnableRouting=True, subIncyRoutingRules=deeplink('incy'),
         subHappAutoDetect=True, subHappTunType='xray', subHappLocalProxyAuth='auto',
         subIncyAppAutoDetect=True,
         subJsonEnable=False, subJsonAutoDetect=False, subClashEnable=False,
-        webListen='0.0.0.0')
+        webListen='127.0.0.1', trustedProxyCIDRs='127.0.0.1/32')
     api.call('setting/update', settings)
+    from .subscriptions import verify_settings
+    verify_settings(s, api.call('setting/all', {}, method='POST'))
     # Keep the stock databases from the SHA256-pinned 3x-ui archive. Happ/INCY
     # profiles use their separately pinned DigneZzZ mobile datasets.
     geodata_root = Path('/usr/local/x-ui/bin')
@@ -414,8 +557,11 @@ def configure_panel(s, lock):
     register_secrets(s['reality_private'], s['reality_public'], s['short_id'])
     save(STATE/'state.json',s)
     api.call('inbounds/add', inbound(s['domain'], s['reality_private'], s['reality_public'], s['short_id']))
+    ensure_admin(s, api, lambda state: save(STATE/'state.json', state))
     run('systemctl','restart','x-ui')
     wait_for(lambda: request(s['domain'],s['sub_port'],s['sub_path']+'missing')[0] in (400,404), 'TLS subscriptions')
+    verify_admin_runtime(s, json.loads(Path('/usr/local/x-ui/bin/config.json').read_text()))
+    verify_admin_subscriptions(s)
     s['xray_version'] = run(s['xray_bin'], 'version').splitlines()[0]
     s['xui_version'] = lock['xui_version']
 

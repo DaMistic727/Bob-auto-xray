@@ -1,0 +1,62 @@
+{
+  "scope": "disposable Ubuntu 26.04.1, WARP skip, resumed after pre-panel swapon failure",
+  "acceptance": {
+    "passed": 32,
+    "total": 32
+  },
+  "initial_immediate_restart_probe": {
+    "passed": 29,
+    "total": 32,
+    "failed_indexes": [
+      0,
+      1,
+      2
+    ]
+  },
+  "onhost_vision_and_subscriptions": true,
+  "geodata_hot_reload": true,
+  "geodata_download_failure": true,
+  "geodata_rollback": true,
+  "geodata_restored": true,
+  "after_reboot": {
+    "passed": 31,
+    "total": 32,
+    "failed_indexes": [
+      30
+    ]
+  },
+  "browser_ui_save_keeps_target": true,
+  "browser_ui_save_keeps_xver": true,
+  "public_panel_200_after_ui_save": true,
+  "ens3_ipv6_disabled": false,
+  "browser": {
+    "external_login": true,
+    "dashboard": true,
+    "inbound_ui_save": true,
+    "logout": true,
+    "protected_page_after_logout_denied": true,
+    "observed_console_errors": 0
+  },
+  "external_vision": "NOT TESTED: user chose on-host result",
+  "external_internal_port_probe": {
+    "mac_tcp_connect_accepted": true,
+    "verified_tls_reachable": false,
+    "vps_incoming_syn": 3,
+    "vps_outgoing_syn_ack": 0,
+    "vps_other_target_port_packets": 0
+  },
+  "isolated_nginx": {
+    "passed_groups": 7,
+    "total_groups": 7
+  },
+  "local_tests": {
+    "python_3_12": {
+      "passed": 136,
+      "total": 136
+    },
+    "python_3_14": {
+      "passed": 136,
+      "total": 136
+    }
+  }
+}

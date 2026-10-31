@@ -93,7 +93,8 @@ class UiTests(unittest.TestCase):
         InstallerUI(output, tty=False).success(state)
         text = output.getvalue()
         self.assertIn('Панель управления:', text)
-        self.assertIn('создайте первого VPN-клиента', text)
+        self.assertIn('VPN-клиент admin уже создан', text)
+        self.assertNotIn('создайте первого VPN-клиента', text)
         self.assertNotIn('Подписки:', text)
         self.assertNotIn('private-password', text)
         class Utf8Stream(io.StringIO):

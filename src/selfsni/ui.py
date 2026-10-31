@@ -112,16 +112,16 @@ class InstallerUI:
         checks.append('Локальные проверки пройдены')
         mark = '✓' if self.unicode else 'OK'
         print('\n' + '\n'.join(f'{mark} {item}' for item in checks), file=self.stream)
-        print(f'\nПанель управления:\nhttps://{state["domain"]}:{state["panel_port"]}{state["panel_path"]}',
+        from .api import public_panel_url
+        print(f'\nПанель управления:\n{public_panel_url(state)}',
               file=self.stream)
         if self.tty:
             print(f'\nЛогин:  {state["username"]}\nПароль: {state["password"]}', file=self.stream)
         else:
             print('\nРеквизиты сохранены в /var/lib/selfsni/state.json (доступ root).',
                   file=self.stream)
-        print('\nСледующий шаг:\nОткройте панель 3x-ui и создайте первого VPN-клиента '
-              'с flow xtls-rprx-vision.\nПосле создания клиента используйте его ссылку '
-              'или подписку для подключения.\n\nОтчёт:\n/var/lib/selfsni/acceptance.json',
+        print('\nСледующий шаг:\nПодписки доступны через общий HTTPS/443.\nVPN-клиент admin уже создан: Vision, без лимитов и срока действия.\n'
+              'Откройте панель 3x-ui и получите его ссылку или подписку для подключения.\n\nОтчёт:\n/var/lib/selfsni/acceptance.json',
               file=self.stream, flush=True)
 
 
