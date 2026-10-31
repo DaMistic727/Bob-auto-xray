@@ -15,6 +15,8 @@ def main():
         def git(*args,env=None):return subprocess.check_output(['git',*map(str,args)],text=True,env=env,stderr=subprocess.DEVNULL).strip()
         git('clone','--branch','main','--single-branch',OFFICIAL_REPOSITORY,origin)
         revision=git('-C',origin,'rev-parse','HEAD')
+        for test in ('test_warp_endpoints.sh','test_warp_cron.sh'):
+            subprocess.run(['bash',str(origin/'tests'/test)],check=True,stdout=subprocess.DEVNULL)
         shim=root/'shim';shim.mkdir()
         real_git=shutil.which('git')
         wrapper=shim/'git'
