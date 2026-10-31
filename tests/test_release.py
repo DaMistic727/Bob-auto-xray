@@ -32,3 +32,37 @@ class ReleaseTests(unittest.TestCase):
             with tarfile.open(archive) as tf:
                 self.assertEqual(tf.getmember('selfsni/docs/report.json').mode, 0o644)
                 self.assertEqual(tf.getmember('selfsni/install.sh').mode, 0o755)
+
+    def test_release_assets_pin_payload_version_and_current_notes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'tools').mkdir()
+            for name in ('release.py', 'package.py'):
+                shutil.copyfile('tools/' + name, root / 'tools' / name)
+            shutil.copyfile('install.sh', root / 'install.sh')
+            (root / 'versions.lock.json').write_text('{}\n')
+            (root / 'VERSION').write_text('1.2.3\n')
+            (root / 'CHANGELOG.md').write_text(
+                '# Changes\n\n## v1.2.3 - Preview\n\nCurrent changes.\n\n'
+                '## v1.2.2\n\nHistorical E2E success.\n')
+            command = [sys.executable, str(root / 'tools/release.py'), '--tag', 'v1.2.3']
+            subprocess.run(command, check=True, capture_output=True)
+            dist = root / 'dist'
+            for line in (dist / 'SHA256SUMS').read_text().splitlines():
+                checksum, name = line.split()
+                self.assertEqual(checksum, hashlib.sha256((dist / name).read_bytes()).hexdigest())
+            bootstrap = (dist / 'install.sh').read_text()
+            self.assertIn('/releases/download/v1.2.3/selfsni-1.2.3.tar.gz', bootstrap)
+            self.assertIn(hashlib.sha256((dist / 'selfsni-1.2.3.tar.gz').read_bytes()).hexdigest(), bootstrap)
+            notes = (dist / 'release-notes.md').read_text()
+            self.assertIn('Current changes.', notes)
+            self.assertNotIn('Historical E2E success.', notes)
+            self.assertIn('NOT TESTED', notes)
+            first = (dist / 'SHA256SUMS').read_bytes()
+            subprocess.run(command, check=True, capture_output=True)
+            self.assertEqual(first, (dist / 'SHA256SUMS').read_bytes())
+            with tarfile.open(dist / 'selfsni-1.2.3.tar.gz') as tf:
+                self.assertEqual(tf.extractfile('selfsni/VERSION').read(), b'1.2.3\n')
+                self.assertTrue(all(name.startswith('selfsni/') for name in tf.getnames()))
+            mismatch = subprocess.run(command[:-1] + ['v1.2.4'], capture_output=True)
+            self.assertNotEqual(mismatch.returncode, 0)

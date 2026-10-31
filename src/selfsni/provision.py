@@ -348,9 +348,10 @@ def verify_panel_bootstrap(s):
     # The pinned CLI can exit 0 after failed settings writes. Read them back
     # while the service is still gated, and validate the actual certificate/key.
     cert = f'/etc/letsencrypt/live/{s["domain"]}/'
-    output = run('/usr/local/x-ui/x-ui', 'setting', '-getListen', '-getCert')
+    output = run('/usr/local/x-ui/x-ui', 'setting', '-getListen', '-getCert', '-show')
     for key, value in (('listenIP', '127.0.0.1'), ('cert', cert+'fullchain.pem'),
-                       ('key', cert+'privkey.pem')):
+                       ('key', cert+'privkey.pem'), ('port', str(s['panel_port'])),
+                       ('webBasePath', s['panel_path']), ('hasDefaultCredential', 'false')):
         require(re.findall(r'^'+key+r':[ \t]*([^\r\n]*)$', output, re.M) == [value],
                 'Panel bootstrap settings verification failed')
     try:

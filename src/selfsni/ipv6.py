@@ -13,7 +13,9 @@ DESIRED = {'net.ipv6.conf.all.disable_ipv6': '1',
            'net.ipv6.conf.default.disable_ipv6': '1'}
 CONTENT = (''.join(f'{key} = {value}\n' for key, value in DESIRED.items()) +
            'net.ipv6.conf.*.disable_ipv6 = 1\n')
-NETWORK_CONTENT = '[Network]\nLinkLocalAddressing=no\nIPv6AcceptRA=no\n'
+LEGACY_NETWORK_CONTENT = '[Network]\nLinkLocalAddressing=no\nIPv6AcceptRA=no\n'
+# Keep networkd's address generation policy aligned with the sysctl policy.
+NETWORK_CONTENT = LEGACY_NETWORK_CONTENT + 'IPv6LinkLocalAddressGenerationMode=none\n'
 NETWORK_DROPIN = '99-zz-bob-auto-xray-ipv4-only.conf'
 
 
@@ -49,7 +51,7 @@ def _network_path(command, etc, destination, local=None):
         for other in directory.glob('*.conf'):
             if other == path:
                 continue
-            if re.search(r'^\s*(LinkLocalAddressing|IPv6AcceptRA)\s*=',
+            if re.search(r'^\s*(LinkLocalAddressing|IPv6AcceptRA|IPv6LinkLocalAddressGenerationMode)\s*=',
                          other.read_text(), re.M):
                 raise InstallError(f'Foreign networkd IPv6 setting: {other}')
     return path
@@ -100,7 +102,7 @@ def preflight(domain, command=run, etc=Path('/etc'), run_root=Path('/run'),
         require(config.read_text() == CONTENT, 'Managed IPv6 sysctl file was changed')
     network_path = _network_path(command, etc, ssh[0], ssh[2])
     if network_path.exists():
-        require(network_path.read_text() == NETWORK_CONTENT,
+        require(network_path.read_text() in (LEGACY_NETWORK_CONTENT, NETWORK_CONTENT),
                 'Managed networkd drop-in was changed')
     return {'sshIPv4': True, 'globalIPv6AddressesBefore': sum(
         len(row.get('addr_info', [])) for row in addresses),
@@ -166,8 +168,8 @@ def verify(command=run, config=CONFIG, etc=Path('/etc'), run_root=Path('/run'),
     require(all(_value(command, f'net.ipv6.conf.{name}.disable_ipv6') == '1'
                 for name in names), 'IPv6 remains enabled on an interface')
     require(not any(row.get('addr_info') for row in json.loads(
-                command('ip', '-j', '-6', 'address', 'show', 'scope', 'global'))),
-            'Global IPv6 address remains')
+                command('ip', '-j', '-6', 'address', 'show'))),
+            'IPv6 address remains (including link-local)')
     require(json.loads(command('ip', '-j', '-4', 'address', 'show', 'scope', 'global')),
             'No global IPv4 address')
     public = command('curl', '-4fsS', '--connect-timeout', '10', '--max-time', '20',

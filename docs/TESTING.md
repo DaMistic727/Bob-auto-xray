@@ -1,4 +1,31 @@
-# Отчёт о тестировании · 25 октября 2026
+# Отчёт о тестировании · v0.3.5 Preview · 31 октября 2026
+
+## Финальный v0.3.5: область проверки
+
+Новые проверки ограничены локальными unit/integration/mock, статическим анализом, release build и GitHub Actions. Ни SSH, ни VPS, ни installer на хосте разработки не использовались. PR #11/Bob Doctor не включён.
+
+- Python unittest: API, bootstrap, TLS, exact path routing, panel security/UFW, WARP install/adopt/skip, routing, GeoData, BBR, swap и resume.
+- IPv6 regression: повторная инициализация с перезаписью ens3, fail-closed verify, link-local, повторное применение, legacy rollback и чужой generation policy. [Причина, усиление и оставшийся риск](IPV6-PERSISTENCE.md).
+- Ubuntu CI Python 3.10/3.12: весь unittest suite и настоящий Nginx proxy harness (7 групп), compileall, Bash syntax, ShellCheck, две сборки и SHA256.
+- Release workflow повторяет unittest, Nginx, syntax, ShellCheck и воспроизводимость перед публикацией.
+
+Точные результаты финального прогона записаны в [V035-VALIDATION.md](V035-VALIDATION.md). Workflow links доступны в GitHub Actions по SHA тега v0.3.5.
+
+**NOT TESTED для финальной сборки:** clean install, reboot, фактическая IPv6 persistence, внешний REALITY/Vision и изоляция panel port, Certbot issue/renew, WARP install/adopt/skip на VPS, GeoData scheduled update/rollback на VPS, реальные Happ/INCY, SSH/UFW/Fail2ban и BBR/swap после reboot. Владелец проверит после публикации Preview. Исторический P1 IPv6 не объявляется устранённым; локальная модель не заменяет наблюдение реального networkd.
+
+## Ручной E2E владельца
+
+1. Чистая поддерживаемая Ubuntu, DNS A без AAAA: запустить versioned bootstrap v0.3.5; проверить exit 0, HEALTHY_LOCAL и root-only state/log/credentials. Повтор успешной установки должен безопасно отказаться, допустимый ранний resume сохраняет credentials.
+2. HTTPS/443: `/` показывает заглушку, секретный URL открывает панель с действительным сертификатом, неизвестные пути дают 404. Login, CSRF, API, WebSocket и logout работают. Извне внутренний panel port недоступен; TCP connect без TLS/fingerprint не является доказательством.
+3. В UI сохранить inbound и сравнить Target `/run/selfsni/nginx.sock`, xver=1, Vision, Firefox uTLS, Short ID. Проверить независимым внешним REALITY-клиентом.
+4. Проверить Happ/INCY URL на отдельном порту, routing presets и реальные приложения. Проверить DIRECT/WARP/BLOCK: RU/UA/private/BitTorrent и AI/IP-check.
+5. На отдельных чистых установках проверить WARP install/adopt/skip; adopt сохраняет регистрацию и настройки, skip не трогает WARP. Активный SOCKS5 только `127.0.0.1:40000`.
+6. Проверить Certbot renewal, GeoData hot reload/rollback, UFW/Fail2ban. После reboot повторить SSH, HTTPS, panel, REALITY, subscriptions, routing и WARP.
+7. Проверить IPv6 на **каждом** интерфейсе и отсутствие link-local, `tcp_congestion_control=bbr`, `default_qdisc=fq`, swap 2 GiB и `/etc/fstab`, если swap выбран. При IPv6 FAIL сохранить данные из IPV6-PERSISTENCE.md.
+
+## Исторические проверки (не результаты v0.3.5)
+
+Ниже сохранены прежние отчёты для их исходных ревизий; даже исторический PASS после reboot не отменяет позднее обнаруженный ens3 P1 и не подтверждает новый архив.
 
 ## v0.3.4 · Smoke E2E #1: официальный WARP
 

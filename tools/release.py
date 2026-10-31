@@ -30,17 +30,31 @@ installer.write_text(bootstrap)
 installer.chmod(0o755)
 bootstrap_sha = hashlib.sha256(installer.read_bytes()).hexdigest()
 (root / 'dist/SHA256SUMS').write_text(f'{checksum}  {archive.name}\n{bootstrap_sha}  install.sh\n')
-(root / 'dist/release-notes.md').write_text(f'''Preview-релиз Bob Auto Xray {a.tag}.
+# Release-specific changes come from the matching changelog section, never
+# from a previous release's hard-coded test narrative.
+changelog = (root / 'CHANGELOG.md').read_text()
+section = re.search(r'^## v' + re.escape(version) + r'[^\n]*\n(.*?)(?=^## |\Z)',
+                    changelog, re.M | re.S)
+if section is None:
+    raise SystemExit('VERSION has no release section in CHANGELOG.md')
+(root / 'dist/release-notes.md').write_text(f'''# Bob Auto Xray {a.tag} · Preview
 
-3x-ui v3.10.2 + Xray v26.10.21 с VLESS TCP REALITY Vision Self-SNI, nginx/PHP portal, опциональный WARP, native Geodata Auto-Update, TCP BBR с FQ, отключение IPv6 и отдельные профили Happ/INCY.
+{section.group(1).strip()}
 
-Официальный VPS-Server-Menu закреплён на commit `3ed5166bbc5b4fb4cc3bb26616bc4db3bbe2734c` с проверкой SHA256 архива до изменений системы. Доступны установка нового WARP, использование существующего и режим без WARP.
+## Проверки и ограничения
 
-Установщик показывает русскоязычный мастер, прогресс по завершённым этапам и живой статус длительных команд. Диагностика Certbot объясняет типовые ошибки ACME и переводит подтверждённое время повтора из UTC в МСК. Сохранены безопасный resume, root-only журнал и SHA256-проверка архивов.
+CI проверяет Python 3.10/3.12 unittest, real Nginx harness, compileall,
+Bash syntax, ShellCheck и две воспроизводимые release-сборки с SHA256.
+Release workflow повторяет локальные проверки перед публикацией assets.
+Фактические результаты и границы проверок: [docs/TESTING.md](https://github.com/{a.repo}/blob/{a.tag}/docs/TESTING.md).
 
-Smoke E2E #1 на чистой одноразовой Ubuntu 26.04.1 amd64 подтвердил официальный новый WARP, Certbot, REALITY Vision, DIRECT/WARP/BLOCK и on-host acceptance 27/27. Владелец отдельно проверил VPN, WARP, скорость и маршрутизацию вручную. Добавленное позже отключение IPv6 прошло настоящий reboot на уже установленной VPS с сохранением SSH, BBR/FQ, WARP и REALITY.
-
-Ограничения Preview: чистая установка с новым IPv6-этапом, независимый автоматизированный внешний E2E полного финального кандидата и reboot непосредственно после его чистой установки не выполнялись. Раздельные результаты и их область действия приведены в docs/TESTING.md.
+Чистая установка и reboot финального {a.tag} будут проверены вручную владельцем
+после публикации. VPS в ходе подготовки этого релиза не использовались.
+IPv6 persistence после reboot не подтверждена: явный запрет генерации link-local
+и fail-closed проверки не являются доказательством устранения исторического P1.
+Независимые внешний Vision, изоляция внутреннего порта, реальные мобильные
+клиенты и продление сертификата этой сборки также NOT TESTED.
+Bob Doctor (PR #11) не включён. Старые установки автоматически не мигрируют.
 
 ## Установка от root на чистой VPS
 
@@ -48,11 +62,9 @@ Smoke E2E #1 на чистой одноразовой Ubuntu 26.04.1 amd64 по�
 bash <(curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' https://github.com/{a.repo}/releases/download/{a.tag}/install.sh)
 ```
 
-Bootstrap закрепляет URL и SHA256 архива. В assets опубликован SHA256SUMS; модель доверия и проверка вручную описаны в документации.
-
-- [README](https://github.com/{a.repo}/blob/{a.tag}/README.md)
-- [Отчёт о тестировании](https://github.com/{a.repo}/blob/{a.tag}/docs/TESTING.md)
-- [Архитектура](https://github.com/{a.repo}/blob/{a.tag}/docs/ARCHITECTURE.md)
+Bootstrap закрепляет immutable URL и SHA256 payload; SHA256SUMS опубликован в assets.
+[README](https://github.com/{a.repo}/blob/{a.tag}/README.md) ·
+[Архитектура](https://github.com/{a.repo}/blob/{a.tag}/docs/ARCHITECTURE.md)
 
 SHA256 payload: `{checksum}`
 SHA256 bootstrap: `{bootstrap_sha}`

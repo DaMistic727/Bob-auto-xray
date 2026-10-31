@@ -100,7 +100,7 @@ class PanelProxyTests(unittest.TestCase):
                     return 'apiToken: abcdef\n'
                 if '-getListen' in args:
                     cert = '/etc/letsencrypt/live/vpn.example.com/'
-                    return 'listenIP: 127.0.0.1\ncert: '+cert+'fullchain.pem\nkey: '+cert+'privkey.pem\n'
+                    return 'listenIP: 127.0.0.1\ncert: '+cert+'fullchain.pem\nkey: '+cert+'privkey.pem\nport: '+str(s['panel_port'])+'\nwebBasePath: '+s['panel_path']+'\nhasDefaultCredential: false\n'
                 return ''
             def pinned(*args):
                 events.append(('pinned',))
