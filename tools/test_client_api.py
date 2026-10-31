@@ -115,11 +115,11 @@ def main():
                 sub_port, sub_path = free_port({port, 443, 62789}), '/'+token(24)+'/'
                 settings = api.call('setting/all', {}, method='POST')
                 subprocess.run(['openssl','req','-x509','-newkey','rsa:2048','-nodes','-days','1','-subj','/CN=127.0.0.1','-addext','subjectAltName=IP:127.0.0.1','-keyout',str(root/'sub.key'),'-out',str(root/'sub.crt')],check=True,stdout=log,stderr=log)
-                settings.update(subEnableRouting=True, subRoutingRules=deeplink('happ'),
+                settings.update(subHappAutoDetect=True, subIncyAppAutoDetect=True, subEnableRouting=True, subRoutingRules=deeplink('happ'),
                                 subIncyEnableRouting=True, subIncyRoutingRules=deeplink('incy'),
                                 subHappTunType='xray', subHappLocalProxyAuth='auto',
                                 subEnable=True, subListen='127.0.0.1', subPort=sub_port,
-                                subPath=sub_path, subDomain='127.0.0.1', subEncrypt=True,
+                                subPath=sub_path, subDomain='127.0.0.1', subURI='https://127.0.0.1'+sub_path, subEncrypt=True,
                                 subCertFile=str(root/'sub.crt'), subKeyFile=str(root/'sub.key'))
                 api.call('setting/update', settings)
                 os.killpg(process.pid, signal.SIGTERM)
@@ -140,8 +140,17 @@ def main():
                         return response.status, dict((k.lower(),v) for k,v in response.getheaders()), response.read()
                     finally:
                         connection.close()
-                wait_for(lambda: (verify_admin_subscriptions(state, subscription), True)[1],
-                         'permanent admin Happ/INCY subscriptions')
+                try:
+                    wait_for(lambda: (verify_admin_subscriptions(state, subscription), True)[1],
+                             'permanent admin Happ/INCY subscriptions')
+                except Exception:
+                    verify_admin_subscriptions(state, subscription)
+                    raise
+                stored = api.call('setting/all', {}, method='POST')
+                require(stored['subListen']=='127.0.0.1' and stored['subPort']==sub_port and stored['subCertFile']==str(root/'sub.crt'), 'Subscription binding/TLS readback failed')
+                listeners = subprocess.check_output(['ss','-H','-lntp'],text=True).splitlines()
+                listeners = [line.split()[3] for line in listeners if line.split()[3].endswith(':'+str(sub_port))]
+                require(listeners==['127.0.0.1:'+str(sub_port)],'Real subscription socket is public or duplicated')
                 status, _, html = subscription('127.0.0.1',sub_port,sub_path+state['admin_client']['subId']+'?html=1',{'Accept':'text/html'})
                 require(status == 200, 'Subscription browser page unavailable')
                 assets = re.findall(rb'(?:src|href)="([^"]+assets/[^"]+)"',html)
