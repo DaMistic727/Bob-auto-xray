@@ -122,5 +122,93 @@ class AtomicStateTests(unittest.TestCase):
         self.assertEqual(load(self.root)['failure'], saved['failure'])
 
 
+class AtomicWriteDescriptorTests(unittest.TestCase):
+    """The mkstemp descriptor is closed exactly once on every failure path."""
+
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+        self.path = self.root / 'state.json'
+        save(self.path, {'previous': True})
+        self.previous = self.path.read_bytes()
+        self.descriptors = []
+        real_mkstemp = tempfile.mkstemp
+
+        def mkstemp(*args, **kwargs):
+            fd, name = real_mkstemp(*args, **kwargs)
+            self.descriptors.append(fd)
+            return fd, name
+        patcher = patch.object(core.tempfile, 'mkstemp', side_effect=mkstemp)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def assertClosed(self, fd):
+        with self.assertRaises(OSError) as raised:
+            os.fstat(fd)
+        self.assertEqual(raised.exception.errno, 9)  # EBADF
+
+    def assertPreviousStateOnly(self):
+        self.assertEqual(self.path.read_bytes(), self.previous)
+        self.assertEqual(sorted(p.name for p in self.root.iterdir()), ['state.json'])
+
+    def test_fchmod_failure_closes_descriptor(self):
+        with patch.object(core.os, 'fchmod', side_effect=OSError(5, 'Input/output error')), \
+             self.assertRaisesRegex(OSError, 'Input/output error'):
+            save(self.path, state())
+        self.assertClosed(self.descriptors[-1])
+        self.assertPreviousStateOnly()
+
+    def test_fdopen_failure_before_ownership_closes_descriptor(self):
+        for error in (OSError(24, 'Too many open files'), KeyboardInterrupt()):
+            with self.subTest(error=type(error).__name__), \
+                 patch.object(core.os, 'fdopen', side_effect=error), \
+                 self.assertRaises(type(error)):
+                save(self.path, state())
+            self.assertClosed(self.descriptors[-1])
+            self.assertPreviousStateOnly()
+
+    def test_fdopen_failure_after_ownership_never_closes_twice(self):
+        # The file object already closed the descriptor, and its number was
+        # reused by an unrelated file. That file must stay open.
+        foreign = self.root / 'foreign'
+        holders = []
+
+        def fdopen(fd, *args, **kwargs):
+            REAL_FDOPEN(fd, *args, **kwargs).close()
+            holder = open(foreign, 'w')
+            if holder.fileno() != fd:
+                os.dup2(holder.fileno(), fd)
+            holders.append(holder)
+            raise MemoryError('wrapper allocation failed')
+
+        with patch.object(core.os, 'fdopen', side_effect=fdopen), \
+             self.assertRaises(MemoryError):
+            save(self.path, state())
+        fd = self.descriptors[-1]
+        try:
+            self.assertEqual(os.fstat(fd).st_ino, foreign.stat().st_ino)
+        finally:
+            if holders[0].fileno() != fd:
+                os.close(fd)
+            holders[0].close()
+        foreign.unlink()
+        self.assertPreviousStateOnly()
+
+    def test_successful_write_closes_descriptor_once(self):
+        closes = []
+        real_close = os.close
+
+        def close(fd):
+            closes.append(fd)
+            real_close(fd)
+        with patch.object(core.os, 'close', side_effect=close):
+            save(self.path, {'next': True})
+        fd = self.descriptors[-1]
+        self.assertClosed(fd)
+        self.assertNotIn(fd, closes[:-1])  # only the directory fd may reuse the number
+        self.assertEqual(load(self.root), {'next': True})
+
+
 if __name__ == '__main__':
     unittest.main()
