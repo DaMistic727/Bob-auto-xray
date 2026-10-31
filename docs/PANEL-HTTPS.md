@@ -198,3 +198,5 @@ request-level причин 4xx/5xx; доступны nginx -t, состояни�
 считать systemd journal способом получить обычные request errors без риска URI.
 Основание: [error_log](https://nginx.org/en/docs/ngx_core_module.html#error_log),
 [access log_format](https://nginx.org/en/docs/http/ngx_http_log_module.html#log_format).
+
+В v0.3.6 свежая установка содержит постоянного VPN-клиента admin. Он сохраняется при обоих E2E; временная identity отдельная, удаление проверяет UUID/subId в attachments и каталоге и неизменность остальных клиентских параметров. Панельная учётная запись и HTTPS/443 архитектура не меняются.

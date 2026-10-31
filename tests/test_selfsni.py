@@ -105,6 +105,9 @@ class InstallerTests(unittest.TestCase):
             self.assertIn('category-ads-all',found['geosite.dat'])
             self.assertIn('ru-available-only-inside',found['geosite_RU.dat'])
             self.assertIn('ru',categories(root/'geoip_RU.dat'))
+            (root/'geosite.dat').write_bytes(database(REQUIRED['geosite.dat'] - {'category-ads-all'}))
+            with self.assertRaisesRegex(InstallError, 'category-ads-all'):
+                verify_server_geodata(root)
 
     def test_portal_uniqueness_and_credential_privacy(self):
         with tempfile.TemporaryDirectory() as d:

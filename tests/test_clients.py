@@ -3,7 +3,7 @@ import copy
 import json
 import unittest
 import uuid
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from selfsni import acceptance, clients
 from selfsni.core import InstallError, configure_diagnostics, redact
@@ -166,6 +166,55 @@ class PermanentClientTests(unittest.TestCase):
                 with self.assertRaises(InstallError):
                     acceptance.e2e(state())
             self.assertEqual(clients.snapshot_clients(api), protected)
+
+    def test_successful_onhost_e2e_preserves_admin_and_uses_distinct_identity(self):
+        import ssl
+        api = FixtureAPI(); protected = clients.snapshot_clients(api)
+        original_call = api.call
+        sniffing = {'enabled': True, 'routeOnly': True}
+        def call(endpoint, data=None):
+            nonlocal sniffing
+            if endpoint == 'clients/add':
+                self.assertNotEqual(data['client']['id'], ADMIN['id'])
+                self.assertNotEqual(data['client']['subId'], ADMIN['subId'])
+            if endpoint.startswith('inbounds/update/'):
+                sniffing = json.loads(data['sniffing'])
+                return None
+            result = original_call(endpoint, data)
+            if endpoint == 'inbounds/list':
+                result[0]['sniffing'] = json.dumps(sniffing)
+            return result
+        api.call = call
+        def run(*args, **kwargs):
+            if args[0] != 'curl':
+                return ''
+            url = args[-1]
+            if url in ('https://yandex.ru', 'https://77.88.8.8'):
+                raise InstallError('blocked')
+            if 'ipify' in url:
+                return '192.0.2.1'
+            if 'trace' in url:
+                return 'warp=off'
+            return 'ok'
+        sock = MagicMock()
+        sock.__enter__.return_value = sock
+        sock.recv.side_effect = [b'\x05\x00', b'\x05\x00\x00\x01', b'0'*6] * 2
+        context = MagicMock()
+        context.wrap_socket.side_effect = [MagicMock(), ssl.SSLError('expected mismatch')]
+        with patch.object(acceptance, 'Panel', return_value=api), \
+             patch.object(acceptance, 'run', side_effect=run), \
+             patch.object(acceptance, 'wait_for'), \
+             patch.object(acceptance, 'request', return_value=(200, {}, b'')), \
+             patch.object(acceptance, 'verify_sub_response'), \
+             patch.object(acceptance, 'free_port', return_value=12345), \
+             patch.object(acceptance.subprocess, 'Popen') as popen, \
+             patch.object(acceptance.socket, 'create_connection', return_value=sock), \
+             patch.object(acceptance.ssl, 'create_default_context', return_value=context):
+            result = acceptance.e2e(dict(state(), xray_bin='test-xray'))
+        self.assertIn('permanent client parameters unchanged', result['cleanup'])
+        self.assertEqual(clients.snapshot_clients(api), protected)
+        self.assertTrue(sniffing['routeOnly'])
+        popen.return_value.terminate.assert_called_once()
 
     def test_cleanup_detects_admin_mutation_and_never_deletes_admin(self):
         api = FixtureAPI(); protected = clients.snapshot_clients(api)

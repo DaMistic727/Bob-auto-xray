@@ -13,9 +13,11 @@ import subprocess
 import tarfile
 import tempfile
 import uuid
+import zipfile
 
 from selfsni.clients import (ensure_admin, read_clients, validate_admin,
-                             snapshot_clients, cleanup_owned_client)
+                             snapshot_clients, cleanup_owned_client,
+                             verify_admin_runtime, verify_admin_subscriptions)
 from selfsni.core import ROOT, download, free_port, json_obj, require, save, token, wait_for
 from selfsni.geodata import verify_server_geodata
 from selfsni.routing import inbound, server_template
@@ -36,6 +38,13 @@ def main():
         for name, expected in lock['server_geodata']['files'].items():
             require(hashlib.sha256((app/'bin'/name).read_bytes()).hexdigest() == expected,
                     'Pinned server GeoData checksum mismatch')
+        core_spec = lock['xray_downloads']['amd64']
+        core_archive = download(core_spec['url'], root/'xray.zip', core_spec['sha256'])
+        with zipfile.ZipFile(core_archive) as zf:
+            core = zf.read('xray')
+        require(hashlib.sha256(core).hexdigest() == core_spec['binary_sha256'], 'Pinned Xray mismatch')
+        (app/'bin/xray-linux-amd64').write_bytes(core)
+        (app/'bin/xray-linux-amd64').chmod(0o755)
         categories = verify_server_geodata(app/'bin')
         require('category-ads-all' in categories['geosite.dat'], 'Global advertising category missing')
         env = dict(os.environ, XUI_DB_FOLDER=str(root/'db'), XUI_BIN_FOLDER=str(app/'bin'),
@@ -100,13 +109,39 @@ def main():
                     after = json.loads(after)
                 require(after['routing'] == configured['routing'] and after['geodata'] == configured['geodata'],
                         'Routing/GeoData changed after real API save')
+                sub_port, sub_path = free_port({port, 443, 62789}), '/'+token(24)+'/'
+                settings = api.call('setting/all', {}, method='POST')
+                settings.update(subEnable=True, subListen='127.0.0.1', subPort=sub_port,
+                                subPath=sub_path, subDomain='127.0.0.1', subEncrypt=True,
+                                subCertFile='', subKeyFile='')
+                api.call('setting/update', settings)
+                os.killpg(process.pid, signal.SIGTERM)
+                process.wait(timeout=15)
+                process = subprocess.Popen([binary, 'run'], env=env, cwd=app, stdout=log,
+                                           stderr=log, start_new_session=True)
+                wait_for(lambda: bool(api.call('inbounds/list')), 'persisted panel after restart')
+                runtime = json.loads((app/'bin/config.json').read_text())
+                verify_admin_runtime(state, runtime)
+                subprocess.run([str(app/'bin/xray-linux-amd64'), 'run', '-test', '-config',
+                                str(app/'bin/config.json')], check=True, stdout=log, stderr=log)
+                state.update(domain='127.0.0.1', sub_port=sub_port, sub_path=sub_path)
+                def subscription(domain, port, path, headers):
+                    connection = http.client.HTTPConnection(domain, port, timeout=10)
+                    try:
+                        connection.request('GET', path, headers=headers)
+                        response = connection.getresponse()
+                        return response.status, dict(response.getheaders()), response.read()
+                    finally:
+                        connection.close()
+                wait_for(lambda: (verify_admin_subscriptions(state, subscription), True)[1],
+                         'permanent admin Happ/INCY subscriptions')
                 temporary = dict(state['admin_client'], id=str(uuid.uuid4()), subId=token(24),
                                  email='selfsni-e2e-'+token(6))
                 protected = snapshot_clients(api)
                 api.call('clients/add', {'client': temporary, 'inboundIds': [original['id']]})
                 cleanup_owned_client(api, temporary, protected)
                 validate_admin(state, *read_clients(api), only_admin=True)
-                print('PASS: pinned GeoData; admin creation/idempotency; real API remark/routing save; owned cleanup preserves admin')
+                print('PASS: pinned GeoData; admin creation/idempotency; real API remark/routing save; pinned Xray runtime; admin subscriptions; owned cleanup preserves admin')
             finally:
                 os.killpg(process.pid, signal.SIGTERM)
                 try:
