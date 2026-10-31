@@ -146,16 +146,23 @@ def main():
                 except Exception:
                     verify_admin_subscriptions(state, subscription)
                     raise
-                # The pinned Go TLS guard uses an HTTP/0.0 error status for
+                # The pinned Go TLS guard uses an HTTP/0.0 HTTPS upgrade for
                 # plaintext. Inspect the wire status instead of requiring a
                 # valid HTTP-client response from a deliberately wrong protocol.
                 try:
                     with socket.create_connection(('127.0.0.1',sub_port),timeout=5) as plain:
                         plain.sendall(('GET '+sub_path+state['admin_client']['subId']+' HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n').encode())
-                        reply=plain.recv(512)
+                        reply=b''
+                        while b'\r\n\r\n' not in reply and len(reply)<8192:
+                            chunk=plain.recv(1024)
+                            if not chunk:break
+                            reply+=chunk
                         status = re.search(rb'HTTP/[0-9.]+ ([0-9]{3})',reply)
                         tls_alert = reply.startswith(b'\x15\x03')
-                        require(not reply or tls_alert or (status and status.group(1) in (b'400',b'403',b'404',b'426')),
+                        location=re.search(rb'(?im)^location: *([^\r\n]+)',reply)
+                        expected_location=('https://127.0.0.1:'+str(sub_port)+sub_path+state['admin_client']['subId']).encode()
+                        secure_upgrade=status and status.group(1)==b'307' and location and location.group(1)==expected_location
+                        require(not reply or tls_alert or secure_upgrade or (status and status.group(1) in (b'400',b'403',b'404',b'426')),
                                 'Subscription plaintext rejection unrecognized; prefix='+reply[:8].hex()+
                                 '; status='+(status.group(1).decode() if status else 'none'))
                 except OSError:
