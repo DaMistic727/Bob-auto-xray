@@ -53,3 +53,21 @@ class SubscriptionTests(unittest.TestCase):
         sub.verify_public_routes(state(),lambda *a,**k:(404,{},b''))
         with self.assertRaises(InstallError):
             sub.verify_public_routes(state(),lambda *a,**k:(200,{},b''))
+
+    def test_public_and_internal_identity_checks_are_independent(self):
+        import base64
+        from selfsni.clients import verify_admin_subscriptions
+        s=state();s.update(reality_public='public', short_id='abcd')
+        s['admin_client']['id']='bc026b34-8565-4320-93eb-efad05e288f5'
+        link=('vless://'+s['admin_client']['id']+'@vpn.example.com:443?flow=xtls-rprx-vision&fp=firefox&security=reality&sni=vpn.example.com&pbk=public&sid=abcd').encode()
+        for public,port in ((False,22000),(True,443)):
+            with patch('selfsni.acceptance.verify_sub_response'),patch('selfsni.api.request'):
+                calls=[]
+                def send(*args,**kwargs):
+                    calls.append(args)
+                    return 200,{},base64.b64encode(link)
+                verify_admin_subscriptions(s,send,public=public)
+                self.assertEqual([a[1] for a in calls],[port,port])
+                for bad in (link.replace(b'pbk=public',b'pbk=wrong'),link.replace(b'sni=vpn.example.com',b'sni=wrong'),link.replace(b'xtls-rprx-vision',b'none')):
+                    with self.assertRaises(InstallError):
+                        verify_admin_subscriptions(s,lambda *a,**k:(200,{},base64.b64encode(bad)),public=public)

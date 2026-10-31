@@ -146,6 +146,14 @@ def main():
                 except Exception:
                     verify_admin_subscriptions(state, subscription)
                     raise
+                plain = http.client.HTTPConnection('127.0.0.1',sub_port,timeout=5)
+                try:
+                    try:
+                        plain.request('GET',sub_path+state['admin_client']['subId'])
+                        require(plain.getresponse().status != 200,'Subscription silently downgraded to HTTP')
+                    except (OSError,http.client.RemoteDisconnected):
+                        pass
+                finally:plain.close()
                 stored = api.call('setting/all', {}, method='POST')
                 require(stored['subListen']=='127.0.0.1' and stored['subPort']==sub_port and stored['subCertFile']==str(root/'sub.crt'), 'Subscription binding/TLS readback failed')
                 listeners = subprocess.check_output(['ss','-H','-lntp'],text=True).splitlines()
@@ -186,6 +194,8 @@ def main():
                             return response.status,dict((k.lower(),v) for k,v in response.getheaders()),response.read()
                         finally:connection.close()
                     verify_admin_subscriptions(state,through_proxy,public=True)
+                    for missing in (sub_path,sub_path+'invalid','/assets/missing.js','/sub/invalid'):
+                        require(through_proxy('127.0.0.1',443,missing,{})[0] in (400,404),'Unknown subscription route exposed')
                     status,_,html=through_proxy('127.0.0.1',443,sub_path+state['admin_client']['subId']+'?html=1',{'Accept':'text/html'})
                     require(status==200,'Proxied HTML subscription failed')
                     assets=re.findall(rb'(?:src|href)="([^"]+assets/[^"]+)"',html)

@@ -11,12 +11,13 @@ Internet TCP/443 → Xray REALITY
   └─ обычный TLS + PROXY v1 → /run/selfsni/nginx.sock → Nginx TLS
        ├─ /, decoy auth, CSS/SVG → существующий PHP-FPM portal
        ├─ /<48-hex>/… → HTTPS 127.0.0.1:<panel_port> → 3x-ui
+       ├─ /<subscription-secret>/… → HTTPS 127.0.0.1:<sub_port> → подписки
        └─ неизвестные пути → 404
 ```
 
 Nginx не получает дополнительного TCP listener. REALITY `target` и `xver=1`
-не меняются. Подписки Happ/INCY продолжают использовать прежние sub_port,
-sub_path и сертификат, независимо от панели. Версии 3x-ui/Xray и зависимости
+не меняются. Подписки Happ/INCY сохраняют внутренние sub_port, sub_path и сертификат,
+но публичный URL новых установок использует общий 443. Версии 3x-ui/Xray и зависимости
 не изменены.
 
 ## Bootstrap и перезапуск
