@@ -151,7 +151,7 @@ def main():
                 # valid HTTP-client response from a deliberately wrong protocol.
                 try:
                     with socket.create_connection(('127.0.0.1',sub_port),timeout=5) as plain:
-                        plain.sendall(('GET '+sub_path+state['admin_client']['subId']+' HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n').encode())
+                        plain.sendall(('GET '+sub_path+state['admin_client']['subId']+' HTTP/1.1\r\nHost: 127.0.0.1:'+str(sub_port)+'\r\nConnection: close\r\n\r\n').encode())
                         reply=b''
                         while b'\r\n\r\n' not in reply and len(reply)<8192:
                             chunk=plain.recv(1024)
