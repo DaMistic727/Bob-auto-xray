@@ -138,8 +138,8 @@ def run_acceptance(args):
         state = json.loads(remote_call('create'))
         for kind, agent in [('happ', 'Happ/3.0.0 (iOS)'), ('incy', 'INCY/1.0.0/ios')]:
             def subscription(kind=kind, agent=agent):
-                url = (f'https://{state["domain"]}:{state["sub_port"]}'
-                       f'{state["sub_path"]}{state["client"]["subId"]}')
+                from selfsni.api import public_subscription_url
+                url = public_subscription_url(state, state["client"]["subId"])
                 verify_sub_response(kind, *http(url, agent))
             check(report, kind+' external subscription', subscription)
         check(report, 'Public decoy', lambda: require(

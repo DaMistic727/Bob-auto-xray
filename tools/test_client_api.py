@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import signal
+import ssl
 import subprocess
 import tarfile
 import tempfile
@@ -20,7 +21,7 @@ from selfsni.clients import (ensure_admin, read_clients, validate_admin,
                              verify_admin_runtime, verify_admin_subscriptions)
 from selfsni.core import ROOT, download, free_port, json_obj, require, save, token, wait_for
 from selfsni.geodata import verify_server_geodata
-from selfsni.routing import inbound, server_template
+from selfsni.routing import inbound, server_template, deeplink
 
 
 def main():
@@ -111,9 +112,13 @@ def main():
                         'Routing/GeoData changed after real API save')
                 sub_port, sub_path = free_port({port, 443, 62789}), '/'+token(24)+'/'
                 settings = api.call('setting/all', {}, method='POST')
-                settings.update(subEnable=True, subListen='127.0.0.1', subPort=sub_port,
+                subprocess.run(['openssl','req','-x509','-newkey','rsa:2048','-nodes','-days','1','-subj','/CN=127.0.0.1','-addext','subjectAltName=IP:127.0.0.1','-keyout',str(root/'sub.key'),'-out',str(root/'sub.crt')],check=True,stdout=log,stderr=log)
+                settings.update(subEnableRouting=True, subRoutingRules=deeplink('happ'),
+                                subIncyEnableRouting=True, subIncyRoutingRules=deeplink('incy'),
+                                subHappTunType='xray', subHappLocalProxyAuth='auto',
+                                subEnable=True, subListen='127.0.0.1', subPort=sub_port,
                                 subPath=sub_path, subDomain='127.0.0.1', subEncrypt=True,
-                                subCertFile='', subKeyFile='')
+                                subCertFile=str(root/'sub.crt'), subKeyFile=str(root/'sub.key'))
                 api.call('setting/update', settings)
                 os.killpg(process.pid, signal.SIGTERM)
                 process.wait(timeout=15)
@@ -126,7 +131,7 @@ def main():
                                 str(app/'bin/config.json')], check=True, stdout=log, stderr=log)
                 state.update(domain='127.0.0.1', sub_port=sub_port, sub_path=sub_path)
                 def subscription(domain, port, path, headers):
-                    connection = http.client.HTTPConnection(domain, port, timeout=10)
+                    connection = http.client.HTTPSConnection(domain, port, timeout=10, context=ssl.create_default_context(cafile=str(root/'sub.crt')))
                     try:
                         connection.request('GET', path, headers=headers)
                         response = connection.getresponse()
@@ -135,6 +140,12 @@ def main():
                         connection.close()
                 wait_for(lambda: (verify_admin_subscriptions(state, subscription), True)[1],
                          'permanent admin Happ/INCY subscriptions')
+                status, _, html = subscription('127.0.0.1',sub_port,sub_path+state['admin_client']['subId']+'?html=1',{'Accept':'text/html'})
+                require(status == 200, 'Subscription browser page unavailable')
+                assets = re.findall(rb'(?:src|href)="([^"]+assets/[^"]+)"',html)
+                require(assets and all(a.decode().startswith(sub_path) for a in assets), 'Subscription assets escaped secret prefix')
+                for asset in assets:
+                    require(subscription('127.0.0.1',sub_port,asset.decode(),{})[0] == 200, 'Subscription asset unavailable')
                 temporary = dict(state['admin_client'], id=str(uuid.uuid4()), subId=token(24),
                                  email='selfsni-e2e-'+token(6))
                 protected = snapshot_clients(api)

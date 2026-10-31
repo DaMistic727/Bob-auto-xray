@@ -48,7 +48,7 @@ class PanelProxyTests(unittest.TestCase):
                 firewall(state(), public=public)
                 calls = [call.args for call in run.call_args_list]
                 self.assertNotIn(('ufw', 'allow', '21000/tcp'), calls)
-                self.assertEqual(('ufw', 'allow', '22000/tcp') in calls, public)
+                self.assertNotIn(('ufw', 'allow', '22000/tcp'), calls)
                 self.assertIn(('ufw', 'default', 'deny', 'incoming'), calls)
 
     def test_proxy_retains_uri_and_verifies_tls(self):
@@ -65,7 +65,7 @@ class PanelProxyTests(unittest.TestCase):
 
     def test_only_secret_prefix_routes_to_proxy(self):
         s = state()
-        values = dict(DOMAIN=s['domain'], PANEL_PATH=s['panel_path'],
+        values = dict(SUB_PATH='/'+'b'*48+'/', DOMAIN=s['domain'], PANEL_PATH=s['panel_path'],
                       PANEL_NO_SLASH=s['panel_path'][:-1], AUTH='auth', STYLE='style', ICON='icon')
         conf = render('nginx-tls.conf', values)
         self.assertEqual(conf.count('listen '), 1)

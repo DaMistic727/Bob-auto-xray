@@ -22,6 +22,7 @@ def main():
     if not all(shutil.which(name) for name in ('nginx', 'openssl')):
         raise SystemExit('nginx and openssl required; no integration test was run')
     secret = '/'+'a'*48+'/'
+    sub_secret = '/'+'b'*48+'/'
     checks = []
     with tempfile.TemporaryDirectory(prefix='bob-proxy-test-') as directory:
         root = Path(directory)
@@ -40,6 +41,8 @@ def main():
                 pass
             def do_GET(self):
                 self.reply()
+            def do_HEAD(self):
+                self.reply()
             def do_POST(self):
                 self.reply()
             def reply(self):
@@ -57,22 +60,30 @@ def main():
                 self.send_response(200)
                 if self.path.endswith('redirect'):
                     self.send_header('Location', 'https://panel.test:'+str(self.server.server_port)+secret+'panel/')
+                for k,v in {'routing':'happ-preset','routing-enable':'true','tun-type':'xray','Subscription-Userinfo':'upload=0; download=0','Profile-Update-Interval':'12','Content-Type':'text/plain','Content-Disposition':'attachment'}.items():
+                    self.send_header(k,v)
                 self.send_header('Content-Length', str(len(data)))
                 self.end_headers()
-                self.wfile.write(data)
+                if self.command != 'HEAD':
+                    self.wfile.write(data)
         upstream = ThreadingHTTPServer(('127.0.0.1', 0), Upstream)
         tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         tls.load_cert_chain(root/'server.crt', root/'server.key')
         upstream.socket = tls.wrap_socket(upstream.socket, server_side=True)
         thread = threading.Thread(target=upstream.serve_forever, daemon=True)
         thread.start()
-        values = dict(DOMAIN='panel.test', PANEL_PORT=upstream.server_port,
+        sub = ThreadingHTTPServer(('127.0.0.1', 0), Upstream)
+        sub.socket = tls.wrap_socket(sub.socket, server_side=True)
+        threading.Thread(target=sub.serve_forever, daemon=True).start()
+        values = dict(SUB_PATH=sub_secret, SUB_PORT=sub.server_port, DOMAIN='panel.test', PANEL_PORT=upstream.server_port,
                       PANEL_PATH=secret, PANEL_NO_SLASH=secret[:-1], AUTH='auth', STYLE='style', ICON='icon')
         snippet = render('nginx-panel.conf', values).replace('/etc/ssl/certs/ca-certificates.crt', str(root/'server.crt'))
+        sub_snippet = render('nginx-subscription.conf', values).replace('/etc/ssl/certs/ca-certificates.crt', str(root/'server.crt'))
         server = render('nginx-tls.conf', values)
         server = server.replace('/run/selfsni/nginx.sock', str(root/'nginx.sock'))
         server = server.replace('/etc/letsencrypt/live/panel.test/fullchain.pem', str(root/'server.crt'))
         server = server.replace('/etc/letsencrypt/live/panel.test/privkey.pem', str(root/'server.key'))
+        server = server.replace('/etc/nginx/snippets/selfsni-subscription.conf', str(root/'sub.conf'))
         server = server.replace('/etc/nginx/snippets/selfsni-panel.conf', str(root/'panel.conf'))
         server = server.replace('/etc/nginx/snippets/selfsni-fastcgi.conf', str(root/'decoy.conf'))
         (root/'decoy.conf').write_text('return 200 "decoy";\n')
@@ -81,9 +92,10 @@ def main():
                   'proxy_temp_path '+str(root/'proxy')+';\n'+server+'\n}\n')
         (root/'nginx.conf').write_text(config)
         process = None
-        def start(proxy):
+        def start(proxy, subscription=None):
             nonlocal process
             (root/'panel.conf').write_text(proxy)
+            (root/'sub.conf').write_text(sub_snippet if subscription is None else subscription)
             subprocess.run(['nginx', '-t', '-p', str(root), '-c', str(root/'nginx.conf')],
                            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             process = subprocess.Popen(['nginx', '-p', str(root), '-c', str(root/'nginx.conf'), '-g', 'daemon off;'],
@@ -147,6 +159,33 @@ def main():
             assert 200 in statuses and 429 in statuses
             assert send(secret+'api/test', 'POST', b'{}', ip='198.51.100.99')[0] == 200
             checks.append('Exact login POST rate limit returns 429 without limiting other APIs')
+            for agent in ('Happ/3.0.0', 'INCY/1.0.0'):
+                path = sub_secret+'test-id?q=a%20b'
+                status, h, body = send(path, headers=dict(forged, **{'User-Agent':agent}))
+                result = json.loads(body)
+                assert status == 200 and result['path'] == path
+                assert result['headers']['User-Agent'] == agent
+                assert result['headers']['Host'] == 'panel.test'
+                assert result['headers']['X-Forwarded-For'] == '198.51.100.44'
+                assert h['routing'] == 'happ-preset' and h['subscription-userinfo'] == 'upload=0; download=0'
+                assert h['profile-update-interval'] == '12' and h['cache-control'] == 'no-store'
+                assert send(path, 'HEAD')[2] == b''
+            assert send(sub_secret+'id', headers={'Host':'evil.test'})[0] == 404
+            for path in ('/assets/x.js','/api/x',sub_secret[:-1]+'extra/id',sub_secret+'%2e%2e/id',sub_secret+'id%2felse'):
+                assert send(path)[0] == 404
+            checks.append('Subscription GET/HEAD, encoded queries, User-Agent/custom headers, spoofing, exact prefix and traversal isolation')
+            stop()
+            start(snippet, sub_snippet.replace('proxy_ssl_name panel.test;', 'proxy_ssl_name wrong.test;'))
+            assert send(sub_secret+'id')[0] == 502 and send(secret)[0] == 200
+            stop()
+            start(snippet, sub_snippet.replace(str(root/'server.crt'), str(root/'other.crt')))
+            assert send(sub_secret+'id')[0] == 502 and send(secret)[0] == 200
+            stop()
+            sub.shutdown(); sub.server_close()
+            start(snippet)
+            assert send(sub_secret+'id')[0] == 502 and send(secret)[0] == 200
+            assert sub_secret not in (root/'global.log').read_text()
+            checks.append('Subscription TLS hostname/trust and unavailable backend fail closed; panel survives; no URI logs')
             stop()
             start(snippet.replace('proxy_ssl_name panel.test;', 'proxy_ssl_name wrong.test;'))
             assert send(secret)[0] == 502
@@ -159,6 +198,7 @@ def main():
             stop()
             upstream.shutdown()
             upstream.server_close()
+            sub.server_close()
         print(json.dumps({'scope': 'isolated real Nginx/HTTPS upstream, no public listener',
                           'passed': len(checks), 'checks': checks}, indent=2))
 
