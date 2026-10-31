@@ -117,6 +117,10 @@ class Probe:
         finally:
             conn.close()
 
+    def digest(self, path):
+        from .core import digest
+        return digest(path)
+
     def disk_free(self):
         return shutil.disk_usage('/').free
 
@@ -136,7 +140,8 @@ class Probe:
         values = {name: output('sysctl', '-n',
                               f'net.ipv6.conf.{name}.disable_ipv6').strip()
                   for name in dict.fromkeys(names)}
-        addresses = json.loads(output('ip', '-j', '-6', 'address', 'show', 'scope', 'global'))
+        # Every scope, as ipv6.verify does: a link-local address also means IPv6 is live.
+        addresses = json.loads(output('ip', '-j', '-6', 'address', 'show'))
         return path, values, addresses
 
     def ipv6_conflicts(self):
@@ -252,7 +257,8 @@ class Doctor:
                                suggestion=SUGGEST['state'])
         self.state = {key: value.get(key) for key in (
             'domain', 'panel_port', 'sub_port', 'panel_path', 'sub_path',
-            'php_service', 'xray_bin', 'ipv6', 'swap', 'panel_access', 'subscription_access')}
+            'php_service', 'xray_bin', 'ipv6', 'swap', 'panel_access', 'subscription_access',
+            'xray_sha256')}
         # Only the presence of the permanent client is kept, never its identity.
         self.state['admin_client'] = isinstance(value.get('admin_client'), dict)
         self.mode = mode
@@ -336,6 +342,26 @@ class Doctor:
                 return self.answer('UNKNOWN', 'Владелец TCP/443 сменился во время проверки.',
                                    suggestion=SUGGEST['listener'])
         return self.answer('PASS', 'TCP/443 слушается Xray.')
+
+    def xray_pin(self):
+        expected = self.state.get('xray_sha256')
+        if expected is None:
+            return self.answer('SKIP', 'Установка без закреплённого бинарника Xray в state.')
+        if not isinstance(expected, str) or re.fullmatch(r'[0-9a-f]{64}', expected) is None:
+            return self.answer('UNKNOWN', 'Эталонный SHA256 Xray в state повреждён.',
+                               suggestion=SUGGEST['state'])
+        try:
+            actual = self.p.digest(self.state['xray_bin'])
+        except FileNotFoundError:
+            return self.answer('FAIL', 'Бинарник Xray отсутствует.', suggestion=SUGGEST['config'])
+        except PermissionError:
+            return self.answer('UNKNOWN', 'Бинарник Xray недоступен с текущими правами.',
+                               suggestion=SUGGEST['config'])
+        if actual != expected:
+            # The 3x-ui UI can replace the core; that is not a fault, but it is no longer the reviewed pin.
+            return self.answer('WARN', 'Бинарник Xray отличается от закреплённой проверенной версии.',
+                               suggestion=SUGGEST['config'])
+        return self.answer('PASS', 'Бинарник Xray совпадает с закреплённой версией.')
 
     def unix_socket(self):
         try:
@@ -774,7 +800,7 @@ class Doctor:
                                suggestion=SUGGEST['ipv6'])
         if any(value != '1' for value in values.values()) or any(
                 row.get('addr_info') for row in addresses):
-            return self.answer('FAIL', 'IPv6 включён на интерфейсе или имеет global address.',
+            return self.answer('FAIL', 'IPv6 включён на интерфейсе или имеет адрес (включая link-local).',
                                suggestion=SUGGEST['ipv6'])
         if legacy_dropin:
             return self.answer('WARN', 'IPv6 отключён, но networkd drop-in старого формата v0.3.4.',
@@ -881,6 +907,7 @@ class Doctor:
                 self.add('routing.invariants', 'routing', self.routing)
                 self.add('geodata.schedule', 'geodata', self.geodata_schedule)
             self.add('core.port443', 'listener', self.listener)
+            self.add('core.xrayPin', 'config', self.xray_pin)
             self.add('core.socket', 'socket', self.unix_socket)
             self.add('core.publicRoutes', 'config', self.public_routes_config)
             self.add('tls.certificate', 'cert', self.certificate)

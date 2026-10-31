@@ -7,6 +7,12 @@ umask 077
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 if [[ -f "$script_dir/versions.lock.json" && -f "$script_dir/src/selfsni/provision.py" ]]; then
     export PYTHONDONTWRITEBYTECODE=1
+    if [[ ${1:-} == doctor ]]; then
+        # Read-only diagnostics from this verified release; nothing is installed.
+        # -I keeps the working directory and environment out of the import path.
+        shift
+        exec python3 -I -B -c 'import sys; sys.path.insert(0, sys.argv.pop(1)); from selfsni.doctor import main; sys.exit(main())' "$script_dir/src" "$@"
+    fi
     export PYTHONPATH="$script_dir/src"
     exec python3 -m selfsni.provision "$@"
 fi

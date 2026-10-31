@@ -45,6 +45,7 @@ class FakeProbe:
                  'reality_private': 'SECRET_PRIVATE', 'short_id': 'SECRET_SHORT',
                  'php_service': 'php8.4-fpm',
                  'xray_bin': '/usr/local/x-ui/bin/xray-linux-amd64',
+                 'xray_sha256': 'f' * 64,
                  'ipv6': {'networkDropin': str(self.network_path)},
                  'swap': {'status': 'created', 'path': '/swapfile', 'bytes': swap.SIZE},
                  # Current main (v0.3.7+): panel and subscriptions behind nginx on 443.
@@ -87,6 +88,7 @@ class FakeProbe:
             '/etc/ufw/user6.rules': '-A ufw6-user-input -p tcp --dport 22 -j ACCEPT\n',
         })
         self.public_calls = []
+        self.xray_digest = 'f' * 64
         self.public_error = None
         proxied = {'cache-control': 'no-store', 'referrer-policy': 'no-referrer'}
         self.public_responses = {state['panel_path']: (200, dict(proxied)),
@@ -173,6 +175,12 @@ class FakeProbe:
         if self.public_error:
             raise self.public_error
         return self.public_responses.get(path, (404, {}))
+
+    def digest(self, path):
+        self.calls.append(('digest', str(path)))
+        if isinstance(self.xray_digest, Exception):
+            raise self.xray_digest
+        return self.xray_digest
 
     def sync(self):
         """Persist edits of self.state/self.config into the files Doctor reads."""
@@ -505,7 +513,8 @@ class DoctorTests(unittest.TestCase):
             command.write_text('foreign')
             with patch.object(provision, 'DOCTOR_COMMAND', command), \
                  patch.object(provision, 'DOCTOR_LIB', Path(temp) / 'lib'):
-                self.assertFalse(provision.install_doctor_cli())
+                self.assertEqual(provision.install_doctor_cli(),
+                                 {'status': 'command-name-taken', 'command': None})
             self.assertEqual(command.read_text(), 'foreign')
             self.assertTrue((Path(temp) / 'lib/selfsni/doctor.py').is_file())
 
@@ -516,7 +525,8 @@ class DoctorTests(unittest.TestCase):
             with patch.object(provision, 'DOCTOR_COMMAND', command), \
                  patch.object(provision, 'DOCTOR_LIB', library), \
                  patch.object(provision, 'DOCTOR_PYTHON', Path(sys.executable)):
-                self.assertTrue(provision.install_doctor_cli())
+                self.assertEqual(provision.install_doctor_cli(),
+                                 {'status': 'installed', 'command': str(command)})
             self.assertTrue((library / 'selfsni/doctor.py').is_file())
             self.assertTrue(command.stat().st_mode & stat.S_IXUSR)
             self.assertIn(' -I -B -c ', command.read_text())

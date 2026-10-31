@@ -80,27 +80,55 @@ DOCTOR_COMMAND = Path('/usr/local/bin/bob')
 DOCTOR_PYTHON = Path('/usr/bin/python3')
 
 
+DOCTOR_NOTES = {
+    'library-occupied': 'Каталог Doctor занят; Doctor не установлен, чужие файлы не изменены.',
+    'command-name-taken': 'Имя bob занято другой программой; модуль Doctor сохранён без глобальной команды.',
+    'command-failed': 'Модуль Doctor сохранён, но команду bob создать не удалось.',
+    'failed': 'Bob Doctor не сохранён; запустите его из архива релиза: install.sh doctor.',
+}
+
+
 def install_doctor_cli():
-    """Persist the packaged diagnostic CLI without replacing a foreign command."""
-    require(not (DOCTOR_LIB.exists() or DOCTOR_LIB.is_symlink()),
-            'Каталог Doctor уже занят; чужие файлы не перезаписаны')
-    shutil.copytree(ROOT / 'src/selfsni', DOCTOR_LIB / 'selfsni',
-                    ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+    """Persist the packaged diagnostic CLI; a failure never fails the VPN installation.
+
+    The library appears atomically (staged copy, then rename) and the command
+    is published with link(), which never replaces an existing name.
+    """
+    if DOCTOR_LIB.exists() or DOCTOR_LIB.is_symlink():
+        return {'status': 'library-occupied', 'command': None}
+    staging = None
+    try:
+        staging = Path(tempfile.mkdtemp(prefix='.' + DOCTOR_LIB.name + '.', dir=DOCTOR_LIB.parent))
+        shutil.copytree(ROOT / 'src/selfsni', staging / 'selfsni',
+                        ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+        os.rename(staging, DOCTOR_LIB)
+        staging = None
+    except Exception:
+        return {'status': 'failed', 'command': None}
+    finally:
+        if staging is not None:
+            shutil.rmtree(staging, ignore_errors=True)
     if shutil.which('bob') is not None or DOCTOR_COMMAND.exists() or DOCTOR_COMMAND.is_symlink():
-        return False
+        return {'status': 'command-name-taken', 'command': None}
     code = (f'import sys; sys.path.insert(0, {json.dumps(str(DOCTOR_LIB))}); '
             'from selfsni.doctor import main; sys.exit(main())')
     script = ('#!/bin/sh\nset -eu\n'
               'if [ "${1:-}" = doctor ]; then shift; fi\n'
               f'exec {shlex.quote(str(DOCTOR_PYTHON))} -I -B -c {shlex.quote(code)} "$@"\n')
+    temporary = None
     try:
-        fd = os.open(DOCTOR_COMMAND, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o755)
+        fd, temporary = tempfile.mkstemp(prefix='.' + DOCTOR_COMMAND.name + '.', dir=DOCTOR_COMMAND.parent)
+        os.close(fd)
+        write(temporary, script, 0o755)
+        os.link(temporary, DOCTOR_COMMAND)
     except FileExistsError:
-        return False
-    with os.fdopen(fd, 'w') as handle:
-        handle.write(script)
-    DOCTOR_COMMAND.chmod(0o755)
-    return True
+        return {'status': 'command-name-taken', 'command': None}
+    except Exception:
+        return {'status': 'command-failed', 'command': None}
+    finally:
+        if temporary is not None:
+            Path(temporary).unlink(missing_ok=True)
+    return {'status': 'installed', 'command': str(DOCTOR_COMMAND)}
 
 
 NGINX_ROOT = Path('/etc/nginx')
@@ -715,8 +743,9 @@ def main():
                 UI.stage(10, 13, 'Установка панели 3x-ui', 'ok')
                 checkpoint(STATE, s, 'SECURITY'); UI.stage(11, 13, 'Защита и продление сертификата')
                 security(s); renew_hook(s); firewall(s,public=True)
-                if not install_doctor_cli():
-                    UI.note('Имя bob занято другой программой; модуль Doctor сохранён без глобальной команды.')
+                s['doctor_cli'] = install_doctor_cli()
+                if s['doctor_cli']['status'] in DOCTOR_NOTES:
+                    UI.note(DOCTOR_NOTES[s['doctor_cli']['status']])
                 checkpoint(STATE, s, 'SECURITY', True)
                 UI.stage(11, 13, 'Защита и продление сертификата', 'ok')
                 checkpoint(STATE, s, 'ACCEPTANCE'); UI.stage(12, 13, 'Проверка результата')
