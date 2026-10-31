@@ -34,6 +34,10 @@ jobs:
         env:
           PYTHONPATH: src
         run: python tools/test_panel_proxy.py
+      - name: Pinned 3x-ui client API and GeoData integration
+        env:
+          PYTHONPATH: src
+        run: python tools/test_client_api.py
       - name: Syntax and ShellCheck
         run: |
           shellcheck install.sh

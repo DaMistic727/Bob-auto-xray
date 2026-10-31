@@ -120,9 +120,8 @@ class InstallerUI:
         else:
             print('\nРеквизиты сохранены в /var/lib/selfsni/state.json (доступ root).',
                   file=self.stream)
-        print('\nСледующий шаг:\nОткройте панель 3x-ui и создайте первого VPN-клиента '
-              'с flow xtls-rprx-vision.\nПосле создания клиента используйте его ссылку '
-              'или подписку для подключения.\n\nОтчёт:\n/var/lib/selfsni/acceptance.json',
+        print('\nСледующий шаг:\nVPN-клиент admin уже создан: Vision, без лимитов и срока действия.\n'
+              'Откройте панель 3x-ui и получите его ссылку или подписку для подключения.\n\nОтчёт:\n/var/lib/selfsni/acceptance.json',
               file=self.stream, flush=True)
 
 

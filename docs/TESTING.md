@@ -1,4 +1,18 @@
-# Отчёт о тестировании · v0.3.5 Preview · 31 октября 2026
+# v0.3.6 Preview · область проверки
+
+v0.3.6 содержит ровно три изменения поведения: remark `vless by bob`, глобальная серверная category-ads-all и автоматически созданный постоянный VPN-клиент admin. Подробности и фактические результаты: [V036-VALIDATION.md](V036-VALIDATION.md).
+
+Владелец сообщил об успешных установке и работе v0.3.5 (HTTPS/443, Reality Vision, Happ/INCY, WARP и routing). Это исторический ручной результат v0.3.5; он не подтверждает v0.3.6, её reboot или IPv6 persistence.
+
+Для v0.3.6 выполняются unittest/mock, реальный Nginx и временный pinned 3x-ui API harness в Ubuntu CI. Проверены категория в настоящем закреплённом GeoData, сохранение remark/routing/admin через API, idempotency/неоднозначные ответы и сохранность admin при E2E cleanup. Ни VPS, ни SSH, ни installer, ни deployment/reboot в ходе этой работы не используются.
+
+**NOT TESTED:** чистая VPS-установка финального архива v0.3.6, внешний REALITY/Vision, реальные мобильные приложения, WARP install/adopt/skip на VPS, reboot/IPv6 persistence, Certbot renewal и сервисы после reboot. Существующие ограничения IPv6 не меняются.
+
+При ручной проверке новой установки убедиться: inbound называется точно `vless by bob`; один VPN-клиент admin включён, Vision, limitIp/limitHwid/totalGB/expiryTime/reset=0; его UUID/subId корректны, подписки работают; реклама из category-ads-all идёт в blocked раньше WARP. После любого E2E постоянный admin и его параметры остаются на месте. Старые установки автоматически не мигрируют.
+
+---
+
+## История: отчёт о тестировании · v0.3.5 Preview · 31 октября 2026
 
 ## Финальный v0.3.5: область проверки
 

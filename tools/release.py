@@ -43,7 +43,7 @@ if section is None:
 
 ## Проверки и ограничения
 
-CI проверяет Python 3.10/3.12 unittest, real Nginx harness, compileall,
+CI проверяет Python 3.10/3.12 unittest, real Nginx harness, pinned 3x-ui API/GeoData harness, compileall,
 Bash syntax, ShellCheck и две воспроизводимые release-сборки с SHA256.
 Release workflow повторяет локальные проверки перед публикацией assets.
 Фактические результаты и границы проверок: [docs/TESTING.md](https://github.com/{a.repo}/blob/{a.tag}/docs/TESTING.md).

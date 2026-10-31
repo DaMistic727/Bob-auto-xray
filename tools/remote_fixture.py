@@ -10,6 +10,7 @@ import sys
 import uuid
 
 from selfsni.api import Panel
+from selfsni.clients import (read_clients, validate_admin, snapshot_clients, cleanup_owned_client)
 from selfsni.core import json_obj, require, save, token, run, wait_for
 
 
@@ -20,19 +21,7 @@ def cleanup_fixture(api, fixture, owner):
     require(saved.get('owner') == owner, 'Fixture belongs to another run; not removed')
     client = saved['client']
 
-    def matches():
-        attached = [c for row in api.call('inbounds/list')
-                    for c in json_obj(row['settings'])['clients'] if c['email'] == client['email']]
-        catalog = [c for c in api.call('clients/list') if c['email'] == client['email']]
-        require(all(c['id'] == client['id'] for c in attached) and
-                all(c.get('uuid') == client['id'] and c.get('subId') == client['subId'] for c in catalog),
-                'Client identity changed; not removed')
-        # A partial delete may remove all attachments but leave ClientRecord.
-        return bool(attached or catalog)
-    found = matches()
-    if found:
-        api.call('clients/del/'+client['email'], {})
-    require(not matches(), 'Client cleanup not confirmed')
+    cleanup_owned_client(api, client, saved.get('protected'))
     fixture.unlink()
 
 
@@ -44,15 +33,12 @@ def panel_certificate_fingerprint(state):
 
 def create_fixture(state, api, fixture, owner):
     require(not fixture.exists(), 'Temporary fixture exists; not replaced')
-    rows = api.call('inbounds/list')
-    require(rows and all(json_obj(row['settings'])['clients'] == [] for row in rows)
-            and api.call('clients/list') == [],
-            'Zero-client disposable VPS required')
-    original = rows[0]
+    original, _ = validate_admin(state, *read_clients(api))
+    protected = snapshot_clients(api)
     fingerprint = panel_certificate_fingerprint(state)
     client = {'id': str(uuid.uuid4()), 'flow': 'xtls-rprx-vision', 'email': 'external-e2e-'+token(6),
               'enable': True, 'subId': token(16), 'limitIp': 0, 'totalGB': 0, 'expiryTime': 0, 'reset': 0}
-    save(fixture, {'owner': owner, 'client': client, 'inbound_id': original['id']})
+    save(fixture, {'owner': owner, 'client': client, 'inbound_id': original['id'], 'protected': protected})
     try:
         api.call('clients/add', {'client': client, 'inboundIds': [original['id']]})
         run('systemctl', 'restart', 'x-ui')

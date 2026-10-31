@@ -11,6 +11,7 @@ TAG = 'inbound-443'
 BLOCKED_IPS = ['geoip:private', 'ext:geoip_RU.dat:ru', 'geoip:ua']
 BLOCKED_DOMAINS = [
     'ext:geosite_RU.dat:category-ads-all',
+    'geosite:category-ads-all',
     'ext:geosite_RU.dat:ru-available-only-inside',
     r'regexp:.*\.ru$',
     r'regexp:.*\.su$',
@@ -92,7 +93,7 @@ def inbound(domain, private, public, short_id, route_only=True):
     return {
         'tag': TAG,
         'enable': True,
-        'remark': 'Self-SNI REALITY · add Vision clients manually',
+        'remark': 'vless by bob',
         'listen': '0.0.0.0',
         'port': 443,
         'protocol': 'vless',

@@ -11,9 +11,9 @@
 
 **Чистая VPS → готовый VLESS TCP REALITY Vision с собственным SNI.**
 
-Одноразовый установщик разворачивает 3x-ui, HTTPS-заглушку частного облака и подписки для Happ/INCY. Cloudflare WARP выбирается отдельно; без него AI/IP-check идёт через обычный DIRECT. Конфигурации создаются автоматически, клиентов вы добавляете через панель.
+Одноразовый установщик разворачивает 3x-ui, HTTPS-заглушку частного облака и подписки для Happ/INCY. Cloudflare WARP выбирается отдельно; без него AI/IP-check идёт через обычный DIRECT. Конфигурации и первый VPN-клиент `admin` создаются автоматически; его подключение и подписку можно получить в панели. Дополнительных клиентов вы добавляете через 3x-ui.
 
-> **v0.3.5 Preview.** Панель на HTTPS/443, loopback TLS upstream, прежние VPN-функции и опциональный swap 2 GiB. Чистую установку и reboot этой сборки владелец проверит вручную после публикации. Исторический P1 IPv6 persistence не объявляется устранённым: политика усилена, но reboot на VPS не проверен. [Проверки и ограничения →](docs/TESTING.md)
+> **v0.3.6 Preview.** Inbound `vless by bob`, серверная глобальная GeoSite-блокировка рекламы и один постоянный неограниченный VPN-клиент `admin`. Архитектура HTTPS/443 и закреплённые компоненты сохранены. Новая сборка проверяется локально и в CI; её чистая установка/reboot на VPS не выполнялись. [Проверки и ограничения →](docs/TESTING.md)
 
 ## Что получится
 
@@ -24,7 +24,8 @@
 | **Заглушка** | Уникальный облачный login portal, PHP-FPM, CSRF; данные формы не сохраняются |
 | **TLS** | Certbot HTTP-01 webroot, автоматическое продление для всех TLS-сервисов |
 | **WARP** | По выбору: новый, существующий или отключён; при активном WARP SOCKS5 только на loopback |
-| **Маршрутизация** | Basic UI `blocked`, RU/UA/private/BitTorrent блокируются; `IPOnDemand`, остальное DIRECT |
+| **VPN-клиент** | `admin` в `vless by bob`, Vision, случайный UUID/subId, без лимитов |
+| **Маршрутизация** | Basic UI `blocked`, RU/UA/private/BitTorrent и категории рекламы GeoSite блокируются; `IPOnDemand`, остальное DIRECT |
 | **Geodata** | Штатный Xray hot reload четырёх файлов ежедневно в 03:00 МСК через `direct`, с rollback |
 | **TCP BBR** | Автоматически настраивается на поддерживаемом ядре Linux, с FQ pacing и сохранением после reboot |
 | **IPv4-only** | Настраиваются проектные sysctl и networkd drop-in; известный P1: после reboot на `ens3` может возвращаться IPv6 link-local. Требуются SSH по IPv4 и FQDN без AAAA; production readiness заблокирована |
@@ -44,13 +45,13 @@ UFW открывает SSH, 80, 443 и порт подписок; порт па�
 3. **Запустите установщик одной командой** от root:
 
    ```bash
-   bash <(curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' https://github.com/DaMistic727/Bob-auto-xray/releases/download/v0.3.5/install.sh)
+   bash <(curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' https://github.com/DaMistic727/Bob-auto-xray/releases/download/v0.3.6/install.sh)
    ```
 
-   v0.3.5 запускает мастер с вопросами о домене и сертификате, показывает живой статус длительных операций и объясняет ошибки Certbot. Bootstrap загружает **конкретный релиз** и проверяет закреплённый SHA256 архива до выполнения модулей.
+   v0.3.6 запускает мастер с вопросами о домене и сертификате, показывает живой статус длительных операций и объясняет ошибки Certbot. Bootstrap загружает **конкретный релиз** и проверяет закреплённый SHA256 архива до выполнения модулей.
 
 4. **Сохраните HTTPS-ссылку, логин и пароль**, которые появятся после успешных проверок. На VPS результат хранится в root-only `/var/lib/selfsni/state.json`.
-5. **Добавляйте клиентов через 3x-ui**, привязывая их к созданному inbound и выбирая flow `xtls-rprx-vision`. Подписки и клиентская маршрутизация уже настроены.
+5. **Откройте `vless by bob` в 3x-ui:** VPN-клиент `admin` уже создан с Vision, без лимита IP/устройств/трафика и срока действия. Получите его подключение или подписку. Дополнительных клиентов можно добавить через панель. Учётная запись панели имеет отдельные случайные username/password.
 
 <details>
 <summary>Выбор WARP и запуск без вопросов</summary>
@@ -67,7 +68,7 @@ bash /root/selfsni/install.sh --domain vpn.example.com
 
 Параметры: `--domain`, `--email`, `--ssh-port`, `--adopt-warp`, `--no-warp`, `--preflight-only`. При non-interactive запуске `--domain` обязателен. `NO_COLOR=1` отключает ANSI-цвета. `--preflight-only` строго read-only.
 
-v0.3.5 хранит этап, installation ID и режим WARP в root-only state. После доказанного сбоя `APT_UPDATE`, `APT_UPGRADE`, `APT_INSTALL`, `WARP` или выдачи сертификата повтор продолжает установку, сохраняя режим, порты и credentials. Сменить режим при resume нельзя. Если домен уже сохранён, мастер не спрашивает его снова. Перед повтором Certbot заново проверяются WARP через официальный health API в режимах install/adopt и HTTP ownership. Узкий legacy-migration поддерживает только точный ранний `apt-get exited 100` из v0.3.3 при отсутствии любого управляемого пути; неизвестное старое состояние отклоняется. После более поздней стадии автоматическое продолжение запрещено. Полный redacted журнал команд находится в `/var/log/bob-auto-xray/install.log` с правами `0600`; одновременно работает только один установщик.
+v0.3.6 хранит этап, installation ID и режим WARP в root-only state. После доказанного сбоя `APT_UPDATE`, `APT_UPGRADE`, `APT_INSTALL`, `WARP` или выдачи сертификата повтор продолжает установку, сохраняя режим, порты и credentials. Сменить режим при resume нельзя. Если домен уже сохранён, мастер не спрашивает его снова. Перед повтором Certbot заново проверяются WARP через официальный health API в режимах install/adopt и HTTP ownership. Узкий legacy-migration поддерживает только точный ранний `apt-get exited 100` из v0.3.3 при отсутствии любого управляемого пути; неизвестное старое состояние отклоняется. После более поздней стадии автоматическое продолжение запрещено. Полный redacted журнал команд находится в `/var/log/bob-auto-xray/install.log` с правами `0600`; одновременно работает только один установщик.
 
 </details>
 
@@ -92,7 +93,8 @@ flowchart LR
 
 | Платформа / сценарий | Статус |
 |---|---|
-| v0.3.5 · финальная сборка | Локальные тесты и CI; чистая VPS и reboot NOT TESTED. IPv6 persistence требует ручной проверки |
+| v0.3.6 | Локальные тесты, real Nginx и pinned 3x-ui API в CI; VPS clean install/reboot NOT TESTED |
+| v0.3.5 · сообщение владельца | Установка, HTTPS/443, Reality Vision, Happ/INCY, WARP и routing проверены владельцем. Это не E2E v0.3.6 и не подтверждение IPv6 persistence |
 | v0.3.4 · исторический официальный WARP на Ubuntu 26.04.1 amd64 | Smoke E2E #1: чистая установка, новая регистрация, Certbot, REALITY Vision и on-host 27/27. Позднее IPv6 отключение проверено на уже установленной VPS до/после reboot; отдельная чистая установка с этим изменением не проверена |
 | v0.2.0 · Ubuntu 24.04 amd64 + существующий WARP | Проверены установка через `--adopt-warp`, внешний клиент и reboot |
 | v0.3.1 · Ubuntu 26.04.1 amd64, чистая ОС | Проверены установка всех VPN-компонентов, Target UI, новая регистрация WARP, внешний клиент и reboot |
@@ -116,3 +118,5 @@ CI выполняет статические проверки, unit/bootstrap-т
 Проект использует официальные [3x-ui](https://github.com/MHSanaei/3x-ui), [VPS-Server-Menu](https://github.com/Diman6267/VPS-Server-Menu) и [DigneZzZ/routing](https://github.com/DigneZzZ/routing). [Атрибуция и лицензии зависимостей →](THIRD_PARTY_NOTICES.md)
 
 Код проекта распространяется под [GPL-3.0](LICENSE). Данные и материалы третьих сторон сохраняют условия своих правообладателей.
+
+Глобальная блокировка рекламы использует серверный `geosite:category-ads-all` и сохраняет RU-категорию. Она ограничена покрытием GeoSite; профили Happ/INCY не изменены. Старые завершённые установки автоматически не мигрируют. [Три изменения и проверки v0.3.6](docs/V036-VALIDATION.md).

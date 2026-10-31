@@ -5,7 +5,7 @@ from .core import InstallError, ROOT, require
 
 
 REQUIRED = {
-    'geosite.dat': {'category-ai-!cn', 'category-ip-geo-detect'},
+    'geosite.dat': {'category-ai-!cn', 'category-ip-geo-detect', 'category-ads-all'},
     'geosite_RU.dat': {'category-ads-all', 'ru-available-only-inside'},
     'geoip.dat': {'private', 'ua'},
     'geoip_RU.dat': {'ru'},
