@@ -72,6 +72,12 @@ Native updater сначала загружает все assets во времен
 
 REALITY хранится с `show: true` и Firefox uTLS fingerprint. Sniffing включает `http`, `tls`, `quic`, `fakedns`; итоговый `routeOnly: true` использует sniffed имя для выбора маршрута и сохраняет запрошенный адрес назначения. Контрольный SOCKS5+TLS тест с раздельными IP и SNI подтвердил различие режимов: при `false` Xray переписывает dial target, при `true` сохраняет исходный IP. Firefox также фиксируется в выдаваемых VLESS URI и во временных E2E-клиентах.
 
+## Bob Doctor
+
+Установщик сохраняет CLI в `/usr/local/lib/bob-auto-xray` и создаёт `/usr/local/bin/bob` только при свободном имени. Если имя занято, VPN устанавливается дальше, чужой файл не перезаписывается. Вызов `bob doctor` читает state schema 2 и runtime-состояние через фиксированные read-only команды и файлы; `acceptance.verify()` и API 3x-ui не вызываются. Subprocess запускаются без shell, с ограниченным временем и изолированным окружением; вывод и исключения не попадают в отчёт. Подтверждённые неисправности дают `FAIL`, отсутствие достоверных данных — `UNKNOWN`, а намеренно пропущенный WARP или неуправляемый SWAP — `SKIP`.
+
+IPv6 проверяется по управляемому sysctl и networkd drop-in, реальным интерфейсам и global IPv6-адресам. SWAP проверяется по state, `/swapfile`, `/etc/fstab` и списку активного swap. Старые установки без этих управляемых компонентов допускаются без миграции. `--deep` добавляет локальные HTTPS GET и внешний Cloudflare trace через прямой маршрут и WARP; GET может создать запись в журнале либо PHP-сессию. Подробный контракт и безопасный E2E: [TESTING.md](TESTING.md), [DOCTOR-E2E.md](DOCTOR-E2E.md).
+
 ## Защита и данные портала
 
 CSPRNG меняет реально используемые названия, цвета, SVG-геометрию, CSS classes, IDs, пути, cookie и поля формы. На GET создаётся CSRF token в PHP session; cookie Secure/HttpOnly/SameSite=Strict. POST проверяет token, удаляет массив POST, меняет session ID и после ограниченной случайной задержки отвечает 303. В session сохраняются только csrf/error. Логины и пароли не сохраняются и не пересылаются; access log портала выключен. Nginx ограничивает размер тела и скорость auth-запросов. Ответы чувствительных страниц: no-store, CSP, no-referrer.
