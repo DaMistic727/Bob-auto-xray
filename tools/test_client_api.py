@@ -146,14 +146,17 @@ def main():
                 except Exception:
                     verify_admin_subscriptions(state, subscription)
                     raise
-                plain = http.client.HTTPConnection('127.0.0.1',sub_port,timeout=5)
+                # The pinned Go TLS guard uses an HTTP/0.0 error status for
+                # plaintext. Inspect the wire status instead of requiring a
+                # valid HTTP-client response from a deliberately wrong protocol.
                 try:
-                    try:
-                        plain.request('GET',sub_path+state['admin_client']['subId'])
-                        require(plain.getresponse().status != 200,'Subscription silently downgraded to HTTP')
-                    except (OSError,http.client.RemoteDisconnected):
-                        pass
-                finally:plain.close()
+                    with socket.create_connection(('127.0.0.1',sub_port),timeout=5) as plain:
+                        plain.sendall(('GET '+sub_path+state['admin_client']['subId']+' HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n').encode())
+                        reply=plain.recv(512)
+                        require(not reply or re.match(rb'HTTP/[0-9.]+ (400|403|404|426)\b',reply),
+                                'Subscription plaintext was not rejected')
+                except OSError:
+                    pass
                 stored = api.call('setting/all', {}, method='POST')
                 require(stored['subListen']=='127.0.0.1' and stored['subPort']==sub_port and stored['subCertFile']==str(root/'sub.crt'), 'Subscription binding/TLS readback failed')
                 listeners = subprocess.check_output(['ss','-H','-lntp'],text=True).splitlines()
