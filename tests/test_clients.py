@@ -147,7 +147,8 @@ class PermanentClientTests(unittest.TestCase):
         def send(*args, **kwargs):
             calls.append((args, kwargs))
             return 200, {}, base64.b64encode(link)
-        clients.verify_admin_subscriptions(state(), send)
+        with patch.object(acceptance, 'verify_sub_response'):
+            clients.verify_admin_subscriptions(state(), send)
         self.assertEqual(len(calls), 2)
         self.assertTrue(all(call[0][-1].endswith(ADMIN['subId']) for call in calls))
         for result in ((403, {}, b''), (200, {}, b'vless://wrong@host?flow=xtls-rprx-vision')):

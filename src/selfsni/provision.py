@@ -13,7 +13,7 @@ import sys
 import tempfile
 import time
 
-from .api import PANEL_ACCESS, Panel, request
+from .api import PANEL_ACCESS, Panel, request, public_subscription_url
 from . import bbr, ipv6, swap
 from .clients import ensure_admin, verify_admin_runtime, verify_admin_subscriptions
 from .core import (ROOT, CommandError, InstallError, configure_diagnostics, redact,
@@ -194,7 +194,7 @@ def preflight(args, resume_state=None):
     fresh = dict(domain=domain, ipv4=public, ubuntu=info['VERSION_ID'], codename=info['VERSION_CODENAME'],
                 arch='amd64' if platform.machine() == 'x86_64' else 'arm64',
                 ssh_ports=sorted(ssh_ports), panel_port=panel_port, sub_port=sub_port,
-                panel_access=PANEL_ACCESS,
+                panel_access=PANEL_ACCESS, subscription_access=PANEL_ACCESS,
                 warp_mode=args.warp_mode, adopt_warp=args.warp_mode == 'adopt',
                 bbr_preflight=bbr_report, ipv6_preflight=ipv6_report, **credentials,
                 status='INSTALLING')
@@ -210,9 +210,6 @@ def firewall(s, public=False):
         run('ufw', 'allow', str(port) + '/tcp', 'comment', 'Self-SNI SSH')
     run('ufw', 'allow', '80/tcp')
     run('ufw', 'allow', '443/tcp')
-    if public:
-        # Only subscriptions retain their existing separate public port.
-        run('ufw', 'allow', str(s['sub_port']) + '/tcp')
     run('ufw', 'default', 'deny', 'incoming')
     run('ufw', 'default', 'allow', 'outgoing')
     run('ufw', '--force', 'enable')
@@ -286,8 +283,11 @@ def decoy(s):
             'Panel path must contain exactly 48 lowercase hex characters')
     require(isinstance(s['panel_port'], int) and 1024 <= s['panel_port'] <= 65535,
             'Invalid internal panel port')
-    panel_values = dict(DOMAIN=s['domain'], PANEL_PORT=s['panel_port'],
+    from .subscriptions import validate_paths
+    validate_paths(s)
+    panel_values = dict(SUB_PATH=s['sub_path'], SUB_PORT=s['sub_port'], DOMAIN=s['domain'], PANEL_PORT=s['panel_port'],
                         PANEL_PATH=s['panel_path'], PANEL_NO_SLASH=s['panel_path'][:-1])
+    write('/etc/nginx/snippets/selfsni-subscription.conf', render('nginx-subscription.conf', panel_values))
     write('/etc/nginx/snippets/selfsni-panel.conf', render('nginx-panel.conf', panel_values))
     write('/etc/nginx/conf.d/selfsni-tls.conf', render('nginx-tls.conf', dict(values, **panel_values)))
     write('/etc/systemd/system/nginx.service.d/selfsni.conf',
@@ -385,8 +385,8 @@ def configure_panel(s, lock):
     cert = f'/etc/letsencrypt/live/{s["domain"]}/'
     api = Panel(s)
     settings = api.call('setting/all', {}, method='POST')
-    settings.update(subEnable=True, subListen='0.0.0.0', subPort=s['sub_port'],
-        subDomain=s['domain'], subPath=s['sub_path'], subURI=f'https://{s["domain"]}:{s["sub_port"]}{s["sub_path"]}',
+    settings.update(subEnable=True, subListen='127.0.0.1', subPort=s['sub_port'],
+        subDomain=s['domain'], subPath=s['sub_path'], subURI=public_subscription_url(s),
         subCertFile=cert+'fullchain.pem', subKeyFile=cert+'privkey.pem',
         subEncrypt=True, subEnableRouting=True, subRoutingRules=deeplink('happ'),
         subIncyEnableRouting=True, subIncyRoutingRules=deeplink('incy'),
@@ -395,6 +395,8 @@ def configure_panel(s, lock):
         subJsonEnable=False, subJsonAutoDetect=False, subClashEnable=False,
         webListen='127.0.0.1', trustedProxyCIDRs='127.0.0.1/32')
     api.call('setting/update', settings)
+    from .subscriptions import verify_settings
+    verify_settings(s, api.call('setting/all', {}, method='POST'))
     # Keep the stock databases from the SHA256-pinned 3x-ui archive. Happ/INCY
     # profiles use their separately pinned DigneZzZ mobile datasets.
     geodata_root = Path('/usr/local/x-ui/bin')

@@ -120,7 +120,7 @@ class InstallerUI:
         else:
             print('\nРеквизиты сохранены в /var/lib/selfsni/state.json (доступ root).',
                   file=self.stream)
-        print('\nСледующий шаг:\nVPN-клиент admin уже создан: Vision, без лимитов и срока действия.\n'
+        print('\nСледующий шаг:\nПодписки доступны через общий HTTPS/443.\nVPN-клиент admin уже создан: Vision, без лимитов и срока действия.\n'
               'Откройте панель 3x-ui и получите его ссылку или подписку для подключения.\n\nОтчёт:\n/var/lib/selfsni/acceptance.json',
               file=self.stream, flush=True)
 

@@ -49,6 +49,7 @@ def create_fixture(state, api, fixture, owner):
     return {k: state[k] for k in ('domain', 'ipv4', 'reality_public', 'short_id',
                                   'sub_port', 'sub_path', 'panel_port', 'panel_path')} | {
         'client': client, 'panel_access': state.get('panel_access'),
+        'subscription_access': state.get('subscription_access'),
         'panel_certificate_sha256': fingerprint,
         'warp_mode': state.get('warp_mode', 'adopt' if state.get('adopt_warp') else 'install')}
 

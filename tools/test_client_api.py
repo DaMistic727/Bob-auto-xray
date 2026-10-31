@@ -9,6 +9,8 @@ import os
 from pathlib import Path
 import re
 import signal
+import ssl
+import socket
 import subprocess
 import tarfile
 import tempfile
@@ -20,7 +22,8 @@ from selfsni.clients import (ensure_admin, read_clients, validate_admin,
                              verify_admin_runtime, verify_admin_subscriptions)
 from selfsni.core import ROOT, download, free_port, json_obj, require, save, token, wait_for
 from selfsni.geodata import verify_server_geodata
-from selfsni.routing import inbound, server_template
+from selfsni.provision import render
+from selfsni.routing import inbound, server_template, deeplink
 
 
 def main():
@@ -111,9 +114,13 @@ def main():
                         'Routing/GeoData changed after real API save')
                 sub_port, sub_path = free_port({port, 443, 62789}), '/'+token(24)+'/'
                 settings = api.call('setting/all', {}, method='POST')
-                settings.update(subEnable=True, subListen='127.0.0.1', subPort=sub_port,
-                                subPath=sub_path, subDomain='127.0.0.1', subEncrypt=True,
-                                subCertFile='', subKeyFile='')
+                subprocess.run(['openssl','req','-x509','-newkey','rsa:2048','-nodes','-days','1','-subj','/CN=127.0.0.1','-addext','subjectAltName=IP:127.0.0.1','-keyout',str(root/'sub.key'),'-out',str(root/'sub.crt')],check=True,stdout=log,stderr=log)
+                settings.update(subHappAutoDetect=True, subIncyAppAutoDetect=True, subEnableRouting=True, subRoutingRules=deeplink('happ'),
+                                subIncyEnableRouting=True, subIncyRoutingRules=deeplink('incy'),
+                                subHappTunType='xray', subHappLocalProxyAuth='auto',
+                                subEnable=True, subListen='127.0.0.1', subPort=sub_port,
+                                subPath=sub_path, subDomain='127.0.0.1', subURI='https://127.0.0.1'+sub_path, subEncrypt=True,
+                                subCertFile=str(root/'sub.crt'), subKeyFile=str(root/'sub.key'))
                 api.call('setting/update', settings)
                 os.killpg(process.pid, signal.SIGTERM)
                 process.wait(timeout=15)
@@ -126,15 +133,90 @@ def main():
                                 str(app/'bin/config.json')], check=True, stdout=log, stderr=log)
                 state.update(domain='127.0.0.1', sub_port=sub_port, sub_path=sub_path)
                 def subscription(domain, port, path, headers):
-                    connection = http.client.HTTPConnection(domain, port, timeout=10)
+                    connection = http.client.HTTPSConnection(domain, port, timeout=10, context=ssl.create_default_context(cafile=str(root/'sub.crt')))
                     try:
                         connection.request('GET', path, headers=headers)
                         response = connection.getresponse()
-                        return response.status, dict(response.getheaders()), response.read()
+                        return response.status, dict((k.lower(),v) for k,v in response.getheaders()), response.read()
                     finally:
                         connection.close()
-                wait_for(lambda: (verify_admin_subscriptions(state, subscription), True)[1],
-                         'permanent admin Happ/INCY subscriptions')
+                try:
+                    wait_for(lambda: (verify_admin_subscriptions(state, subscription), True)[1],
+                             'permanent admin Happ/INCY subscriptions')
+                except Exception:
+                    verify_admin_subscriptions(state, subscription)
+                    raise
+                # The pinned Go TLS guard uses an HTTP/0.0 HTTPS upgrade for
+                # plaintext. Inspect the wire status instead of requiring a
+                # valid HTTP-client response from a deliberately wrong protocol.
+                try:
+                    with socket.create_connection(('127.0.0.1',sub_port),timeout=5) as plain:
+                        plain.sendall(('GET '+sub_path+state['admin_client']['subId']+' HTTP/1.1\r\nHost: 127.0.0.1:'+str(sub_port)+'\r\nConnection: close\r\n\r\n').encode())
+                        reply=b''
+                        while b'\r\n\r\n' not in reply and len(reply)<8192:
+                            chunk=plain.recv(1024)
+                            if not chunk:break
+                            reply+=chunk
+                        status = re.search(rb'HTTP/[0-9.]+ ([0-9]{3})',reply)
+                        tls_alert = reply.startswith(b'\x15\x03')
+                        location=re.search(rb'(?im)^location: *([^\r\n]+)',reply)
+                        expected_location=('https://127.0.0.1:'+str(sub_port)+sub_path+state['admin_client']['subId']).encode()
+                        secure_upgrade=status and status.group(1)==b'307' and location and location.group(1)==expected_location
+                        require(not reply or tls_alert or secure_upgrade or (status and status.group(1) in (b'400',b'403',b'404',b'426')),
+                                'Subscription plaintext rejection unrecognized; prefix='+reply[:8].hex()+
+                                '; status='+(status.group(1).decode() if status else 'none'))
+                except OSError:
+                    pass
+                stored = api.call('setting/all', {}, method='POST')
+                require(stored['subListen']=='127.0.0.1' and stored['subPort']==sub_port and stored['subCertFile']==str(root/'sub.crt'), 'Subscription binding/TLS readback failed')
+                listeners = subprocess.check_output(['ss','-H','-lntp'],text=True).splitlines()
+                listeners = [line.split()[3] for line in listeners if line.split()[3].endswith(':'+str(sub_port))]
+                require(listeners==['127.0.0.1:'+str(sub_port)],'Real subscription socket is public or duplicated')
+                status, _, html = subscription('127.0.0.1',sub_port,sub_path+state['admin_client']['subId']+'?html=1',{'Accept':'text/html'})
+                require(status == 200, 'Subscription browser page unavailable')
+                assets = re.findall(rb'(?:src|href)="([^"]+assets/[^"]+)"',html)
+                require(assets and all(a.decode().startswith(sub_path) for a in assets), 'Subscription assets escaped secret prefix')
+                for asset in assets:
+                    require(subscription('127.0.0.1',sub_port,asset.decode(),{})[0] == 200, 'Subscription asset unavailable')
+                # Real pinned HTTPS subscriptions through the production Nginx
+                # Unix-socket/PROXY configuration, with no public TCP listener.
+                proxy_values = dict(DOMAIN='127.0.0.1', SUB_PATH=sub_path, SUB_PORT=sub_port,
+                                    PANEL_PATH=base, PANEL_NO_SLASH=base[:-1], AUTH='auth', STYLE='style', ICON='icon')
+                conf = render('nginx-tls.conf', proxy_values)
+                conf = conf.replace('/run/selfsni/nginx.sock',str(root/'proxy.sock'))
+                conf = conf.replace('/etc/letsencrypt/live/127.0.0.1/fullchain.pem',str(root/'sub.crt'))
+                conf = conf.replace('/etc/letsencrypt/live/127.0.0.1/privkey.pem',str(root/'sub.key'))
+                for snippet in ('panel','subscription','fastcgi'):
+                    conf = conf.replace('/etc/nginx/snippets/selfsni-'+snippet+'.conf',str(root/(snippet+'.conf')))
+                (root/'panel.conf').write_text('return 503;')
+                (root/'fastcgi.conf').write_text('return 200 "decoy";')
+                proxy = render('nginx-subscription.conf',proxy_values).replace('/etc/ssl/certs/ca-certificates.crt',str(root/'sub.crt'))
+                (root/'subscription.conf').write_text(proxy)
+                (root/'nginx.conf').write_text('pid '+str(root/'nginx.pid')+'; error_log /dev/null crit; events {} http { access_log off; '+conf+' }')
+                nginx = subprocess.Popen(['nginx','-p',str(root),'-c',str(root/'nginx.conf'),'-g','daemon off;'],stdout=log,stderr=log)
+                try:
+                    wait_for(lambda: (root/'proxy.sock').exists(), 'Nginx subscription socket')
+                    def through_proxy(domain, port, path, headers):
+                        raw = socket.socket(socket.AF_UNIX);raw.settimeout(10);raw.connect(str(root/'proxy.sock'))
+                        raw.sendall(b'PROXY TCP4 198.51.100.1 203.0.113.1 12345 443\r\n')
+                        tls = ssl.create_default_context(cafile=str(root/'sub.crt')).wrap_socket(raw,server_hostname='127.0.0.1')
+                        connection = http.client.HTTPConnection('127.0.0.1');connection.sock=tls
+                        try:
+                            connection.request('GET',path,headers=headers)
+                            response=connection.getresponse()
+                            return response.status,dict((k.lower(),v) for k,v in response.getheaders()),response.read()
+                        finally:connection.close()
+                    verify_admin_subscriptions(state,through_proxy,public=True)
+                    for missing in (sub_path,sub_path+'invalid','/assets/missing.js','/sub/invalid'):
+                        require(through_proxy('127.0.0.1',443,missing,{})[0] in (400,404),'Unknown subscription route exposed')
+                    status,_,html=through_proxy('127.0.0.1',443,sub_path+state['admin_client']['subId']+'?html=1',{'Accept':'text/html'})
+                    require(status==200,'Proxied HTML subscription failed')
+                    assets=re.findall(rb'(?:src|href)="([^"]+assets/[^"]+)"',html)
+                    require(assets and all(a.decode().startswith(sub_path) for a in assets),'Unsafe proxied assets')
+                    for asset in assets:
+                        require(through_proxy('127.0.0.1',443,asset.decode(),{})[0]==200,'Proxied asset failed')
+                finally:
+                    nginx.terminate();nginx.wait(timeout=10)
                 temporary = dict(state['admin_client'], id=str(uuid.uuid4()), subId=token(24),
                                  email='selfsni-e2e-'+token(6))
                 protected = snapshot_clients(api)

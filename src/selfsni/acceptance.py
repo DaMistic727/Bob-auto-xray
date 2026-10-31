@@ -17,7 +17,7 @@ import tempfile
 import urllib.parse
 import uuid
 
-from .api import PANEL_ACCESS, LocalTLS, Panel, public_panel_port, request
+from .api import PANEL_ACCESS, LocalTLS, Panel, public_panel_port, request, public_subscription_port
 from .panel_checks import panel_login, panel_network, panel_routes
 from .bbr import verify as verify_bbr
 from .ipv6 import verify as verify_ipv6
@@ -208,6 +208,12 @@ def verify(s):
         require(GEODATA_CRON == '0 0 * * *', '03:00 Moscow cron mapping changed')
     check('Native geodata process timezone and 03:00 Europe/Moscow schedule', geodata_timezone)
     panel_port = public_panel_port(s)
+    if s.get('subscription_access') == PANEL_ACCESS:
+        from .subscriptions import verify_network, verify_public_routes, verify_settings
+        check('Subscription loopback binding and firewall isolation', lambda: verify_network(s))
+        check('Subscription persisted TLS and URI settings', lambda: verify_settings(s, api.call('setting/all', {}, method='POST')))
+        check('Subscription public routes', lambda: verify_public_routes(s))
+        check('Public admin Happ/INCY on HTTPS/443', lambda: verify_admin_subscriptions(s, public=True))
     check('Permanent admin Happ/INCY subscription identity and Vision', lambda: verify_admin_subscriptions(s))
     check('HTTPS panel certificate and response', lambda: expect(request(s['domain'],panel_port,s['panel_path'])[0] == 200,'Panel unavailable'))
     if s.get('panel_access') == PANEL_ACCESS:
@@ -473,7 +479,7 @@ def e2e(s):
         run('systemctl','restart','x-ui')
         wait_for(lambda: bool(api.call('inbounds/list')), 'client activation')
         for kind, agent in [('happ','Happ/3.0.0 (iOS)'),('incy','INCY/1.0.0/ios')]:
-            status,headers,body = request(s['domain'],s['sub_port'],s['sub_path']+client['subId'],headers={'User-Agent':agent})
+            status,headers,body = request(s['domain'],public_subscription_port(s),s['sub_path']+client['subId'],headers={'User-Agent':agent})
             verify_sub_response(kind,status,headers,body)
         with tempfile.TemporaryDirectory(prefix='selfsni-e2e-') as wd:
             port = free_port({40000})

@@ -5,7 +5,7 @@ import re
 import urllib.parse
 import uuid
 
-from .api import request
+from .api import request, public_subscription_port
 from .core import InstallError, json_obj, register_secrets, require, token
 
 ADMIN_FIELDS = {'email': 'admin', 'flow': 'xtls-rprx-vision', 'enable': True,
@@ -108,17 +108,24 @@ def verify_admin_runtime(state, config):
             matches[0].get('flow') == 'xtls-rprx-vision', 'Permanent admin is missing from Xray runtime')
 
 
-def verify_admin_subscriptions(state, send=request):
+def verify_admin_subscriptions(state, send=request, public=False):
     expected = state['admin_client']
     for agent in ('Happ/3.0.0 (iOS)', 'INCY/1.0.0/ios'):
-        status, _, body = send(state['domain'], state['sub_port'], state['sub_path']+expected['subId'],
+        status, headers, body = send(state['domain'], public_subscription_port(state) if public else state['sub_port'], state['sub_path']+expected['subId'],
                                headers={'User-Agent': agent})
         require(status == 200, 'Permanent admin subscription HTTP error')
         try:
             text = base64.b64decode(body.strip(), validate=True).decode()
         except (ValueError, UnicodeDecodeError):
             text = body.decode()
+        from .acceptance import verify_sub_response
+        verify_sub_response('happ' if agent.startswith('Happ') else 'incy', status, headers, body)
         links = [urllib.parse.urlsplit(line) for line in text.splitlines() if line.startswith('vless://')]
+        if state.get('subscription_access') == 'https-443':
+            params = urllib.parse.parse_qs(links[0].query) if len(links) == 1 else {}
+            require(params.get('security') == ['reality'] and params.get('sni') == [state['domain']]
+                    and params.get('pbk') == [state['reality_public']] and params.get('sid') == [state['short_id']],
+                    'Subscription REALITY parameters mismatch')
         require(len(links) == 1 and links[0].username == expected['id'] and
                 urllib.parse.parse_qs(links[0].query).get('flow') == ['xtls-rprx-vision'],
                 'Permanent admin subscription identity/flow mismatch')

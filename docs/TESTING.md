@@ -1,3 +1,15 @@
+# v0.3.7 Preview · subscription consolidation
+
+Проверки: unittest Python 3.10/3.12 в Ubuntu CI, real Nginx HTTPS upstream harness, pinned 3x-ui/Xray API и TLS subscription/browser assets harness; локальный полный Python 3.12 suite, compileall, Bash/ShellCheck, diff/secret audit и две независимые сборки Python 3.12/3.15. Фактические CI результаты привязаны к SHA тега в GitHub Actions, а не к истории v0.3.6.
+
+Unit/security tests покрывают новый/legacy URL, разные секретные пути, конфликты портов, неверный subListen/TLS/URI readback, публичные IPv4/IPv6/duplicate listeners и UFW rule. Nginx проверяет GET/HEAD, query encoding, User-Agent/headers, spoofing, traversal, ошибки hostname/trust/backend и независимость панели. Pinned harness проверяет реальные Happ/INCY и HTML assets на HTTPS backend и через production Nginx Unix-socket proxy.
+
+VPS/SSH/install/reboot не выполняются. Внешний Xray fallback → Unix socket полный E2E новой версии, реальные приложения, Certbot renewal, WARP на VPS и reboot/IPv6 persistence **NOT TESTED**. Loopback CI не доказывает внешнюю доступность.
+
+Ручной E2E владельца после установки: проверить exit 0/HEALTHY_LOCAL; оба внутренних sockets только 127.0.0.1; UFW только SSH/80/443; подписки admin на https://domain/<sub-secret>/<subId> без порта в Happ/INCY; browser HTML и JS/CSS; panel login/API/WebSocket/logout и decoy; внешний Vision/Firefox/Target/xver, DIRECT/WARP/BLOCK/ads; сохранность admin после E2E; Certbot/GeoData/BBR/swap; повторить после reboot и проверить IPv6 на каждом интерфейсе. Не публиковать UUID/subId и секретные URLs в общих логах.
+
+---
+
 # v0.3.6 Preview · область проверки
 
 v0.3.6 содержит ровно три изменения поведения: remark `vless by bob`, глобальная серверная category-ads-all и автоматически созданный постоянный VPN-клиент admin. Подробности и фактические результаты: [V036-VALIDATION.md](V036-VALIDATION.md).

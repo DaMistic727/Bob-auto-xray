@@ -11,12 +11,13 @@ Internet TCP/443 → Xray REALITY
   └─ обычный TLS + PROXY v1 → /run/selfsni/nginx.sock → Nginx TLS
        ├─ /, decoy auth, CSS/SVG → существующий PHP-FPM portal
        ├─ /<48-hex>/… → HTTPS 127.0.0.1:<panel_port> → 3x-ui
+       ├─ /<subscription-secret>/… → HTTPS 127.0.0.1:<sub_port> → подписки
        └─ неизвестные пути → 404
 ```
 
 Nginx не получает дополнительного TCP listener. REALITY `target` и `xver=1`
-не меняются. Подписки Happ/INCY продолжают использовать прежние sub_port,
-sub_path и сертификат, независимо от панели. Версии 3x-ui/Xray и зависимости
+не меняются. Подписки Happ/INCY сохраняют внутренние sub_port, sub_path и сертификат,
+но публичный URL новых установок использует общий 443. Версии 3x-ui/Xray и зависимости
 не изменены.
 
 ## Bootstrap и перезапуск
@@ -200,3 +201,13 @@ request-level причин 4xx/5xx; доступны nginx -t, состояни�
 [access log_format](https://nginx.org/en/docs/http/ngx_http_log_module.html#log_format).
 
 В v0.3.6 свежая установка содержит постоянного VPN-клиента admin. Он сохраняется при обоих E2E; временная identity отдельная, удаление проверяет UUID/subId в attachments и каталоге и неизменность остальных клиентских параметров. Панельная учётная запись и HTTPS/443 архитектура не меняются.
+
+## Подписки v0.3.7 на HTTPS/443
+
+Public: только SSH TCP, HTTP TCP/80, Xray REALITY/HTTPS TCP/443. Internal: web HTTPS 127.0.0.1:<panel_port>, subscriptions HTTPS 127.0.0.1:<sub_port>, WARP SOCKS5 127.0.0.1:40000 при включении. Nginx остаётся на /run/selfsni/nginx.sock, target/xver не меняются.
+
+Отдельный точный 48-hex subscription prefix проксирует без URI suffix в проверенный TLS upstream (SNI=домен, chain verify on). Host и доверенные proxy headers переопределяются; User-Agent и subscription metadata сохраняются. Responses no-store/no-referrer, access logs off, error_log /dev/null. Unknown routes и глобальные /assets,/api не открываются; percent-encoded path separators/dots отклоняются, query encoding сохраняется.
+
+Pinned 3x-ui поддерживает assets под LinksPath: [sub.go](https://github.com/MHSanaei/3x-ui/blob/608ef4e4010bf83e2e78328e08f77efc051ad4d7/internal/sub/sub.go). HTML генерирует ссылки с этим prefix. Не требуется переписывать upstream HTML или разрешать глобальные assets.
+
+subscription_access=https-443 добавляется только новой установке/разрешённому раннему resume. public_subscription_url() для старого state сохраняет прежний нестандартный порт. Завершённые v0.3.6 не меняют URLs, firewall или listeners автоматически. UUID/subId admin остаются прежними. TLS на backend проверяется отдельно от публичного пути; ошибка любого шага не считается HEALTHY_LOCAL.

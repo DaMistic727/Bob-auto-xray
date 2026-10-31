@@ -138,8 +138,8 @@ def run_acceptance(args):
         state = json.loads(remote_call('create'))
         for kind, agent in [('happ', 'Happ/3.0.0 (iOS)'), ('incy', 'INCY/1.0.0/ios')]:
             def subscription(kind=kind, agent=agent):
-                url = (f'https://{state["domain"]}:{state["sub_port"]}'
-                       f'{state["sub_path"]}{state["client"]["subId"]}')
+                from selfsni.api import public_subscription_url
+                url = public_subscription_url(state, state["client"]["subId"])
                 verify_sub_response(kind, *http(url, agent))
             check(report, kind+' external subscription', subscription)
         check(report, 'Public decoy', lambda: require(
@@ -153,6 +153,13 @@ def run_acceptance(args):
             except Exception:
                 evidence = {'status': 'INCONCLUSIVE', 'reason': 'PROBE_DID_NOT_COMPLETE'}
             report['checks'].append(dict(evidence, name='Internal panel port external isolation'))
+        if state.get('subscription_access') == 'https-443':
+            try:
+                evidence = probe_panel_port(state['ipv4'], state['sub_port'], state['domain'],
+                                            expected_certificate_sha256=state.get('panel_certificate_sha256'))
+            except Exception:
+                evidence = {'status': 'INCONCLUSIVE', 'reason': 'PROBE_DID_NOT_COMPLETE'}
+            report['checks'].append(dict(evidence, name='Internal subscription port external isolation'))
         # A FAIL/INCONCLUSIVE port observation does not skip independent checks.
         vision_checks(args, state, report, remote_call)
     except (Exception, KeyboardInterrupt):

@@ -58,3 +58,13 @@ class Panel:
             raise InstallError('Panel returned invalid JSON: ' + endpoint) from e
         require(result.get('success') is True, 'Panel API rejected: ' + endpoint)
         return result.get('obj')
+
+
+def public_subscription_port(state):
+    return 443 if state.get('subscription_access') == 'https-443' else state['sub_port']
+
+
+def public_subscription_url(state, sub_id=''):
+    port = public_subscription_port(state)
+    authority = state['domain'] + ('' if port == 443 else ':' + str(port))
+    return 'https://' + authority + state['sub_path'] + sub_id

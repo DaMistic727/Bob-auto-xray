@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.3.7 — 2026-10-31 · Preview
+
+- Новые установки отдают Happ/INCY подписки на общем HTTPS/443: Xray REALITY → PROXY v1 → Nginx Unix socket → HTTPS 127.0.0.1:<sub_port>. Внутренний случайный порт и TLS сохранены; subURI больше не содержит нестандартного порта.
+- UFW новых установок открывает только обнаруженные SSH TCP, 80 и 443; subscription и panel ports остаются loopback. Acceptance проверяет сохранённые настройки, фактические sockets, TLS backend и публичную подписку независимо.
+- Отдельный subscription snippet сохраняет URI/query, User-Agent и upstream metadata; TLS/SNI/chain verification обязательны, секретные responses no-store, URI logs выключены. Assets HTML-страницы доступны только под subscription secret; неизвестные глобальные routes закрыты.
+- State marker subscription_access=https-443 управляет публичными URL. Старый state без маркера сохраняет URL с отдельным портом; автоматической миграции v0.3.6 и других завершённых установок нет.
+- Сохранены vless by bob, постоянный admin, GeoSite ads block, routing/WARP, pinned components, panel/decoy, IPv6/BBR/swap и модель installer resume. VPS E2E/reboot этой версии не выполнялись; исторические результаты не приписываются новой сборке.
+
 ## v0.3.6 — 2026-10-31 · Preview
 
 - Основной inbound новых установок называется точно `vless by bob`; изменён только remark, параметры REALITY/Self-SNI, TCP/443, Vision и Firefox сохранены.
