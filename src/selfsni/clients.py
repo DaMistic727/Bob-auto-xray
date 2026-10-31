@@ -121,6 +121,11 @@ def verify_admin_subscriptions(state, send=request, public=False):
         from .acceptance import verify_sub_response
         verify_sub_response('happ' if agent.startswith('Happ') else 'incy', status, headers, body)
         links = [urllib.parse.urlsplit(line) for line in text.splitlines() if line.startswith('vless://')]
+        if state.get('subscription_access') == 'https-443':
+            params = urllib.parse.parse_qs(links[0].query) if len(links) == 1 else {}
+            require(params.get('security') == ['reality'] and params.get('sni') == [state['domain']]
+                    and params.get('pbk') == [state['reality_public']] and params.get('sid') == [state['short_id']],
+                    'Subscription REALITY parameters mismatch')
         require(len(links) == 1 and links[0].username == expected['id'] and
                 urllib.parse.parse_qs(links[0].query).get('flow') == ['xtls-rprx-vision'],
                 'Permanent admin subscription identity/flow mismatch')
