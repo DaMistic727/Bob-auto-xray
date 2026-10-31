@@ -25,6 +25,9 @@ class ReleaseTests(unittest.TestCase):
             command = [sys.executable, str(root / 'tools/package.py')]
             subprocess.run(command, check=True, capture_output=True)
             archive = root / 'dist/selfsni-1.2.3.tar.gz'
+            # RFC 1952 XFL=2 records maximum compression; do not inherit a
+            # changed Python default (3.15 changed gzip's default to level 6).
+            self.assertEqual(archive.read_bytes()[8], 2)
             first = hashlib.sha256(archive.read_bytes()).digest()
             report.chmod(0o644)
             subprocess.run(command, check=True, capture_output=True)
