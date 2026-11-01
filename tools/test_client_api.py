@@ -87,6 +87,18 @@ def main():
                                        stderr=log, start_new_session=True)
             try:
                 wait_for(lambda: api.call('inbounds/list') == [], 'loopback panel API')
+                # Nginx shadows exactly these pinned public sponsor routes.
+                for path, expected in (('sponsors', 200), ('sponsors/logo/missing.png', 404)):
+                    connection = http.client.HTTPConnection('127.0.0.1', port, timeout=30)
+                    try:
+                        connection.request('GET', base+path)
+                        response = connection.getresponse()
+                        body = response.read()
+                    finally:
+                        connection.close()
+                    require(response.status == expected, 'Pinned sponsor route changed: '+path)
+                    if expected == 200:
+                        require('success' in json.loads(body), 'Pinned sponsors contract changed')
                 keys = subprocess.check_output([str(app/'bin/xray-linux-amd64'), 'x25519'], text=True)
                 private = re.search(r'PrivateKey:\s*(\S+)', keys).group(1)
                 public = re.search(r'(?:Password(?: \(PublicKey\))?|PublicKey):\s*(\S+)', keys).group(1)
@@ -207,6 +219,10 @@ def main():
                             return response.status,dict((k.lower(),v) for k,v in response.getheaders()),response.read()
                         finally:connection.close()
                     verify_admin_subscriptions(state,through_proxy,public=True)
+                    status,h,body=through_proxy('127.0.0.1',443,base+'sponsors',{})
+                    require(status==200 and h['content-type']=='application/json'
+                            and json.loads(body)=={'success':True,'obj':{'sponsors':[]}},'Sponsors not blanked by Nginx')
+                    require(through_proxy('127.0.0.1',443,base+'sponsors/logo/acme.png',{})[0]==404,'Sponsor logo reachable')
                     for missing in (sub_path,sub_path+'invalid','/assets/missing.js','/sub/invalid'):
                         require(through_proxy('127.0.0.1',443,missing,{})[0] in (400,404),'Unknown subscription route exposed')
                     status,_,html=through_proxy('127.0.0.1',443,sub_path+state['admin_client']['subId']+'?html=1',{'Accept':'text/html'})

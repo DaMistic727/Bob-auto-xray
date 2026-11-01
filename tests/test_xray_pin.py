@@ -10,9 +10,9 @@ from selfsni.xray_pin import XRAY_ARCHIVES, install_pinned_xray, pinned_xray_spe
 
 
 class XrayPinTests(unittest.TestCase):
-    def test_official_lock_keeps_panel_at_3102(self):
+    def test_official_lock_keeps_panel_at_3110(self):
         lock = verify_bundle('skip')
-        self.assertEqual(lock['xui_version'], 'v3.10.2')
+        self.assertEqual(lock['xui_version'], 'v3.11.0')
         self.assertEqual(lock['xray_version'], 'v26.10.21')
         for arch in XRAY_ARCHIVES:
             self.assertIn('XTLS/Xray-core/releases/download/v26.10.21/',

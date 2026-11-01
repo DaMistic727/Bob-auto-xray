@@ -20,7 +20,7 @@ from selfsni.provision import install_apt_key, os_info
 class InstallerTests(unittest.TestCase):
     def test_bundle_checksums(self):
         lock=verify_bundle()
-        self.assertEqual(lock['xui_version'],'v3.10.2')
+        self.assertEqual(lock['xui_version'],'v3.11.0')
         self.assertEqual(lock['menu_repository'],
                          'https://github.com/Diman6267/VPS-Server-Menu.git')
         self.assertNotIn('menu_commit',lock)

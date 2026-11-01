@@ -150,6 +150,17 @@ def main():
             assert headers['referrer-policy'] == 'no-referrer' and headers['cache-control'] == 'no-store'
             assert send(secret+'redirect')[1]['location'] == 'https://panel.test'+secret+'panel/'
             checks.append('PROXY client IP wins over forged headers; URI/query and public redirect authority preserved')
+            for path in (secret+'sponsors', secret+'sponsors?lang=en'):
+                status, headers, body = send(path)
+                assert status == 200 and json.loads(body) == {'success': True, 'obj': {'sponsors': []}}, path
+                assert headers['content-type'] == 'application/json' and headers['cache-control'] == 'no-store'
+                assert 'path' not in json.loads(body)
+            for path in (secret+'sponsors/logo/acme.png', secret+'sponsors/logo/'):
+                status, _, body = send(path)
+                assert status == 404 and b'path' not in body, path
+            assert json.loads(send(secret+'sponsorsx')[2])['path'] == secret+'sponsorsx'
+            assert json.loads(send(secret+'panel/sponsors')[2])['path'] == secret+'panel/sponsors'
+            checks.append('Sponsors API answered locally with an empty list; logos 404 and never reach upstream')
             assert json.loads(send(secret+'api/test', 'POST', b'x'*9000)[2])['size'] == 9000
             checks.append('Panel body exceeds decoy 8 KiB limit')
             status, _, frame = send(secret+'ws', headers={'Upgrade': 'websocket', 'Connection': 'Upgrade'})

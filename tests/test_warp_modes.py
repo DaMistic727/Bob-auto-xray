@@ -37,8 +37,8 @@ class WarpModeTests(unittest.TestCase):
                 return '0' * 64
             return original_digest(path)
         with patch.object(core, 'digest', side_effect=digest):
-            self.assertEqual(core.verify_bundle('skip')['xui_version'], 'v3.10.2')
-            self.assertEqual(core.verify_bundle('adopt')['xui_version'], 'v3.10.2')
+            self.assertEqual(core.verify_bundle('skip')['xui_version'], 'v3.11.0')
+            self.assertEqual(core.verify_bundle('adopt')['xui_version'], 'v3.11.0')
             with self.assertRaisesRegex(InstallError, 'cloudflare-pubkey.gpg'):
                 core.verify_bundle('install')
 
