@@ -42,7 +42,7 @@ def node_state():
 
 def runtime_config(admin=True):
     clients = [{'id': ADMIN_UUID, 'email': 'admin', 'flow': 'xtls-rprx-vision'}] if admin else []
-    return {'inbounds': [{'port': 443, 'settings': {'clients': clients}}]}
+    return {'inbounds': [{'port': 443, 'protocol': 'vless', 'settings': {'clients': clients}}]}
 
 
 class Node(unittest.TestCase):
@@ -137,7 +137,7 @@ class NonInteractiveTests(Node):
         code, out, err = self.run_cli(['admin', '--show-secrets'])
         self.assertEqual(code, 0, err)
         self.assertIn('https://vpn.example.com/' + 'b' * 48 + '/' + 'c' * 48, out)
-        self.assertIn('присутствует в runtime', out)
+        self.assertIn('подтверждён в runtime', out)
         for secret in ('SECRET_PASSWORD', 'usecretlogin', ADMIN_UUID, 'a' * 48, 'SECRET_TOKEN'):
             self.assertNotIn(secret, out + err)
 
@@ -236,6 +236,135 @@ class NonInteractiveTests(Node):
             code, out, err = self.run_cli(['report'])
             self.assertEqual(code, cli.UNAVAILABLE, value)
             self.assertEqual(out, '')
+
+
+XUI_ARCHIVE_UID = 1001  # owner of x-ui/ and x-ui/bin/ in the pinned v3.11.0 release archive
+
+
+def official_runtime(clients):
+    """Real Xray runtime written by 3x-ui (repository snapshot) with the given clients."""
+    snapshot = json.loads((Path(__file__).resolve().parents[1] /
+                           'docs/reference-config-redacted.json').read_text())['runtime']
+    for row in snapshot['inbounds']:
+        if row.get('port') == 443:
+            row['settings']['clients'] = clients
+    return snapshot
+
+
+ADMIN_RUNTIME = {'email': 'admin', 'flow': 'xtls-rprx-vision', 'id': ADMIN_UUID}
+
+
+class RuntimeAdminTests(Node):
+    """`bob admin` runtime confirmation on a node laid out by the official 3x-ui installer."""
+
+    def setUp(self):
+        super().setUp()
+        self.xui = {self.root / 'usr/local/x-ui', self.root / 'usr/local/x-ui/bin'}
+        # Tests let the current user play root; the archive owner must differ from it
+        # (GitHub Actions' runner is uid 1001 too).
+        foreign = XUI_ARCHIVE_UID if os.getuid() != XUI_ARCHIVE_UID else XUI_ARCHIVE_UID + 1
+        real_lstat = os.lstat
+
+        def lstat(path, *args, **kwargs):
+            # `tar zxvf` as root keeps the archive owner, so these are uid 1001 on a real node.
+            info = real_lstat(path, *args, **kwargs)
+            if Path(path) not in self.xui:
+                return info
+            return os.stat_result((info.st_mode, info.st_ino, info.st_dev, info.st_nlink,
+                                   foreign, foreign, info.st_size,
+                                   int(info.st_atime), int(info.st_mtime), int(info.st_ctime)))
+        patcher = patch.object(cli.os, 'lstat', side_effect=lstat)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.put(cli.CONFIG, official_runtime([dict(ADMIN_RUNTIME)]))
+
+    def admin(self):
+        code, out, err = self.run_cli(['admin', '--show-secrets'])
+        self.assertEqual(code, 0, err)
+        # Only the subscription URL is a secret here; diagnostics never echo identities.
+        self.assertNotIn(ADMIN_UUID, out + err)
+        self.assertNotIn('a' * 48, out + err)
+        return out
+
+    def test_admin_is_confirmed_on_archive_owned_install_tree(self):
+        self.assertNotEqual(os.lstat(self.root / 'usr/local/x-ui/bin').st_uid, cli.ROOT_UID)
+        out = self.admin()
+        self.assertIn('Клиент admin подтверждён в runtime Xray', out)
+        self.assertNotIn('не подтверждено', out)
+
+    def test_state_still_requires_root_owned_directories(self):
+        self.xui = {self.state_dir}
+        code, out, err = self.run_cli(['admin', '--show-secrets'])
+        self.assertEqual(code, cli.UNAVAILABLE)
+        self.assertEqual(out, '')
+        self.assertIn('небезопасный', err)
+
+    def test_missing_or_changed_admin_is_a_warning(self):
+        for clients in ([], [{'email': 'other', 'flow': 'xtls-rprx-vision', 'id': str(uuid.uuid4())}],
+                        [dict(ADMIN_RUNTIME, flow='')], [dict(ADMIN_RUNTIME, email='renamed')],
+                        [dict(ADMIN_RUNTIME, id=str(uuid.uuid4()))]):
+            with self.subTest(clients=clients):
+                self.put(cli.CONFIG, official_runtime(clients))
+                out = self.admin()
+                self.assertIn('! Клиент admin не найден в runtime Xray или отличается от state', out)
+
+    def assertUnknown(self, reason):
+        out = self.admin()
+        self.assertIn('? Наличие клиента admin в runtime Xray не подтверждено', out)
+        self.assertIn(reason, out)
+        self.assertNotIn('подтверждён в runtime', out)
+
+    def test_unavailable_runtime_is_unknown_with_reason(self):
+        cli.CONFIG.unlink()
+        self.assertUnknown('файл не найден')
+
+    def test_corrupt_runtime_is_unknown(self):
+        self.put(cli.CONFIG, '{"inbounds": [')
+        self.assertUnknown('повреждён')
+
+    def test_unrecognised_runtime_structure_is_unknown(self):
+        for config in ({'inbounds': []}, {'inbounds': 'x'}, {'inbounds': ['x']},
+                       {'inbounds': [{'port': 443, 'protocol': 'vless', 'settings': 'x'}]},
+                       {'inbounds': [{'port': 443, 'protocol': 'vless', 'settings': {}}]}):
+            with self.subTest(config=config):
+                self.put(cli.CONFIG, config)
+                self.assertUnknown('основной inbound VLESS на TCP/443 не распознан')
+
+    def test_insecure_runtime_file_is_unknown(self):
+        cli.CONFIG.chmod(0o644)
+        self.assertUnknown('небезопасный')
+        cli.CONFIG.chmod(0o600)
+        os.link(cli.CONFIG, self.root / 'second-link')
+        self.assertUnknown('небезопасный')
+
+    def test_runtime_read_permission_error_is_unknown(self):
+        real_open = os.open
+
+        def guarded(path, *args, **kwargs):
+            if Path(path) == cli.CONFIG:
+                raise PermissionError(13, 'denied')
+            return real_open(path, *args, **kwargs)
+        with patch.object(cli.os, 'open', side_effect=guarded):
+            self.assertUnknown('нет доступа')
+
+    def test_symlinks_and_writable_directories_are_unknown(self):
+        real = self.root / 'elsewhere.json'
+        self.put(real, official_runtime([dict(ADMIN_RUNTIME)]))
+        cli.CONFIG.unlink()
+        cli.CONFIG.symlink_to(real)
+        self.assertUnknown('небезопасный')
+        cli.CONFIG.unlink()
+        bin_dir = self.root / 'usr/local/x-ui/bin'
+        moved = self.root / 'usr/local/x-ui/real-bin'
+        bin_dir.rename(moved)
+        bin_dir.symlink_to(moved)
+        self.assertUnknown('небезопасный')
+        bin_dir.unlink()
+        moved.rename(bin_dir)
+        self.put(cli.CONFIG, official_runtime([dict(ADMIN_RUNTIME)]))
+        bin_dir.chmod(0o777)
+        self.addCleanup(bin_dir.chmod, 0o755)
+        self.assertUnknown('небезопасный')
 
 
 class PermissionTests(Node):

@@ -17,6 +17,8 @@ import uuid
 
 from . import doctor
 from .api import public_panel_url, public_subscription_url
+from .clients import main_inbound, verify_admin_runtime
+from .core import InstallError
 
 STATE = Path(doctor.STATE)
 ACCEPTANCE = Path(doctor.STATE_DIR) / 'acceptance.json'
@@ -84,12 +86,12 @@ def require_root():
         raise CliError('Нужны права root: запустите команду через sudo.', NEED_ROOT)
 
 
-def read_private(path, label):
+def read_private(path, label, root_dirs=True):
     """Read a small root-only regular file without following any symlink.
 
-    Every directory from TRUSTED_ROOT down must be a real directory owned by
-    root and not writable by group/other; the file itself must be a single-link
-    regular file owned by root with no group/other permissions.
+    Every directory from TRUSTED_ROOT down must be a real directory not writable
+    by group/other and, with root_dirs, owned by root; the file itself must be a
+    single-link regular file owned by root with no group/other permissions.
     """
     path = Path(path)
     unsafe = CliError(f'{label}: небезопасный путь или права; ожидается обычный файл root '
@@ -103,7 +105,7 @@ def read_private(path, label):
         for part in (None,) + parts[:-1]:
             directory = directory if part is None else directory / part
             info = os.lstat(directory)
-            if (not stat.S_ISDIR(info.st_mode) or info.st_uid != ROOT_UID
+            if (not stat.S_ISDIR(info.st_mode) or (root_dirs and info.st_uid != ROOT_UID)
                     or info.st_mode & 0o022):
                 raise unsafe
         # O_NONBLOCK: a FIFO planted in place of the file must not hang the menu.
@@ -140,8 +142,8 @@ def read_private(path, label):
         raise CliError(f'{label}: файл повреждён.') from None
 
 
-def read_json(path, label):
-    text, info = read_private(path, label)
+def read_json(path, label, root_dirs=True):
+    text, info = read_private(path, label, root_dirs)
     try:
         value = json.loads(text)
     except ValueError:
@@ -210,22 +212,35 @@ def admin_subscription(probe=None):
         valid = False
     if not valid or not isinstance(sub_id, str) or re.fullmatch(r'[0-9a-f]{48}', sub_id) is None:
         raise CliError('Данные постоянного клиента admin в state повреждены.')
-    return public_subscription_url(checker.state, sub_id), runtime_has_admin(identity)
+    return public_subscription_url(checker.state, sub_id), runtime_admin(identity)
 
 
-def runtime_has_admin(identity):
-    """True/False when the Xray runtime confirms/denies the owned admin; None if unknown."""
+def runtime_admin(identity):
+    """('PASS'|'WARN'|'UNKNOWN', secret-free reason) for the owned admin in the Xray runtime."""
+    # The official 3x-ui installer extracts its release archive with `tar` as root,
+    # which keeps the archive owner (uid 1001) on /usr/local/x-ui and bin/. The
+    # directories still may not be symlinks or writable by others, and the file
+    # itself must be root-only; only a yes/no answer is derived from it.
     try:
-        config, _ = read_json(CONFIG, 'Runtime Xray')
-    except CliError:
-        return None
-    rows = [x for x in config.get('inbounds', []) if isinstance(x, dict) and x.get('port') == 443]
-    settings = rows[0].get('settings') if len(rows) == 1 else None
-    clients = settings.get('clients') if isinstance(settings, dict) else None
-    if not isinstance(clients, list):
-        return None
-    return any(isinstance(c, dict) and c.get('id') == identity and c.get('email') == 'admin'
-               and c.get('flow') == 'xtls-rprx-vision' for c in clients)
+        config, _ = read_json(CONFIG, 'Runtime Xray', root_dirs=False)
+    except CliError as error:
+        return 'UNKNOWN', str(error)
+    inbounds = config.get('inbounds')
+    try:
+        if not isinstance(inbounds, list):
+            raise InstallError('inbounds')
+        settings = main_inbound([dict(row, id=index) for index, row in enumerate(inbounds)
+                                 if isinstance(row, dict)]).get('settings')
+        if not isinstance(settings, dict) or not isinstance(settings.get('clients'), list):
+            raise InstallError('clients')
+    except InstallError:
+        return 'UNKNOWN', 'Runtime Xray: основной inbound VLESS на TCP/443 не распознан.'
+    try:
+        # Same check as the installer: exactly one client with the owned UUID, admin, Vision.
+        verify_admin_runtime({'admin_client': {'id': identity}}, config)
+    except InstallError:
+        return 'WARN', 'отсутствует'
+    return 'PASS', 'подтверждён'
 
 
 def server_status(probe=None):
@@ -325,19 +340,21 @@ def show_panel(term, reveal):
 
 
 def show_admin(term, reveal):
-    url, runtime = admin_subscription()
+    url, (status, reason) = admin_subscription()
     if not reveal(term, 'Показать ссылку подписки admin?'):
         return CANCELLED
     # On its own line, so a terminal selection copies exactly the URL.
     term.say('Ссылка подписки:')
     term.say(url)
     term.say()
-    if runtime is True:
-        term.say(term.mark('PASS') + ' Клиент admin присутствует в runtime Xray.')
-    elif runtime is False:
-        term.say(term.mark('WARN') + ' Клиент admin не найден в runtime Xray: ссылка может не работать.')
+    if status == 'PASS':
+        term.say(term.mark('PASS') + ' Клиент admin подтверждён в runtime Xray (UUID и Vision как в state).')
+    elif status == 'WARN':
+        term.say(term.mark('WARN') + ' Клиент admin не найден в runtime Xray или отличается от state: '
+                 'ссылка может не работать.')
     else:
         term.say(term.mark('UNKNOWN') + ' Наличие клиента admin в runtime Xray не подтверждено.')
+        term.say('  Причина: ' + reason)
     term.say('Ссылка взята из state установки. Если клиента admin изменили или удалили\n'
              'в 3x-ui, она может не работать; проверка: bob doctor.')
     return OK
