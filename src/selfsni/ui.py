@@ -123,6 +123,8 @@ class InstallerUI:
         print('\nСледующий шаг:\nПодписки доступны через общий HTTPS/443.\nVPN-клиент admin уже создан: Vision, без лимитов и срока действия.\n'
               'Откройте панель 3x-ui и получите его ссылку или подписку для подключения.\n\nОтчёт:\n/var/lib/selfsni/acceptance.json',
               file=self.stream, flush=True)
+        if (state.get('doctor_cli') or {}).get('status') == 'installed':
+            print('\nМеню управления сервером (только чтение): bob', file=self.stream, flush=True)
 
 
 def _read(source, output, prompt):

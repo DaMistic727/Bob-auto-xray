@@ -1,3 +1,11 @@
+# v0.4.1 Preview · меню `bob`
+
+Состав: v0.4.0 + read-only меню и команды `bob` (`selfsni.cli`) и обновление только CLI `install.sh cli-upgrade` (`selfsni.cli_install`). Provision, Doctor, шаблоны и конфигурация VPN не менялись; в `provision` изменена только раскладка устанавливаемого CLI (VERSION, манифест, новый wrapper).
+
+Unit-тесты: `tests/test_cli.py` (меню, подтверждение секретов, non-TTY, TERM=dumb/NO_COLOR, права root, symlink в пути и вместо файла, FIFO/hard link/каталог, повреждённый/незавершённый state, redaction, read-only `status` через Doctor, сводка acceptance без `reason`, побайтная совместимость `bob doctor` и exit codes 0–3) и `tests/test_cli_upgrade.py` (wrapper v0.4.0 побайтно, реальное дерево тега v0.4.0, свежая установка с манифестом, обновление v0.4.0 → новая версия с проверкой `bob doctor --json`, идемпотентность, `--check`, отказ для чужих/изменённых/symlink/writable файлов, откат при сбое проверки, staged-пакета и rename, отчёт о неудачном откате, lock установщика, запуск из установленной библиотеки, `install.sh cli-upgrade`).
+
+**NOT TESTED** для этой сборки: VPS E2E (меню в реальном SSH-терминале, `cli-upgrade` на реальной ноде v0.4.0, чистая установка v0.4.1), Ubuntu 22.04/24.04, arm64. Ограничения v0.4.0 ниже сохраняются.
+
 # v0.4.0 Preview · release candidate
 
 Состав: main v0.3.8 + #17/#18, Bob Doctor (PR #11), 3x-ui v3.11.0 без спонсорских блоков (PR #19) и release-исправления: права каталога IPv6 drop-in (причина возврата IPv6 после reboot), разделение link-local/глобального IPv6 в Doctor, повторное применение IPv6-политики при resume, отказ preflight при работающем cloud-init.

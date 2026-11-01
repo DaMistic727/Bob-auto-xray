@@ -5,7 +5,6 @@ import os
 from pathlib import Path
 import platform
 import re
-import shlex
 import shutil
 import socket
 import ssl
@@ -17,6 +16,7 @@ import time
 from .api import PANEL_ACCESS, Panel, request, public_subscription_url
 from . import bbr, ipv6, swap
 from .clients import ensure_admin, verify_admin_runtime, verify_admin_subscriptions
+from . import cli_install
 from .core import (ROOT, CommandError, InstallError, configure_diagnostics, redact,
                    register_secrets, require, run, write, save, token, free_port,
                    fqdn, download, verify_bundle, wait_for, digest,
@@ -75,9 +75,9 @@ CONTROLLED_PATHS = [
     '/usr/local/lib/bob-auto-xray',
 ]
 
-DOCTOR_LIB = Path('/usr/local/lib/bob-auto-xray')
-DOCTOR_COMMAND = Path('/usr/local/bin/bob')
-DOCTOR_PYTHON = Path('/usr/bin/python3')
+DOCTOR_LIB = cli_install.LIBRARY
+DOCTOR_COMMAND = cli_install.COMMAND
+DOCTOR_PYTHON = cli_install.PYTHON
 
 
 DOCTOR_NOTES = {
@@ -99,8 +99,8 @@ def install_doctor_cli():
     staging = None
     try:
         staging = Path(tempfile.mkdtemp(prefix='.' + DOCTOR_LIB.name + '.', dir=DOCTOR_LIB.parent))
-        shutil.copytree(ROOT / 'src/selfsni', staging / 'selfsni',
-                        ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+        # Package, VERSION and a manifest that later proves ownership to cli-upgrade.
+        cli_install.stage_library(staging, ROOT / 'src/selfsni', (ROOT / 'VERSION').read_text().strip())
         os.rename(staging, DOCTOR_LIB)
         staging = None
     except Exception:
@@ -110,11 +110,7 @@ def install_doctor_cli():
             shutil.rmtree(staging, ignore_errors=True)
     if shutil.which('bob') is not None or DOCTOR_COMMAND.exists() or DOCTOR_COMMAND.is_symlink():
         return {'status': 'command-name-taken', 'command': None}
-    code = (f'import sys; sys.path.insert(0, {json.dumps(str(DOCTOR_LIB))}); '
-            'from selfsni.doctor import main; sys.exit(main())')
-    script = ('#!/bin/sh\nset -eu\n'
-              'if [ "${1:-}" = doctor ]; then shift; fi\n'
-              f'exec {shlex.quote(str(DOCTOR_PYTHON))} -I -B -c {shlex.quote(code)} "$@"\n')
+    script = cli_install.wrapper(DOCTOR_LIB, DOCTOR_PYTHON)
     temporary = None
     try:
         fd, temporary = tempfile.mkstemp(prefix='.' + DOCTOR_COMMAND.name + '.', dir=DOCTOR_COMMAND.parent)
