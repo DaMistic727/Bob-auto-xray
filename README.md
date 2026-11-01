@@ -30,7 +30,7 @@
 | **Маршрутизация** | Basic UI `blocked`, RU/UA/private/BitTorrent и категории рекламы GeoSite блокируются; `IPOnDemand`, остальное DIRECT |
 | **Geodata** | Штатный Xray hot reload четырёх файлов ежедневно в 03:00 МСК через `direct`, с rollback |
 | **TCP BBR** | Автоматически настраивается на поддерживаемом ядре Linux, с FQ pacing и сохранением после reboot |
-| **IPv4-only** | Настраиваются проектные sysctl и networkd drop-in. Известное ограничение: после reboot на основном интерфейсе может вернуться IPv6 link-local (без глобального IPv6); Doctor показывает `WARN`. Требуются SSH по IPv4 и FQDN без AAAA |
+| **IPv4-only** | Проектные sysctl и networkd drop-in, сохраняются после reboot (v0.4.0). Ноды до v0.4.0: Doctor подскажет `chmod 755` каталога drop-in. Требуются SSH по IPv4 и FQDN без AAAA |
 | **Happ / INCY** | Отдельные профили и способы доставки; правила из [DigneZzZ/routing](https://github.com/DigneZzZ/routing) |
 | **Защита** | UFW с сохранением SSH, штатная интеграция Fail2ban 3x-ui |
 
@@ -131,7 +131,7 @@ Doctor не перезапускает службы, не вызывает API 3
 
 | Платформа / сценарий | Статус |
 |---|---|
-| v0.4.0 | Bob Doctor: VPS E2E PASS на кандидате `4428fd8` (4 ноды Ubuntu 26.04.1); полная сборка v0.4.0 с 3x-ui v3.11.0 на VPS NOT TESTED, см. [TESTING.md](docs/TESTING.md) |
+| v0.4.0 · Ubuntu 26.04.1 amd64, чистая ОС, новый WARP | Чистая установка, повтор, Doctor во всех режимах, внешний VLESS Vision/WARP/routing, восстановление клиента после рестарта Xray и reboot, IPv6 после reboot — [E2E-V040.md](docs/E2E-V040.md). Ubuntu 22.04/24.04, `--no-warp`/`--adopt-warp` этой сборки NOT TESTED |
 | v0.3.6 | Локальные тесты, real Nginx и pinned 3x-ui API в CI; VPS clean install/reboot NOT TESTED |
 | v0.3.5 · сообщение владельца | Установка, HTTPS/443, Reality Vision, Happ/INCY, WARP и routing проверены владельцем. Это не E2E v0.3.6 и не подтверждение IPv6 persistence |
 | v0.3.4 · исторический официальный WARP на Ubuntu 26.04.1 amd64 | Smoke E2E #1: чистая установка, новая регистрация, Certbot, REALITY Vision и on-host 27/27. Позднее IPv6 отключение проверено на уже установленной VPS до/после reboot; отдельная чистая установка с этим изменением не проверена |

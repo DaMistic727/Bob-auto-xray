@@ -22,14 +22,23 @@ Mock regression воспроизводит последовательность 
 
 Чистая установка, повторная инициализация настоящего интерфейса и reboot v0.3.5: **NOT TESTED**. VPS при подготовке релиза не использовались.
 
-## v0.4.0: что известно после VPS E2E Doctor (1 ноября 2026)
+## v0.4.0: причина доказана и исправлена (1 ноября 2026)
 
-**Наблюдение.** На всех нодах E2E Doctor (Ubuntu 26.04.1, OpenStack, virtio `ens3`, netplan → networkd; v0.3.4 и кандидат v0.3.8) до reboot IPv6 отключён полностью, после reboot `ens3` снова имеет `disable_ipv6=0` и ровно один адрес — link-local. Глобальных IPv6-адресов нет; drop-in и sysctl-файл после reboot не изменены, `networkctl` указывает тот же `10-netplan-ens3.network`.
+**Наблюдение до исправления.** На всех нодах E2E Doctor и на чистой установке кандидата v0.4.0 (Ubuntu 26.04.1, systemd 259, netplan → networkd, `ens3`) до reboot IPv6 выключен полностью, после reboot `ens3` имеет `disable_ipv6=0` и один link-local адрес; глобального IPv6 и IPv6-маршрутов нет.
 
-**Что исключено по исходникам.** В systemd v259 единственная запись `disable_ipv6=0` — `link_update_ipv6_sysctl()` в networkd, и только если `link_ipv6_enabled()`: IPv6LL разрешён (`LinkLocalAddressing` с IPv6) или в `.network` есть статическая IPv6-конфигурация. cloud-init и netplan `disable_ipv6` не пишут; udev-правило systemd применяет к новому интерфейсу sysctl-файлы, то есть `1`. Значит, наиболее вероятно, что в момент настройки `ens3` при загрузке networkd не видел действующего `LinkLocalAddressing=no` (drop-in не был применён к этой конфигурации) либо писатель находится вне systemd. **Это гипотеза: журнал networkd и effective config после reboot не сохранялись, причина не доказана.**
+**Доказательство.** С `SYSTEMD_LOG_LEVEL=debug` для systemd-networkd журнал загрузки содержит:
 
-**Оценка риска.** Только link-local не даёт глобальной IPv6-связности и обхода маршрутизации/WARP; UFW применяет те же правила SSH/80/443 к IPv6, внутренние порты слушают только `127.0.0.1`. Поэтому для v0.4.0 это известное ограничение политики IPv4-only, а не утечка. Маршрутизируемый IPv6-адрес по-прежнему `FAIL` в Doctor и в acceptance.
+```
+systemd-networkd: Failed to chase and open directory '/etc/systemd/network/10-netplan-ens3.network.d', ignoring: Permission denied
+systemd-networkd: ens3: Configuring with /run/systemd/network/10-netplan-ens3.network.
+systemd-networkd: Setting '/proc/sys/net/ipv6/conf/ens3/disable_ipv6' to '0'
+systemd-networkd: ens3: Gained IPv6LL
+```
 
-**Изменения v0.4.0.** Doctor различает `FAIL` (маршрутизируемый адрес) и `WARN` (только link-local / `disable_ipv6=0`). Resume с `WARP`/`CERTIFICATE` заново применяет сохранённую политику до acceptance. Установленную ноду можно вернуть к политике до следующего reboot: `sysctl -w net.ipv6.conf.<интерфейс>.disable_ipv6=1` для каждого интерфейса из `enabledInterfaces` отчёта Doctor.
+Каталог drop-in имел права `0700`: установщик работает с `umask 077`, а `atomic_write()` создавал отсутствующий каталог с этими правами. systemd-networkd работает от `systemd-network`, не видел `LinkLocalAddressing=no` и по netplan-файлу (`LinkLocalAddressing=ipv6`) включал IPv6 (`link_update_ipv6_sysctl()` в systemd v259). До reboot это скрывали прямые записи sysctl установщика; `networkctl cat` запускается от root и показывал drop-in, что вводило в заблуждение. Ранняя гипотеза о networkd в initramfs не подтвердилась: initrd кратко поднимает link-local по `zzzz-dracut-default.network`, но после switch-root `systemd-sysctl` его снимает.
 
-**Минимальное действие для доказательства причины** (одна VPS, одна перезагрузка): перед reboot временно включить отладку networkd (`systemctl edit systemd-networkd` → `Environment=SYSTEMD_LOG_LEVEL=debug`), после reboot сохранить `networkctl cat ens3`, `journalctl -b -u systemd-networkd -u systemd-sysctl -u systemd-udevd`, `sysctl net.ipv6.conf.{all,default,ens3}.disable_ipv6`, `ip -6 addr`. Строка networkd о записи `disable_ipv6` или её отсутствие определяет писателя; затем отладку убрать.
+**Исправление v0.4.0.** `ipv6.configure()` создаёт каталог drop-in с правами `0755` (существующий каталог Bob получает `0755`); `ipv6.verify()` отказывает, если networkd не может прочитать drop-in; Doctor показывает такой drop-in как `WARN` с командой `chmod 755 <каталог>`.
+
+**Проверка на VPS.** Doctor кандидата указал проблему на ноде, установленной до исправления. Применение политики кодом исправленной сборки под `umask 077` дало каталог `755`, networkd сразу перешёл на `IPv6 Address Generation Mode: none`. После reboot: `all/default/lo/ens3 disable_ipv6 = 1`, IPv6-адресов 0, маршрутов 0, networkd пишет `Configuring with … (dropins: …99-zz-bob-auto-xray-ipv4-only.conf)` и `disable_ipv6` не меняет; Doctor `HEALTHY`. Подробности: [E2E-V040.md](E2E-V040.md).
+
+**Уже установленные ноды** (v0.3.4–v0.3.8) автоматически не мигрируют. Достаточно `chmod 755 /etc/systemd/network/<netplan>.network.d` (точный путь показывает Doctor); вернуть текущую загрузку без reboot можно `sysctl -w net.ipv6.conf.<интерфейс>.disable_ipv6=1`.
