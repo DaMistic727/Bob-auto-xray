@@ -238,11 +238,13 @@ class WarpModeTests(unittest.TestCase):
                  patch.object(provision, 'install_warp') as install, \
                  patch.object(provision.menu_warp, 'health', side_effect=health), \
                  patch.object(provision, 'certificate', side_effect=certificate), \
+                 patch.object(provision.ipv6, 'configure',
+                              side_effect=lambda domain: events.append('ipv6') or ({}, {})), \
                  patch('sys.argv', ['install', '--domain', 'vpn.example.com']), \
                  patch('sys.stdout', io.StringIO()):
                 with self.assertRaises(SystemExit):
                     provision.main()
-            self.assertEqual(events, ['health', 'certbot'])
+            self.assertEqual(events, ['ipv6', 'health', 'certbot'])
             install.assert_not_called()
             result = json.loads((root/'state/state.json').read_text())
             self.assertEqual(result['installation_id'], saved['installation_id'])
@@ -305,6 +307,8 @@ class WarpModeTests(unittest.TestCase):
                  patch.object(provision, 'adopt_warp') as adopt, \
                  patch.multiple(provision, certificate=DEFAULT, decoy=DEFAULT,
                                 panel=DEFAULT, security=DEFAULT, renew_hook=DEFAULT), \
+                 patch.object(provision, 'install_doctor_cli',
+                              return_value={'status': 'installed', 'command': '/usr/local/bin/bob'}), \
                  patch.object(acceptance, 'verify', return_value={'checks':[{'passed':True}]}), \
                  patch('sys.argv', ['install', '--domain', 'vpn.example.com', '--no-warp']), \
                  patch('sys.stdout', io.StringIO()):

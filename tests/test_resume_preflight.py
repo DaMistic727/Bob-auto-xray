@@ -418,5 +418,78 @@ class ResumeCarriedStateTests(unittest.TestCase):
         self.assertEqual(self.host.preflight(saved)['swap'], saved['swap'])
 
 
+class CloudInitPreflightTests(unittest.TestCase):
+    def test_running_cloud_init_is_refused_before_sshd_is_queried(self):
+        with tempfile.TemporaryDirectory() as directory:
+            host = Host(directory)
+            (host.proc / '4242').mkdir(parents=True)
+            (host.proc / '4242/comm').write_text('cloud-init\n')
+            commands = []
+            original = host.command
+            host.command = lambda *parts, **kwargs: commands.append(parts) or original(*parts, **kwargs)
+            with self.assertRaisesRegex(InstallError, 'cloud-init status --wait'):
+                host.preflight(host.saved('WARP', 'install'))
+            self.assertNotIn(('/usr/sbin/sshd', '-T'), commands)
+            (host.proc / '4242/comm').write_text('sshd\n')
+            host.preflight(host.saved('WARP', 'install'))
+            self.assertIn(('/usr/sbin/sshd', '-T'), commands)
+
+
+class ResumeAfterRebootTests(unittest.TestCase):
+    """A reboot between attempts may re-enable IPv6 at runtime (VPS E2E 2026-11-01)."""
+
+    def run_installer(self, stage):
+        import io
+        import json
+        from unittest.mock import DEFAULT
+        import selfsni.acceptance as acceptance
+        from test_warp_modes import state
+        saved = dict(state('skip'), ipv6={'old': True}, bbr={}, swap={'status': 'skipped'})
+        if stage:
+            saved.update(stage=stage, last_completed_stage=PREVIOUS[stage])
+        calls = []
+        configure = MagicMock(side_effect=lambda domain: calls.append(domain) or ({'fresh': True}, {}))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            if stage:
+                (root / 'state').mkdir()
+            with patch.object(provision, 'STATE', root / 'state'), \
+                 patch.object(provision, 'load', side_effect=lambda path: dict(saved) if stage else None), \
+                 patch.object(provision, 'upgrade_legacy_apt_failure', side_effect=lambda value, *a: value), \
+                 patch.object(provision, 'validate_resume', side_effect=lambda value, *a: value), \
+                 patch.object(provision, 'DIAGNOSTIC_LOG', root / 'install.log'), \
+                 patch.object(provision, 'INSTALL_LOCK', root / 'install.lock'), \
+                 patch.object(provision, 'CONTROLLED_PATHS', []), \
+                 patch.object(provision, 'preflight', return_value=saved), \
+                 patch.object(provision, 'AptRunner'), \
+                 patch.object(provision, 'run', return_value='versions'), \
+                 patch.object(provision, 'firewall'), \
+                 patch.multiple(provision, ipv6=MagicMock(configure=configure),
+                                bbr=MagicMock(configure=MagicMock(return_value={})),
+                                swap=MagicMock(configure=MagicMock(return_value={'status': 'skipped'}))), \
+                 patch.multiple(provision, certificate=DEFAULT, decoy=DEFAULT, panel=DEFAULT,
+                                security=DEFAULT, renew_hook=DEFAULT), \
+                 patch.object(provision, 'install_doctor_cli', return_value={'status': 'installed'}), \
+                 patch.object(acceptance, 'verify', return_value={'checks': [{'passed': True}]}), \
+                 patch('sys.argv', ['install', '--domain', 'vpn.example.com', '--no-warp']), \
+                 patch('sys.stdout', io.StringIO()):
+                provision.main()
+            final = json.loads((root / 'state/state.json').read_text())
+        return calls, final
+
+    def test_resume_restores_ipv6_runtime_policy_before_acceptance(self):
+        for stage in ('WARP', 'CERTIFICATE'):
+            with self.subTest(stage=stage):
+                calls, final = self.run_installer(stage)
+                self.assertEqual(calls, ['vpn.example.com'])
+                self.assertEqual(final['ipv6'], {'fresh': True})
+                self.assertEqual(final['status'], 'HEALTHY_LOCAL')
+
+    def test_fresh_install_applies_ipv6_once(self):
+        calls, final = self.run_installer(None)
+        self.assertEqual(calls, ['vpn.example.com'])
+        self.assertEqual(final['status'], 'HEALTHY_LOCAL')
+
+
 if __name__ == '__main__':
     unittest.main()
