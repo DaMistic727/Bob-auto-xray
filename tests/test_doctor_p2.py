@@ -165,11 +165,31 @@ class Ipv6ScopeTests(unittest.TestCase):
         queries = [args for args in commands if args[:3] == ('ip', '-j', '-6')]
         self.assertEqual(queries, [('ip', '-j', '-6', 'address', 'show')])
 
-    def test_link_local_address_is_fail(self):
+    def test_link_local_after_reboot_is_policy_drift_not_global_ipv6(self):
+        # Observed on every VPS E2E node after reboot: ens3 back to 0 with only fe80::/64.
         probe = FakeProbe('install')
+        probe.ipv6_values['ens3'] = '0'
         probe.ipv6_addresses = [{'ifname': 'ens3', 'addr_info': [
             {'family': 'inet6', 'local': 'fe80::1', 'scope': 'link'}]}]
-        self.assertEqual(check(doctor.Doctor(probe).run(), 'system.ipv6')['status'], 'FAIL')
+        report = doctor.Doctor(probe).run()
+        result = check(report, 'system.ipv6')
+        self.assertEqual(result['status'], 'WARN')
+        self.assertEqual(result['details'], {'enabledInterfaces': ['ens3'],
+                                             'linkLocalAddresses': 1, 'globalAddresses': 0})
+        self.assertEqual(report['overallStatus'], 'DEGRADED')
+        self.assertNotIn('fe80::1', json.dumps(report))
+
+    def test_routable_ipv6_address_is_fail_even_beside_link_local(self):
+        for info in ({'local': '2001:db8::1', 'scope': 'global'}, {'local': 'fd00::1', 'scope': 'site'},
+                     {'local': '2001:db8::2'}, 'malformed'):
+            probe = FakeProbe('install')
+            probe.ipv6_values['ens3'] = '0'
+            probe.ipv6_addresses = [{'ifname': 'ens3', 'addr_info': [
+                {'local': 'fe80::1', 'scope': 'link'}, info]}]
+            report = doctor.Doctor(probe).run()
+            self.assertEqual(check(report, 'system.ipv6')['status'], 'FAIL', info)
+            self.assertEqual(report['overallStatus'], 'UNHEALTHY', info)
+            self.assertNotIn('2001:db8', json.dumps(report))
 
 
 class XrayPinTests(unittest.TestCase):

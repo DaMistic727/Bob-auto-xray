@@ -22,7 +22,7 @@ from .core import (ROOT, CommandError, InstallError, configure_diagnostics, reda
                    fqdn, download, verify_bundle, wait_for, digest,
                    configure_activity)
 from .certbot_errors import explain as explain_certbot
-from .apt import AptRunner
+from .apt import AptRunner, background_package_processes
 from .menu_upstream import OFFICIAL_REPOSITORY, check_official_menu, install_menu
 from . import menu_warp
 from .install_state import (RESUMABLE_FAILURE_STAGES, STAGES, InstallerLock, checkpoint, fail,
@@ -279,6 +279,10 @@ def preflight(args, resume_state=None):
     require(not warp_present or args.warp_mode in ('adopt', 'skip') or warp_resume,
             'Existing WARP: needs explicit --adopt-warp')
     require(args.warp_mode != 'adopt' or warp_present, '--adopt-warp requires an existing installation')
+    # On a fresh VPS cloud-init may still be upgrading openssh-server: sshd -T then exits 255.
+    require('cloud-init' not in background_package_processes(PROC_ROOT),
+            'cloud-init ещё настраивает систему; дождитесь `cloud-init status --wait` '
+            'и запустите установку снова')
     # Socket activation may expose ports absent from sshd_config; preserve both.
     ssh_ports = set()
     ssh_config = run('/usr/sbin/sshd', '-T')
@@ -716,6 +720,10 @@ def main():
                     checkpoint(STATE, s, 'FIREWALL'); UI.stage(6, 13, 'Настройка сетевой защиты')
                     firewall(s); checkpoint(STATE, s, 'FIREWALL', True)
                     UI.stage(6, 13, 'Настройка сетевой защиты', 'ok')
+                else:
+                    # A reboot between attempts can re-enable IPv6 on the interface while the
+                    # persisted files stay intact; restore the runtime policy before acceptance.
+                    s['ipv6'], _ = ipv6.configure(s['domain'])
                 if resume_target != 'CERTIFICATE':
                     checkpoint(STATE, s, 'WARP')
                     if s['warp_mode'] == 'skip':

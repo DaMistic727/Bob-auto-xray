@@ -844,10 +844,19 @@ class Doctor:
                 any(not isinstance(row, dict) for row in addresses)):
             return self.answer('UNKNOWN', 'Список IPv6-интерфейсов неполон.',
                                suggestion=SUGGEST['ipv6'])
-        if any(value != '1' for value in values.values()) or any(
-                row.get('addr_info') for row in addresses):
-            return self.answer('FAIL', 'IPv6 включён на интерфейсе или имеет адрес (включая link-local).',
+        enabled = sorted(name for name, value in values.items() if value != '1')
+        scopes = [info.get('scope') if isinstance(info, dict) else None
+                  for row in addresses for info in (row.get('addr_info') or [])]
+        # Only link-local/host scope is proven unroutable; any other or missing scope is global.
+        routable = sum(scope not in ('link', 'host') for scope in scopes)
+        details = {'enabledInterfaces': enabled, 'linkLocalAddresses': len(scopes) - routable,
+                   'globalAddresses': routable}
+        if routable:
+            return self.answer('FAIL', 'На хосте есть маршрутизируемый IPv6-адрес.', details,
                                suggestion=SUGGEST['ipv6'])
+        if enabled or scopes:
+            return self.answer('WARN', 'IPv6 снова включён (только link-local, глобального IPv6 нет).',
+                               details, suggestion=SUGGEST['ipv6'])
         if legacy_dropin:
             return self.answer('WARN', 'IPv6 отключён, но networkd drop-in старого формата v0.3.4.',
                                suggestion=SUGGEST['ipv6'])

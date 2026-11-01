@@ -315,7 +315,7 @@ class DoctorTests(unittest.TestCase):
             else:
                 probe.symlinks.add(str(ipv6.CONFIG))
             report = doctor.Doctor(probe).run()
-            expected = 'WARN' if change == 'conflict' else 'FAIL'
+            expected = 'WARN' if change in ('conflict', 'interface') else 'FAIL'
             self.assertEqual(check(report, 'system.ipv6')['status'], expected, change)
             self.assertNotEqual(report['overallStatus'], 'HEALTHY', change)
         probe = FakeProbe()
