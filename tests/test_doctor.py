@@ -59,7 +59,9 @@ class FakeProbe:
         row = inbound('vpn.example.com', 'SECRET_PRIVATE', 'public', 'SECRET_SHORT')
         row['streamSettings'] = json.loads(row['streamSettings'])
         row['settings'] = json.loads(row['settings'])
-        row['settings']['clients'] = [{'id': 'SECRET_CLIENT_UUID'}]
+        row['settings']['clients'] = [{'id': 'SECRET_CLIENT_UUID'},
+                                      {'id': 'SECRET_ADMIN_UUID', 'email': 'admin',
+                                       'flow': 'xtls-rprx-vision'}]
         config['inbounds'] = [row, {'tag': 'extra', 'port': 444, 'protocol': 'vless'}]
         config['geodata'] = automatic_config()
         self.state = state
@@ -86,7 +88,10 @@ class FakeProbe:
                                    '-A ufw-user-input -p tcp --dport 80 -j ACCEPT\n'
                                    '-A ufw-user-input -p tcp --dport 443 -j ACCEPT\n',
             '/etc/ufw/user6.rules': '-A ufw6-user-input -p tcp --dport 22 -j ACCEPT\n',
+            '/var/lib/selfsni/panel-ready': 'loopback TLS configured\n',
+            '/etc/systemd/system/x-ui.service.d/20-selfsni.conf': provision.xui_unit_override(mode),
         })
+        self.state_dir = ['state.json', 'acceptance.json', 'panel-ready', 'progress.log']
         self.public_calls = []
         self.xray_digest = 'f' * 64
         self.public_error = None
@@ -175,6 +180,12 @@ class FakeProbe:
         if self.public_error:
             raise self.public_error
         return self.public_responses.get(path, (404, {}))
+
+    def listdir(self, path):
+        self.calls.append(('listdir', str(path)))
+        if isinstance(self.state_dir, Exception):
+            raise self.state_dir
+        return list(self.state_dir)
 
     def digest(self, path):
         self.calls.append(('digest', str(path)))

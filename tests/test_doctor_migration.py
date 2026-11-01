@@ -23,6 +23,8 @@ def legacy(probe, version):
     """Reshape the v0.3.8 fake into what an older release actually left behind."""
     if version in ('v0.3.4', 'v0.3.5'):
         probe.state.pop('admin_client')
+        clients = probe.config['inbounds'][0]['settings']['clients']
+        clients[:] = [c for c in clients if c.get('email') != 'admin']
         for rule in probe.config['routing']['rules']:
             if isinstance(rule.get('domain'), list) and GLOBAL_ADS in rule['domain']:
                 rule['domain'] = [d for d in rule['domain'] if d != GLOBAL_ADS]
@@ -38,6 +40,10 @@ def legacy(probe, version):
         probe.commands[('ss', '-H', '-lntp')] = (0, listeners)
         probe.files['/etc/ufw/user.rules'] += '-A ufw-user-input -p tcp --dport 21000 -j ACCEPT\n'
         probe.files[str(probe.network_path)] = ipv6.LEGACY_NETWORK_CONTENT
+        # The x-ui start gate (marker + drop-in) arrived with the v0.3.5 panel.
+        probe.files.pop('/var/lib/selfsni/panel-ready')
+        probe.files.pop('/etc/systemd/system/x-ui.service.d/20-selfsni.conf')
+        probe.state_dir.remove('panel-ready')
         for name in ('/etc/nginx/conf.d/selfsni-tls.conf', '/etc/nginx/snippets/selfsni-panel.conf',
                      '/etc/nginx/snippets/selfsni-subscription.conf'):
             probe.files.pop(name)

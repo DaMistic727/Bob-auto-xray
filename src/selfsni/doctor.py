@@ -38,6 +38,10 @@ NGINX_TLS = '/etc/nginx/conf.d/selfsni-tls.conf'
 PANEL_SNIPPET = '/etc/nginx/snippets/selfsni-panel.conf'
 SUB_SNIPPET = '/etc/nginx/snippets/selfsni-subscription.conf'
 UFW_RULES = ('/etc/ufw/user.rules', '/etc/ufw/user6.rules')
+STATE_DIR = '/var/lib/selfsni'
+# v0.3.5 gates every x-ui start on this marker via the unit drop-in.
+GATE_MARKER = STATE_DIR + '/panel-ready'
+GATE_DROPIN = '/etc/systemd/system/x-ui.service.d/20-selfsni.conf'
 SUGGEST = {
     'state': 'Проверьте завершение установки и права root; не запускайте resume без выяснения причины.',
     'service': 'Проверьте статус и журнал службы вручную; Doctor её не перезапускает.',
@@ -116,6 +120,9 @@ class Probe:
             return response.status, {k.lower(): v for k, v in response.getheaders()}
         finally:
             conn.close()
+
+    def listdir(self, path):
+        return [entry.name for entry in Path(path).iterdir()]
 
     def digest(self, path):
         from .core import digest
@@ -362,6 +369,45 @@ class Doctor:
             return self.answer('WARN', 'Бинарник Xray отличается от закреплённой проверенной версии.',
                                suggestion=SUGGEST['config'])
         return self.answer('PASS', 'Бинарник Xray совпадает с закреплённой версией.')
+
+    def panel_gate(self):
+        if self.state['panel_access'] != HTTPS_443:
+            return self.answer('SKIP', 'Старая схема без gate запуска x-ui.')
+        from .provision import xui_unit_override
+        try:
+            if self.p.is_symlink(GATE_MARKER) or not stat.S_ISREG(self.p.stat(GATE_MARKER).st_mode):
+                return self.answer('FAIL', 'Маркер запуска x-ui заменён.', suggestion=SUGGEST['service'])
+        except FileNotFoundError:
+            return self.answer('FAIL', 'Маркер запуска x-ui отсутствует; служба не стартует после '
+                               'перезапуска.', suggestion=SUGGEST['service'])
+        try:
+            dropin = self.p.read(GATE_DROPIN)
+        except FileNotFoundError:
+            return self.answer('FAIL', 'Drop-in запуска x-ui отсутствует.', suggestion=SUGGEST['service'])
+        if dropin != xui_unit_override(self.mode):
+            return self.answer('WARN', 'Drop-in запуска x-ui отличается от ожидаемого.',
+                               suggestion=SUGGEST['service'])
+        return self.answer('PASS', 'Gate запуска x-ui на loopback TLS на месте.')
+
+    def admin_client(self):
+        if not self.state['admin_client']:
+            return self.answer('SKIP', 'Установка до постоянного клиента admin.')
+        rows = [x for x in self.config.get('inbounds', []) if isinstance(x, dict) and x.get('port') == 443]
+        settings = rows[0].get('settings') if len(rows) == 1 else None
+        clients = settings.get('clients') if isinstance(settings, dict) else None
+        admins = [c for c in clients or () if isinstance(c, dict) and c.get('email') == 'admin']
+        # The operator may remove or change it on purpose: report, never fail.
+        if len(admins) != 1 or admins[0].get('flow') != 'xtls-rprx-vision':
+            return self.answer('WARN', 'Постоянный клиент admin отсутствует, изменён или дублирован.',
+                               suggestion=SUGGEST['config'])
+        return self.answer('PASS', 'Постоянный клиент admin есть в runtime с Vision.')
+
+    def state_temporary(self):
+        # atomic_write() leaves .<name>.<random> only after kill -9 or power loss.
+        if any(re.fullmatch(r'\.[\w-]+\.json\.\w+', name) for name in self.p.listdir(STATE_DIR)):
+            return self.answer('WARN', 'В каталоге state остался временный файл прерванной записи '
+                               '(может содержать секреты).', suggestion=SUGGEST['state'])
+        return self.answer('PASS', 'Временных файлов state нет.')
 
     def unix_socket(self):
         try:
@@ -899,11 +945,13 @@ class Doctor:
             overall = 'UNKNOWN'
         else:
             self.add('core.xui', 'service', lambda: self.service('x-ui'))
+            self.add('core.panelGate', 'service', self.panel_gate)
             self.add('core.nginx', 'service', lambda: self.service('nginx'))
             self.add('core.php', 'service', lambda: self.service(self.state.get('php_service', 'php-fpm')))
             self.add('core.config', 'config', self.runtime_config)
             if self.config is not None:
                 self.add('core.inbound', 'config', self.inbound)
+                self.add('core.adminClient', 'config', self.admin_client)
                 self.add('routing.invariants', 'routing', self.routing)
                 self.add('geodata.schedule', 'geodata', self.geodata_schedule)
             self.add('core.port443', 'listener', self.listener)
@@ -925,6 +973,7 @@ class Doctor:
             self.add('security.permissions', 'security', self.secret_permissions)
             self.add('security.internalListeners', 'security', self.internal_listeners)
             self.add('security.internalFirewall', 'security', self.internal_firewall)
+            self.add('security.stateTemp', 'security', self.state_temporary)
             self.add('system.bbr', 'system', self.bbr)
             self.add('system.ipv6', 'ipv6', self.ipv6_check)
             self.add('system.swap', 'swap', self.swap_check)
