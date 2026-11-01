@@ -18,7 +18,7 @@ import uuid
 import zipfile
 from unittest.mock import patch
 
-from selfsni import cli
+from selfsni import cli as bob_cli
 from selfsni.clients import (ensure_admin, read_clients, validate_admin,
                              snapshot_clients, cleanup_owned_client,
                              verify_admin_runtime, verify_admin_subscriptions)
@@ -148,7 +148,7 @@ def main():
                 node = root/'node'
                 copy = node/'usr/local/x-ui/bin/config.json'
                 copy.parent.mkdir(parents=True, mode=0o755)
-                with patch.multiple(cli, TRUSTED_ROOT=node, ROOT_UID=os.getuid(), CONFIG=copy):
+                with patch.multiple(bob_cli, TRUSTED_ROOT=node, ROOT_UID=os.getuid(), CONFIG=copy):
                     for clients, expected in ((None, 'PASS'), ([], 'WARN')):
                         value = json.loads((app/'bin/config.json').read_text())
                         if clients is not None:
@@ -156,7 +156,7 @@ def main():
                                 if row.get('port') == 443:
                                     row['settings']['clients'] = clients
                         save(copy, value)
-                        require(cli.runtime_admin(state['admin_client']['id'])[0] == expected,
+                        require(bob_cli.runtime_admin(state['admin_client']['id'])[0] == expected,
                                 'bob admin runtime check differs on real 3x-ui runtime: ' + expected)
                 subprocess.run([str(app/'bin/xray-linux-amd64'), 'run', '-test', '-config',
                                 str(app/'bin/config.json')], check=True, stdout=log, stderr=log)
