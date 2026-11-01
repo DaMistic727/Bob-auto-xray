@@ -1,3 +1,9 @@
+# v0.4.2 Preview · исправление `bob admin`
+
+Состав: v0.4.1 + исправление проверки клиента admin в runtime Xray (`selfsni.cli`). Причина доказана на закреплённом архиве 3x-ui v3.11.0: каталоги `x-ui/` и `x-ui/bin/` в нём принадлежат uid 1001, официальный установщик распаковывает его `tar` от root с сохранением владельца, а CLI требовал root-владельца каталогов пути. Provision, Doctor и конфигурация VPN не менялись.
+
+Проверки: регрессионные `RuntimeAdminTests` в `tests/test_cli.py` (владелец каталогов как в архиве, строгий `state.json`, PASS/WARN/UNKNOWN, повреждённый/отсутствующий/небезопасный runtime, symlink, нет доступа); `tools/test_client_api.py` в CI — `bob admin` на настоящем `config.json` закреплённой 3x-ui v3.11.0 (PASS, без admin — WARN); полный unittest, ShellCheck, воспроизводимая сборка; обновление CLI v0.4.1 → этот код существующим `cli-upgrade` (симуляция). **NOT TESTED:** запуск на реальной VPS.
+
 # v0.4.1 Preview · меню `bob`
 
 Состав: v0.4.0 + read-only меню и команды `bob` (`selfsni.cli`) и обновление только CLI `install.sh cli-upgrade` (`selfsni.cli_install`). Provision, Doctor, шаблоны и конфигурация VPN не менялись; в `provision` изменена только раскладка устанавливаемого CLI (VERSION, манифест, новый wrapper).
