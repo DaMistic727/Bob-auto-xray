@@ -16,7 +16,9 @@ import tarfile
 import tempfile
 import uuid
 import zipfile
+from unittest.mock import patch
 
+from selfsni import cli
 from selfsni.clients import (ensure_admin, read_clients, validate_admin,
                              snapshot_clients, cleanup_owned_client,
                              verify_admin_runtime, verify_admin_subscriptions)
@@ -141,6 +143,21 @@ def main():
                 wait_for(lambda: bool(api.call('inbounds/list')), 'persisted panel after restart')
                 runtime = json.loads((app/'bin/config.json').read_text())
                 verify_admin_runtime(state, runtime)
+                # `bob admin` reads this exact runtime format; a root-only copy stands in for
+                # /usr/local/x-ui/bin/config.json because the harness does not run as root.
+                node = root/'node'
+                copy = node/'usr/local/x-ui/bin/config.json'
+                copy.parent.mkdir(parents=True, mode=0o755)
+                with patch.multiple(cli, TRUSTED_ROOT=node, ROOT_UID=os.getuid(), CONFIG=copy):
+                    for clients, expected in ((None, 'PASS'), ([], 'WARN')):
+                        value = json.loads((app/'bin/config.json').read_text())
+                        if clients is not None:
+                            for row in value['inbounds']:
+                                if row.get('port') == 443:
+                                    row['settings']['clients'] = clients
+                        save(copy, value)
+                        require(cli.runtime_admin(state['admin_client']['id'])[0] == expected,
+                                'bob admin runtime check differs on real 3x-ui runtime: ' + expected)
                 subprocess.run([str(app/'bin/xray-linux-amd64'), 'run', '-test', '-config',
                                 str(app/'bin/config.json')], check=True, stdout=log, stderr=log)
                 state.update(domain='127.0.0.1', sub_port=sub_port, sub_path=sub_path)
