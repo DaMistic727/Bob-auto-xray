@@ -93,6 +93,42 @@ flowchart LR
 
 ## Поддержка и проверки
 
+### Bob Doctor
+
+Read-only диагностика установленного сервера, запуск от root:
+
+```bash
+bob doctor
+bob doctor --deep
+bob doctor --json
+```
+
+`bob` создаётся новыми установками, только если имя свободно. Установка VPN от этого не зависит: результат (`installed`, `command-name-taken`, `library-occupied`, `command-failed` или `failed`) сохраняется в state как `doctor_cli`. На уже установленной ноде, включая установки старых релизов, Doctor запускается из проверенного архива релиза и ничего не устанавливает. Из уже распакованного архива (локальный режим, без загрузки):
+
+```bash
+bash /root/selfsni/install.sh doctor --json
+```
+
+Через опубликованный bootstrap: он уже содержит URL и SHA256 своего архива и сверяет SHA256 до запуска. `<tag>` — релиз, в который вошёл Doctor; bootstrap более ранних релизов (v0.3.8 и старше) команду `doctor` не знает и завершится ошибкой разбора аргументов, ничего не установив.
+
+```bash
+bash <(curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' https://github.com/DaMistic727/Bob-auto-xray/releases/download/<tag>/install.sh) doctor --json
+```
+
+`install.sh` из репозитория (не release asset) не содержит этих значений: URL архива и независимо полученный SHA256 задаются явно, иначе bootstrap откажет до загрузки:
+
+```bash
+SELFSNI_RELEASE_URL='https://…/selfsni-<версия>.tar.gz' SELFSNI_RELEASE_SHA256='<64 hex>' bash install.sh doctor --json
+```
+
+Обычный режим читает state, runtime Xray, службы, listeners, сертификат, routing, GeoData, BBR/FQ, IPv6 (все адреса, включая link-local), SWAP и защиту. Для схемы HTTPS/443 он также проверяет маршруты nginx к панели и подпискам, то, что их внутренние порты слушают только loopback от x-ui и не открыты в UFW, gate запуска x-ui, бинарник Xray против SHA256 установщика, постоянного клиента `admin` и временные файлы state. Сетевых запросов обычный режим не делает. `--deep` добавляет локальные HTTPS GET, публичные пути через 443 (успех только при ответе защищённого proxy) и ограниченные по времени Cloudflare trace через WARP и напрямую.
+
+Старые ноды не мигрируют. Doctor определяет их схему по маркерам state (`panel_access`, `admin_client`, `subscription_access`). Политика, которую нода не получала при установке, даёт `WARN`, а не ложный `UNHEALTHY`; на новых нодах эти инварианты обязательны.
+
+`HEALTHY` (exit `0`) — проверенные локальные инварианты выполнены. `DEGRADED` (`1`) — есть предупреждения. `UNHEALTHY` (`2`) — подтверждённый отказ. `UNKNOWN` (`3`) — данных или прав недостаточно, либо установка не завершена. Отсутствие данных никогда не засчитывается как `PASS`. `--json` печатает один объект со стабильными ID; FQDN, секретные пути, UUID, ключи и хэши в отчёт не попадают.
+
+Doctor не перезапускает службы, не вызывает API 3x-ui и `acceptance.verify()`, не запускает Certbot и ничего не исправляет. `HEALTHY` не подтверждает доступность VPN из сети конкретного провайдера. Контракт: [TESTING.md](docs/TESTING.md), безопасное испытание: [DOCTOR-E2E.md](docs/DOCTOR-E2E.md).
+
 | Платформа / сценарий | Статус |
 |---|---|
 | v0.3.6 | Локальные тесты, real Nginx и pinned 3x-ui API в CI; VPS clean install/reboot NOT TESTED |

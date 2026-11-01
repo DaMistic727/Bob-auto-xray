@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import platform
 import re
+import shlex
 import shutil
 import socket
 import ssl
@@ -71,7 +72,64 @@ CONTROLLED_PATHS = [
     '/etc/fail2ban/jail.d/selfsni-ssh.local',
     '/etc/apt/sources.list.d/cloudflare-client.list', str(bbr.SYSCTL_CONFIG),
     str(bbr.MODULE_CONFIG), str(ipv6.CONFIG),
+    '/usr/local/lib/bob-auto-xray',
 ]
+
+DOCTOR_LIB = Path('/usr/local/lib/bob-auto-xray')
+DOCTOR_COMMAND = Path('/usr/local/bin/bob')
+DOCTOR_PYTHON = Path('/usr/bin/python3')
+
+
+DOCTOR_NOTES = {
+    'library-occupied': 'Каталог Doctor занят; Doctor не установлен, чужие файлы не изменены.',
+    'command-name-taken': 'Имя bob занято другой программой; модуль Doctor сохранён без глобальной команды.',
+    'command-failed': 'Модуль Doctor сохранён, но команду bob создать не удалось.',
+    'failed': 'Bob Doctor не сохранён; запустите его из архива релиза: install.sh doctor.',
+}
+
+
+def install_doctor_cli():
+    """Persist the packaged diagnostic CLI; a failure never fails the VPN installation.
+
+    The library appears atomically (staged copy, then rename) and the command
+    is published with link(), which never replaces an existing name.
+    """
+    if DOCTOR_LIB.exists() or DOCTOR_LIB.is_symlink():
+        return {'status': 'library-occupied', 'command': None}
+    staging = None
+    try:
+        staging = Path(tempfile.mkdtemp(prefix='.' + DOCTOR_LIB.name + '.', dir=DOCTOR_LIB.parent))
+        shutil.copytree(ROOT / 'src/selfsni', staging / 'selfsni',
+                        ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+        os.rename(staging, DOCTOR_LIB)
+        staging = None
+    except Exception:
+        return {'status': 'failed', 'command': None}
+    finally:
+        if staging is not None:
+            shutil.rmtree(staging, ignore_errors=True)
+    if shutil.which('bob') is not None or DOCTOR_COMMAND.exists() or DOCTOR_COMMAND.is_symlink():
+        return {'status': 'command-name-taken', 'command': None}
+    code = (f'import sys; sys.path.insert(0, {json.dumps(str(DOCTOR_LIB))}); '
+            'from selfsni.doctor import main; sys.exit(main())')
+    script = ('#!/bin/sh\nset -eu\n'
+              'if [ "${1:-}" = doctor ]; then shift; fi\n'
+              f'exec {shlex.quote(str(DOCTOR_PYTHON))} -I -B -c {shlex.quote(code)} "$@"\n')
+    temporary = None
+    try:
+        fd, temporary = tempfile.mkstemp(prefix='.' + DOCTOR_COMMAND.name + '.', dir=DOCTOR_COMMAND.parent)
+        os.close(fd)
+        write(temporary, script, 0o755)
+        os.link(temporary, DOCTOR_COMMAND)
+    except FileExistsError:
+        return {'status': 'command-name-taken', 'command': None}
+    except Exception:
+        return {'status': 'command-failed', 'command': None}
+    finally:
+        if temporary is not None:
+            Path(temporary).unlink(missing_ok=True)
+    return {'status': 'installed', 'command': str(DOCTOR_COMMAND)}
+
 
 NGINX_ROOT = Path('/etc/nginx')
 PROC_ROOT = Path('/proc')
@@ -214,7 +272,8 @@ def preflight(args, resume_state=None):
                 args.warp_mode in ('adopt', 'skip') and
                 (p.endswith('/cloudflare-client.list') or p == '/root/VPS-Server-Menu')):
             continue
-        require(not Path(p).exists(), 'Existing installation/configuration: ' + p)
+        require(not (Path(p).exists() or Path(p).is_symlink()),
+                'Existing installation/configuration: ' + p)
     warp_present = shutil.which('warp-cli') is not None if args.warp_mode != 'skip' else False
     warp_resume = bool(args.warp_mode == 'install' and resume_state and resume_state.get('stage') in ('WARP', 'CERTIFICATE'))
     require(not warp_present or args.warp_mode in ('adopt', 'skip') or warp_resume,
@@ -684,6 +743,9 @@ def main():
                 UI.stage(10, 13, 'Установка панели 3x-ui', 'ok')
                 checkpoint(STATE, s, 'SECURITY'); UI.stage(11, 13, 'Защита и продление сертификата')
                 security(s); renew_hook(s); firewall(s,public=True)
+                s['doctor_cli'] = install_doctor_cli()
+                if s['doctor_cli']['status'] in DOCTOR_NOTES:
+                    UI.note(DOCTOR_NOTES[s['doctor_cli']['status']])
                 checkpoint(STATE, s, 'SECURITY', True)
                 UI.stage(11, 13, 'Защита и продление сертификата', 'ok')
                 checkpoint(STATE, s, 'ACCEPTANCE'); UI.stage(12, 13, 'Проверка результата')

@@ -363,3 +363,29 @@ CI должен подтвердить результат фактически; 
 не переносятся на новые байты. Новый clean install, reboot и внешний Vision
 этой ревизии не запускались. P1 IPv6 ens3 остаётся отдельным release blocker;
 ipv6.py, sysctl, networkd и Netplan в этой ревизии не изменяются.
+
+# Bob Doctor: контракт и границы
+
+> Перенос PR #11 на main v0.3.8 (`be69945`) и исправления аудита P1–P3 проверены локально и в CI. VPS E2E перенесённого Doctor (`4428fd8`): **PASS** на нодах A/B/C/D, отчёт — [E2E-PR11-DOCTOR.md](E2E-PR11-DOCTOR.md). Прежние результаты VPS относятся только к кандидату `badbe6f` на базе v0.3.4 и сохранены в [DOCTOR-E2E.md](DOCTOR-E2E.md) как история.
+
+Запуск от root: `bob doctor [--deep] [--json]` на новых установках или `install.sh doctor [--deep] [--json]` из проверенного архива на любой ноде. Диагностика **не меняет** state, `resume_count`, клиентов, inbound, routing, GeoData, сертификаты, службы, UFW, Fail2ban или WARP, не вызывает `acceptance.verify()` и не берёт установочный lock. Обычный режим не обращается к сети. `--deep` добавляет HTTPS GET (loopback и публичные пути через 443) и Cloudflare trace с timeout; GET может породить обычные логи и PHP-сессию. POST к порталу и API save/update отсутствуют.
+
+Отчёт `--json` — ровно один объект: `schemaVersion: 1`, `scope`, `overallStatus`, `summary` (счётчики PASS/WARN/FAIL/SKIP/UNKNOWN), упорядоченный массив `checks` и `timestamp` UTC. Каждая проверка имеет `id`, `component`, `status`, `summary`, `details`, `suggestion`. Сообщения — фиксированные строки; stdout/stderr команд, исключения, FQDN, адреса, секретные пути, UUID и хэши в отчёт не копируются.
+
+Статусы: `HEALTHY` / exit `0` — все выполненные проверки прошли (SKIP разрешён); `DEGRADED` / `1` — есть WARN без FAIL/UNKNOWN; `UNHEALTHY` / `2` — подтверждённый FAIL; `UNKNOWN` / `3` — важная проверка недоступна или установка не завершена. Отказ одного probe не прерывает остальные, отсутствие данных — `UNKNOWN`, никогда не `PASS`.
+
+Проверки: state и маркеры схемы; службы x-ui/nginx/PHP/Fail2ban/certbot.timer; gate запуска x-ui (`core.panelGate`); основной REALITY inbound, Self-SNI target/xver и постоянный клиент `admin` (`core.adminClient`); TCP/443 и бинарник Xray против SHA256 установщика (`core.xrayPin`); Unix socket и маршруты nginx к панели и подпискам (`core.publicRoutes`); сертификат, его использование на трёх локальных TLS listeners и deploy hook; WARP и loopback SOCKS5; routing и outbounds; GeoData; UFW, jails, root-only права, внутренние listeners (`security.internalListeners`), UFW для внутренних портов (`security.internalFirewall`) и временные файлы state (`security.stateTemp`); BBR/FQ, IPv6 по всем адресам, SWAP и место. `--deep`: `deep.fallback`, `deep.panel`, `deep.subscription`, `deep.publicPanel`, `deep.publicSubscription`, `deep.warp`, `deep.egress`.
+
+Старые ноды: политики, которых нода не получала (глобальная блокировка рекламы до v0.3.6, networkd drop-in v0.3.4, публичный порт панели v0.3.4), дают `WARN`; проверки схемы, которой у ноды нет, — `SKIP`; невозможные или неизвестные маркеры — `UNKNOWN`. Ноды, прошедшие resume до PR #17 без `ipv6`/`swap` в state при существующих файлах, дают `UNKNOWN` для этих проверок.
+
+| Проверка | Результат |
+|---|---|
+| `test_doctor.py`: исходные 31 тест; FakeProbe моделирует установку v0.3.8 с настоящими шаблонами nginx | PASS |
+| `test_doctor_migration.py` (P1): публичные маршруты, loopback и UFW, старые ноды v0.3.4/v0.3.5/v0.3.6 | RED 11/12 на `be69945` → GREEN 12/12; 14/14 мутаций убиты |
+| `test_doctor_p2.py` (P2): некритичная атомарная установка CLI, `install.sh doctor`, IPv6 по всем scope, Xray pin, release notes | RED 9/11 на `9918add` → GREEN 11/11; 12/12 мутаций убиты |
+| `test_doctor_p3.py` (P3): gate x-ui, клиент admin, временные файлы state; белый список read-only команд полного `--deep` прогона и запрет записи на диск | RED 5/8 (3 guard-теста) → GREEN 8/8 |
+| `test_bootstrap.py`: bootstrap передаёт `doctor --json` только проверенному payload; без `SELFSNI_RELEASE_URL`/`SELFSNI_RELEASE_SHA256` отказывает до загрузки | PASS (guard) |
+| Полный `unittest` | 289 OK, 1 skip |
+| VPS E2E install/skip/adopt, старая нода v0.3.4 через `install.sh doctor` (архив и bootstrap), reboot | **PASS**, 34 прогона — [E2E-PR11-DOCTOR.md](E2E-PR11-DOCTOR.md); после reboot `system.ipv6 = FAIL` по оракулу (открытый блокер IPv6) |
+
+Локальная проверка: `PYTHONPATH=src python3 -m unittest discover -s tests -v`, `shellcheck install.sh`, `bash -n install.sh`, `python3 -m compileall -q src tools tests`, затем `python3 tools/release.py --tag "v$(cat VERSION)"` дважды и сравнение `dist/SHA256SUMS`. CI запускает Python 3.10/3.12 на Ubuntu 24.04. Mock-тесты не заменяют E2E на одноразовой VPS: [DOCTOR-E2E.md](DOCTOR-E2E.md).
