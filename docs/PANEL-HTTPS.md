@@ -31,7 +31,7 @@ Nginx не получает дополнительного TCP listener. REALITY
    попытки stock installer запустить службу пропускаются. Plaintext/pubic
    bootstrap listener не появляется.
 5. Устанавливается проверенное ядро Xray, штатный CLI 3x-ui сохраняет HTTPS и
-   `listenIP=127.0.0.1`. CLI v3.10.2 может вернуть exit 0 при ошибке записи,
+   `listenIP=127.0.0.1`. CLI v3.11.0 может вернуть exit 0 при ошибке записи,
    поэтому Bob отдельно читает `-getListen -getCert`, проверяет точные значения
    и загружает certificate/key в SSLContext до создания root-only marker.
 6. `ExecStartPre` перед каждым стартом/рестартом повторяет loopback binding
@@ -48,18 +48,27 @@ Nginx не получает дополнительного TCP listener. REALITY
 перезапуск x-ui ждёт его наличия. Deploy hook Certbot проверяет и reload'ит
 Nginx, затем restart'ит x-ui; оба читают актуальные live certificate paths.
 
-## Совместимость 3x-ui v3.10.2
+## Совместимость 3x-ui v3.11.0
 
-Исследован pinned commit `608ef4e4010bf83e2e78328e08f77efc051ad4d7`:
-[router](https://github.com/MHSanaei/3x-ui/blob/608ef4e4010bf83e2e78328e08f77efc051ad4d7/internal/web/web.go),
-[login/CSRF](https://github.com/MHSanaei/3x-ui/blob/608ef4e4010bf83e2e78328e08f77efc051ad4d7/internal/web/controller/index.go),
-[IP resolution](https://github.com/MHSanaei/3x-ui/blob/608ef4e4010bf83e2e78328e08f77efc051ad4d7/internal/web/controller/util.go),
-[WebSocket](https://github.com/MHSanaei/3x-ui/blob/608ef4e4010bf83e2e78328e08f77efc051ad4d7/internal/web/controller/websocket.go).
+Исследован pinned commit `c621ba9014a6aa21fd7c9ecf45655e44e24ebf13`:
+[router](https://github.com/MHSanaei/3x-ui/blob/c621ba9014a6aa21fd7c9ecf45655e44e24ebf13/internal/web/web.go),
+[login/CSRF](https://github.com/MHSanaei/3x-ui/blob/c621ba9014a6aa21fd7c9ecf45655e44e24ebf13/internal/web/controller/index.go),
+[IP resolution](https://github.com/MHSanaei/3x-ui/blob/c621ba9014a6aa21fd7c9ecf45655e44e24ebf13/internal/web/controller/util.go),
+[WebSocket](https://github.com/MHSanaei/3x-ui/blob/c621ba9014a6aa21fd7c9ecf45655e44e24ebf13/internal/web/controller/websocket.go).
 
 Assets, API, login, logout, CSRF и `/ws` зарегистрированы под webBasePath.
 SPA формирует URL с этим же префиксом. Session cookie имеет Path=webBasePath,
 HttpOnly, SameSite=Lax и Secure при внутреннем TLS. CSRF проверяется штатным
 middleware; Bearer API Bob сохраняет свой штатный контракт.
+
+v3.11.0 добавил публичные `GET <webBasePath>sponsors` и
+`<webBasePath>sponsors/logo/:name`: панель загружает список и логотипы с
+GitHub и показывает рекламу на login, dashboard и странице Sponsors. Nginx
+отвечает на точный `sponsors` сам: HTTP 200, `application/json`,
+`{"success":true,"obj":{"sponsors":[]}}`; `sponsors/logo/` получает 404.
+Оба запроса не доходят до upstream, поэтому панель не скачивает рекламу,
+а слоты не отображаются. Бинарный файл и фронтенд 3x-ui не изменяются; на
+странице Sponsors остаётся штатная заглушка без внешних ссылок.
 
 `proxy_pass https://127.0.0.1:<port>` задан **без URI suffix**: префикс
 не удаляется и не дублируется. Host фиксируется на домене; foreign Host получает
@@ -208,6 +217,6 @@ Public: только SSH TCP, HTTP TCP/80, Xray REALITY/HTTPS TCP/443. Internal:
 
 Отдельный точный 48-hex subscription prefix проксирует без URI suffix в проверенный TLS upstream (SNI=домен, chain verify on). Host и доверенные proxy headers переопределяются; User-Agent и subscription metadata сохраняются. Responses no-store/no-referrer, access logs off, error_log /dev/null. Unknown routes и глобальные /assets,/api не открываются; percent-encoded path separators/dots отклоняются, query encoding сохраняется.
 
-Pinned 3x-ui поддерживает assets под LinksPath: [sub.go](https://github.com/MHSanaei/3x-ui/blob/608ef4e4010bf83e2e78328e08f77efc051ad4d7/internal/sub/sub.go). HTML генерирует ссылки с этим prefix. Не требуется переписывать upstream HTML или разрешать глобальные assets.
+Pinned 3x-ui поддерживает assets под LinksPath: [sub.go](https://github.com/MHSanaei/3x-ui/blob/c621ba9014a6aa21fd7c9ecf45655e44e24ebf13/internal/sub/sub.go). HTML генерирует ссылки с этим prefix. Не требуется переписывать upstream HTML или разрешать глобальные assets.
 
 subscription_access=https-443 добавляется только новой установке/разрешённому раннему resume. public_subscription_url() для старого state сохраняет прежний нестандартный порт. Завершённые v0.3.6 не меняют URLs, firewall или listeners автоматически. UUID/subId admin остаются прежними. TLS на backend проверяется отдельно от публичного пути; ошибка любого шага не считается HEALTHY_LOCAL.

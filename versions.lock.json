@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "xui_version": "v3.10.2",
-  "xui_commit": "608ef4e4010bf83e2e78328e08f77efc051ad4d7",
+  "xui_version": "v3.11.0",
+  "xui_commit": "c621ba9014a6aa21fd7c9ecf45655e44e24ebf13",
   "xray_version": "v26.10.21",
   "xray_downloads": {
     "amd64": {
@@ -19,20 +19,20 @@
   "menu_repository": "https://github.com/Diman6267/VPS-Server-Menu.git",
   "downloads": {
     "x-ui-linux-amd64.tar.gz": {
-      "url": "https://github.com/MHSanaei/3x-ui/releases/download/v3.10.2/x-ui-linux-amd64.tar.gz",
-      "sha256": "bfda7921984e7a72555c38d4e861c7a8b67b3686b658608937de99682f1452d0"
+      "url": "https://github.com/MHSanaei/3x-ui/releases/download/v3.11.0/x-ui-linux-amd64.tar.gz",
+      "sha256": "0ddfa4702f595442e2962acd81addc768fdacaa4ff2672c971a0463dae744916"
     },
     "x-ui-linux-arm64.tar.gz": {
-      "url": "https://github.com/MHSanaei/3x-ui/releases/download/v3.10.2/x-ui-linux-arm64.tar.gz",
-      "sha256": "a867c65ce52ad49f6504dd4c9c395337dc92ba57ae478da4f1b7ddb624014ed5"
+      "url": "https://github.com/MHSanaei/3x-ui/releases/download/v3.11.0/x-ui-linux-arm64.tar.gz",
+      "sha256": "f50b4c30fd919d018f2f4c3d8db53a4ca027503d581328727770afb116a79d90"
     }
   },
   "files": {
     "vendor/cloudflare-pubkey.gpg": "0f37fc298c98e88ee3c0ee68c95b69f1dba9eb477abe3167e13982105911264d",
     "vendor/3x-ui/LICENSE": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
-    "vendor/3x-ui/x-ui.sh": "3c7dabe7ea9edf0d950eff1caffbf203a1f8b52e98fc75e203372757f47998c0",
+    "vendor/3x-ui/x-ui.sh": "26c229d5fb3b184e81581b4b223b801582ca7cf5908aaedeb8d1c7c70ad4cc25",
     "vendor/3x-ui/install.sh": "9684bae4f769b2127fcceceb4f200045657381311867529e6ba76c6b58e2825d",
-    "vendor/3x-ui/x-ui.service.debian": "6e120b037ed0a1305331e31de21471d3e6485ea28133ccf85a45d1270258ff9e",
+    "vendor/3x-ui/x-ui.service.debian": "95cb6e39499601148404cadf3b4d75b0489301ff7e7ab565cd9db21d23be957c",
     "vendor/routing/ai.list": "08500f8f6c76b2e867a0540f0d1dd85e09e73c1c92d08fb9f6ce9d7f3e6e2247",
     "vendor/routing/geoip.dat": "d78bd363aa89a8377f522076bdb025414d189df3fe6482f2e6374706e67b8e09",
     "vendor/routing/geosite.dat": "4cee17749051e55b1cad4a704fb50a0933560ac00636bed28e8087ddcc050568",
@@ -42,16 +42,16 @@
     "profiles/happ.json": "8ccaf86ce2855baedb798c6c5b58efa230a5b589e49616ba53d6b40add553081"
   },
   "server_geodata": {
-    "source": "MHSanaei/3x-ui v3.10.2 release archive",
+    "source": "MHSanaei/3x-ui v3.11.0 release archive",
     "upstream_main": "Loyalsoldier/v2ray-rules-dat",
     "upstream_ru": "runetfreedom/russia-v2ray-rules-dat",
     "files": {
-      "geosite.dat": "c5a73fbd415bb0506ecf8fa574caadc6f54a71d9308c265e97da49e4cebf8466",
-      "geoip.dat": "116cc0f03d48991962f7f9cdbbcf53d45d89777f9c3cd1a663210853e5df6093",
+      "geosite.dat": "e16ee9af893247f9c8b15c5259e5c0a6ae491b85ee351c22f1954e696ebb8997",
+      "geoip.dat": "a6271d3c96361d96156e6d3f7cf1550ef21b00d2f951deb772f464db91e89ac5",
       "geosite_RU.dat": "76fdbe01687a6cc7683b50c38ceea84941458e8371d215918daf555665a537cd",
-      "geoip_RU.dat": "e31714917fb9207e456251c784d88e90ab9a691e0764f4c05016b32bc073cfa2"
+      "geoip_RU.dat": "1529547b928581d579616d37fcb070aad650328a436d6796effd8cd1d3d77b49"
     }
   },
-  "panel_bundled_xray_version": "26.10.10",
+  "panel_bundled_xray_version": "26.10.21",
   "system_packages": "Ubuntu and Cloudflare signed APT repositories; actual versions in deployment state/report"
 }
