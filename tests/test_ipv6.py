@@ -1,4 +1,5 @@
 import json
+import os
 import socket
 import tempfile
 import unittest
@@ -80,6 +81,34 @@ class IPv6Tests(unittest.TestCase):
                              ['all', 'default', 'lo', 'ens3'])
             self.assertEqual(ipv6.verify(kernel, config, etc, run_root)['interfaces'],
                              ['all', 'default', 'lo', 'ens3'])
+
+    def test_dropin_directory_is_readable_by_networkd_under_installer_umask(self):
+        # VPS E2E 2026-11-01: a 0700 directory made networkd skip the drop-in at boot
+        # ("Failed to chase and open directory ... Permission denied") and write
+        # disable_ipv6=0 on ens3.
+        for existing in (False, True):
+            with self.subTest(existing=existing), tempfile.TemporaryDirectory() as d:
+                etc, run_root, config = self.paths(Path(d)); kernel = Kernel()
+                directory = etc / 'systemd/network/10-netplan-ens3.network.d'
+                old = os.umask(0o077)
+                try:
+                    if existing:
+                        directory.mkdir(parents=True)
+                        (directory / ipv6.NETWORK_DROPIN).write_text(ipv6.NETWORK_CONTENT)
+                    self.apply(kernel, etc, run_root, config)
+                finally:
+                    os.umask(old)
+                self.assertEqual(directory.stat().st_mode & 0o777, 0o755)
+                self.assertEqual((directory / ipv6.NETWORK_DROPIN).stat().st_mode & 0o777, 0o644)
+
+    def test_verify_refuses_dropin_hidden_from_networkd(self):
+        with tempfile.TemporaryDirectory() as d:
+            etc, run_root, config = self.paths(Path(d)); kernel = Kernel()
+            self.apply(kernel, etc, run_root, config)
+            directory = etc / 'systemd/network/10-netplan-ens3.network.d'
+            directory.chmod(0o700)
+            with self.assertRaisesRegex(InstallError, 'not readable by systemd-networkd'):
+                ipv6.verify(kernel, config, etc, run_root, '192.0.2.10 12345 192.0.2.1 22')
 
     def test_foreign_assignment_refused_without_write(self):
         with tempfile.TemporaryDirectory() as d:

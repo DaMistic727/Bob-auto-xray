@@ -99,7 +99,8 @@ class FakeProbe:
         self.public_responses = {state['panel_path']: (200, dict(proxied)),
                                  state['sub_path'] + 'missing': (404, dict(proxied))}
         self.commands = {}
-        self.stats = {}
+        self.stats = {str(self.network_path.parent): stat.S_IFDIR | 0o755,
+                      str(self.network_path): stat.S_IFREG | 0o644}
         self.missing_stats = set()
         for name in ('x-ui', 'nginx', 'php8.4-fpm', 'fail2ban', 'certbot.timer', 'warp-svc'):
             self.commands[('systemctl', 'is-active', name)] = (0, 'active\n')
@@ -138,6 +139,8 @@ class FakeProbe:
             raise FileNotFoundError(path)
         if path == doctor.SOCKET:
             mode = stat.S_IFSOCK | 0o750
+        elif path in self.stats:
+            mode = self.stats[path]
         elif path in self.files or path in (doctor.STATE, doctor.CONFIG, str(swap.FILE),
               '/etc/x-ui/x-ui.db', '/etc/x-ui/install-result.env',
               '/etc/letsencrypt/live/vpn.example.com/privkey.pem',

@@ -837,6 +837,12 @@ class Doctor:
         except FileNotFoundError:
             return self.answer('FAIL', 'Управляемый networkd drop-in отсутствует.',
                                suggestion=SUGGEST['ipv6'])
+        try:
+            readable = ipv6.readable_by_networkd(self.p.stat(path.parent).st_mode,
+                                                 self.p.stat(path).st_mode)
+        except FileNotFoundError:
+            return self.answer('FAIL', 'Управляемый networkd drop-in отсутствует.',
+                               suggestion=SUGGEST['ipv6'])
         if self.p.ipv6_conflicts():
             return self.answer('WARN', 'Найден конфликтующий persistent IPv6 sysctl.',
                                suggestion=SUGGEST['ipv6'])
@@ -854,6 +860,12 @@ class Doctor:
         if routable:
             return self.answer('FAIL', 'На хосте есть маршрутизируемый IPv6-адрес.', details,
                                suggestion=SUGGEST['ipv6'])
+        if not readable:
+            # Installs before v0.4.0 created the directory 0700: networkd skips the drop-in
+            # and re-enables link-local IPv6 at the next boot.
+            return self.answer('WARN', 'systemd-networkd не может прочитать IPv6 drop-in; '
+                               'после reboot вернётся link-local.', details,
+                               suggestion='chmod 755 ' + str(path.parent))
         if enabled or scopes:
             return self.answer('WARN', 'IPv6 снова включён (только link-local, глобального IPv6 нет).',
                                details, suggestion=SUGGEST['ipv6'])

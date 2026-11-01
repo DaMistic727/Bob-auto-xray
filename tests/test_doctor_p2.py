@@ -179,6 +179,17 @@ class Ipv6ScopeTests(unittest.TestCase):
         self.assertEqual(report['overallStatus'], 'DEGRADED')
         self.assertNotIn('fe80::1', json.dumps(report))
 
+    def test_dropin_unreadable_by_networkd_is_reported_before_reboot(self):
+        import stat
+        probe = FakeProbe('install')
+        probe.stats[str(probe.network_path.parent)] = stat.S_IFDIR | 0o700
+        report = doctor.Doctor(probe).run()
+        result = check(report, 'system.ipv6')
+        self.assertEqual(result['status'], 'WARN')
+        self.assertIn('не может прочитать', result['summary'])
+        self.assertEqual(result['suggestion'], 'chmod 755 ' + str(probe.network_path.parent))
+        self.assertEqual(report['overallStatus'], 'DEGRADED')
+
     def test_routable_ipv6_address_is_fail_even_beside_link_local(self):
         for info in ({'local': '2001:db8::1', 'scope': 'global'}, {'local': 'fd00::1', 'scope': 'site'},
                      {'local': '2001:db8::2'}, 'malformed'):
