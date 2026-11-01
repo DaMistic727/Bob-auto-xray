@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+## v0.4.0 — 2026-11-01 · Preview
+
+- **Bob Doctor** (`bob doctor [--deep] [--json]`): read-only диагностика установленной ноды без автоматического исправления, рестартов, изменяющего API 3x-ui и acceptance. Проверяет state, Xray runtime и SHA256 закреплённого ядра, службы и gate x-ui, listeners и UFW, маршруты nginx HTTPS/443, сертификат, routing, GeoData, WARP, BBR/FQ, IPv6, SWAP, постоянного клиента `admin` и остатки временных файлов state. Недостаток данных — `UNKNOWN`, никогда не `PASS`; FQDN, секретные пути, UUID, ключи и хэши в отчёт не попадают. `--deep` ограничен GET, trace и белым списком read-only команд.
+- Старые ноды не получают ложный `UNHEALTHY`: схема определяется по маркерам state (`panel_access`, `admin_client`, `subscription_access`), политики, которых нода не получала, дают `WARN`. На уже установленной ноде Doctor запускается из проверенного архива: `install.sh doctor`. Установка `bob` не может сорвать установку VPN, результат записывается в state (`doctor_cli`).
+- **Исправлен возврат IPv6 после reboot.** Причина доказана на VPS журналом networkd: установщик работает с umask 077, каталог drop-in `/etc/systemd/network/<netplan>.network.d` создавался `0700`, и systemd-networkd (пользователь `systemd-network`) не мог его прочитать (`Permission denied`), настраивал интерфейс по исходному netplan-файлу и записывал `disable_ipv6=0`. Теперь каталог `0755`, acceptance отказывает при нечитаемом drop-in. После исправления и reboot IPv6 на интерфейсе выключен, адресов нет.
+- Уже установленные ноды (v0.3.4–v0.3.8) автоматически не мигрируют: Doctor показывает `WARN` с точной командой `chmod 755 /etc/systemd/network/<netplan>.network.d`, после неё политика сохраняется при reboot.
+- Doctor разделяет маршрутизируемый IPv6-адрес (`FAIL`) и только link-local при `disable_ipv6=0` (`WARN` с числом адресов и именами интерфейсов, сами адреса не печатаются). Resume с этапов `WARP`/`CERTIFICATE` заново применяет IPv6-политику до acceptance.
+- Preflight не начинает установку, пока cloud-init ещё настраивает свежую VPS, и просит дождаться `cloud-init status --wait` вместо непонятного `sshd exited 255`.
+- 3x-ui обновлена до официального v3.11.0 (`c621ba9`): SHA256 архивов amd64/arm64, vendored `x-ui.sh` и `x-ui.service.debian` с тега, SHA256 штатных GeoData. Встроенный Xray совпадает с отдельно закреплённым официальным v26.10.21; проверенная замена ядра сохранена.
+- Nginx отвечает на `<webBasePath>sponsors` пустым JSON-списком и 404 на `<webBasePath>sponsors/logo/`: спонсорские блоки панели пусты, логотипы не загружаются. Бинарный файл 3x-ui не изменяется.
+- WARP: установленный `warp-cli` требует `--accept-tos` и для JSON status/settings; эти запросы не меняют регистрацию и настройки.
+- HTTPS/443, секретный webBasePath, TLS verification upstream, подписки, `vless by bob`, `admin`, ads block, routing/WARP и модель resume сохранены. Установленные ноды автоматически не мигрируют.
+- VPS E2E финального кандидата на Ubuntu 26.04.1 amd64: [E2E-V040.md](docs/E2E-V040.md).
+
 ## v0.3.8 — 2026-10-31 · Preview
 
 - VPS-Server-Menu получает актуальную официальную main во время установки Bob, без статического commit/SHA256 pin или скрытого fallback. Остальные зависимости остаются pinned.

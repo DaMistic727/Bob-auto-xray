@@ -45,7 +45,7 @@ class BootstrapChecks(unittest.TestCase):
             state = dict(domain='panel.test', arch='amd64', ipv4='192.0.2.1',
                          panel_port=21000, panel_path='/'+'a'*48+'/',
                          username='user', password='password', warp_mode='skip')
-            lock = {'xui_version': 'v3.10.2', 'downloads': {'x-ui-linux-amd64.tar.gz':
+            lock = {'xui_version': 'v3.11.0', 'downloads': {'x-ui-linux-amd64.tar.gz':
                     {'url': 'https://example.com/archive', 'sha256': '0'*64}}}
             writes, calls = [], []
             def run(*args, **kwargs):

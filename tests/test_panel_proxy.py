@@ -72,6 +72,11 @@ class PanelProxyTests(unittest.TestCase):
         self.assertIn('listen unix:/run/selfsni/nginx.sock ssl http2 proxy_protocol;', conf)
         self.assertIn('location ^~ '+s['panel_path'], conf)
         self.assertIn('location = '+s['panel_path']+'login', conf)
+        sponsors = conf.split('location = '+s['panel_path']+'sponsors {', 1)[1].split('\n    }', 1)[0]
+        self.assertIn('default_type application/json;', sponsors)
+        self.assertIn('return 200 \'{"success":true,"obj":{"sponsors":[]}}\';', sponsors)
+        self.assertNotIn('include', sponsors)
+        self.assertIn('location ^~ '+s['panel_path']+'sponsors/logo/ { return 404; }', conf)
         self.assertIn('location / { return 404; }', conf)
         for public in ('/assets/', '/api/', '/login'):
             self.assertNotIn('location '+public, conf)
@@ -89,7 +94,7 @@ class PanelProxyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             s = state()
-            lock = dict(xui_version='v3.10.2', downloads={
+            lock = dict(xui_version='v3.11.0', downloads={
                 'x-ui-linux-amd64.tar.gz': dict(url='https://example.com/xui.tar.gz', sha256='0'*64)})
             events = []
             def write(path, content, *args):
@@ -131,7 +136,7 @@ class PanelProxyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             events = []
-            lock = dict(xui_version='v3.10.2', downloads={
+            lock = dict(xui_version='v3.11.0', downloads={
                 'x-ui-linux-amd64.tar.gz': dict(url='https://example.com/xui.tar.gz', sha256='0'*64)})
             def run(*args, **kwargs):
                 if args[0] == 'bash':

@@ -19,6 +19,10 @@ NETWORK_CONTENT = LEGACY_NETWORK_CONTENT + 'IPv6LinkLocalAddressGenerationMode=n
 NETWORK_DROPIN = '99-zz-bob-auto-xray-ipv4-only.conf'
 
 
+def readable_by_networkd(directory_mode, file_mode):
+    return directory_mode & 0o005 == 0o005 and bool(file_mode & 0o004)
+
+
 def _interfaces(command):
     rows = json.loads(command('ip', '-j', 'link', 'show'))
     return [row['ifname'] for row in rows]
@@ -164,6 +168,8 @@ def verify(command=run, config=CONFIG, etc=Path('/etc'), run_root=Path('/run'),
     network_path = _network_path(command, etc, destination, local)
     require(network_path.is_file() and network_path.read_text() == NETWORK_CONTENT,
             'Managed networkd drop-in is absent or changed')
+    require(readable_by_networkd(network_path.parent.stat().st_mode, network_path.stat().st_mode),
+            'Managed networkd drop-in is not readable by systemd-networkd')
     names = ['all', 'default', *_interfaces(command)]
     require(all(_value(command, f'net.ipv6.conf.{name}.disable_ipv6') == '1'
                 for name in names), 'IPv6 remains enabled on an interface')
@@ -187,6 +193,10 @@ def configure(domain, command=run, config=CONFIG, etc=Path('/etc'),
     before = snapshot(command, config, network_path)
     try:
         atomic_write(config, CONTENT, 0o644)
+        # systemd-networkd runs as systemd-network: under the installer's umask 077
+        # the new directory was 0700 and networkd silently ignored the drop-in.
+        network_path.parent.mkdir(parents=True, exist_ok=True)
+        network_path.parent.chmod(0o755)
         atomic_write(network_path, NETWORK_CONTENT, 0o644)
         command('networkctl', 'reload')
         for key, value in DESIRED.items():
