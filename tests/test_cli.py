@@ -260,6 +260,9 @@ class RuntimeAdminTests(Node):
     def setUp(self):
         super().setUp()
         self.xui = {self.root / 'usr/local/x-ui', self.root / 'usr/local/x-ui/bin'}
+        # Tests let the current user play root; the archive owner must differ from it
+        # (GitHub Actions' runner is uid 1001 too).
+        foreign = XUI_ARCHIVE_UID if os.getuid() != XUI_ARCHIVE_UID else XUI_ARCHIVE_UID + 1
         real_lstat = os.lstat
 
         def lstat(path, *args, **kwargs):
@@ -268,7 +271,7 @@ class RuntimeAdminTests(Node):
             if Path(path) not in self.xui:
                 return info
             return os.stat_result((info.st_mode, info.st_ino, info.st_dev, info.st_nlink,
-                                   XUI_ARCHIVE_UID, XUI_ARCHIVE_UID, info.st_size,
+                                   foreign, foreign, info.st_size,
                                    int(info.st_atime), int(info.st_mtime), int(info.st_ctime)))
         patcher = patch.object(cli.os, 'lstat', side_effect=lstat)
         patcher.start()
@@ -284,6 +287,7 @@ class RuntimeAdminTests(Node):
         return out
 
     def test_admin_is_confirmed_on_archive_owned_install_tree(self):
+        self.assertNotEqual(os.lstat(self.root / 'usr/local/x-ui/bin').st_uid, cli.ROOT_UID)
         out = self.admin()
         self.assertIn('Клиент admin подтверждён в runtime Xray', out)
         self.assertNotIn('не подтверждено', out)
