@@ -1,3 +1,11 @@
+# v0.4.0 Preview · release candidate
+
+Состав: main v0.3.8 + #17/#18, Bob Doctor (PR #11), 3x-ui v3.11.0 без спонсорских блоков (PR #19) и release-исправления: разделение link-local/глобального IPv6 в Doctor, повторное применение IPv6-политики при resume с `WARP`/`CERTIFICATE`, отказ preflight при работающем cloud-init.
+
+Локально (macOS, Python 3.15): полный unittest, compileall, `bash -n`, `git diff --check`, две детерминированные сборки release с совпадающим `SHA256SUMS`. Новые регрессии проверены в обе стороны: без исправления они падают. CI Python 3.10/3.12 (unittest, real Nginx harness, pinned 3x-ui v3.11.0 API/GeoData, официальный menu installer, ShellCheck, воспроизводимая сборка) привязан к SHA коммита в GitHub Actions.
+
+VPS E2E: Doctor на кандидате `4428fd8` (3x-ui v3.10.2) — PASS на A/B/C/D ([отчёт](E2E-PR11-DOCTOR.md)). Сборка v0.4.0 целиком (3x-ui v3.11.0, исправления resume/cloud-init/IPv6) на VPS **NOT TESTED**: чистая установка, повторный запуск, resume после reboot, внешний VLESS-клиент и восстановление соединения после рестарта Xray и reboot, Ubuntu 22.04/24.04, arm64, продление сертификата.
+
 # v0.3.8 · rolling official menu
 
 Локальный unittest Python 3.12: 189 tests, 188 PASS / 1 macOS refusal SKIP. Git fixtures проверяют main/upstream, свежую установку, повтор, FF, ahead/diverged отказ, dirty/corrupt/symlink/origin/command conflicts, network error и несовместимый CLI. Прежние WARP JSON/exit/health/install/adopt/skip regressions сохранены.
@@ -6,7 +14,7 @@ CI дополнительно выполняет tools/test_menu_latest.py: на
 
 VPS, SSH, production WARP install, deploy/reboot не выполнялись. Изолированный installer/updater test не заменяет реальный VPS E2E.
 
-> VPS-Server-Menu v0.3.8: только актуальная официальная `Diman6267/VPS-Server-Menu/main`, разрешённая при установке. Статического menu pin больше нет. Оригинальный installer создаёт команды; main tracking origin/main сохраняет штатный updater (пункт 9). Фактическая ревизия и время находятся в root-only state `menu_revision`. Dirty/diverged/неизвестный checkout отклоняется без reset/clean; старый detached checkout автоматически не мигрирует. Xray/3x-ui/GeoData/routing pins не изменены. Будущая main может оказаться несовместимой: Bob прекращает установку, не откатываясь скрыто к старому pin.
+> VPS-Server-Menu (с v0.3.8): только актуальная официальная `Diman6267/VPS-Server-Menu/main`, разрешённая при установке. Статического menu pin больше нет. Оригинальный installer создаёт команды; main tracking origin/main сохраняет штатный updater (пункт 9). Фактическая ревизия и время находятся в root-only state `menu_revision`. Dirty/diverged/неизвестный checkout отклоняется без reset/clean; старый detached checkout автоматически не мигрирует. Xray/3x-ui/GeoData/routing остаются закреплёнными. Будущая main может оказаться несовместимой: Bob прекращает установку, не откатываясь скрыто к старому pin.
 
 # v0.3.7 Preview · subscription consolidation
 

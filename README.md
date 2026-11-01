@@ -1,4 +1,4 @@
-> VPS-Server-Menu v0.3.8: только актуальная официальная `Diman6267/VPS-Server-Menu/main`, разрешённая при установке. Статического menu pin больше нет. Оригинальный installer создаёт команды; main tracking origin/main сохраняет штатный updater (пункт 9). Фактическая ревизия и время находятся в root-only state `menu_revision`. Dirty/diverged/неизвестный checkout отклоняется без reset/clean; старый detached checkout автоматически не мигрирует. Xray/3x-ui/GeoData/routing pins не изменены. Будущая main может оказаться несовместимой: Bob прекращает установку, не откатываясь скрыто к старому pin.
+> VPS-Server-Menu (с v0.3.8): только актуальная официальная `Diman6267/VPS-Server-Menu/main`, разрешённая при установке. Статического menu pin больше нет. Оригинальный installer создаёт команды; main tracking origin/main сохраняет штатный updater (пункт 9). Фактическая ревизия и время находятся в root-only state `menu_revision`. Dirty/diverged/неизвестный checkout отклоняется без reset/clean; старый detached checkout автоматически не мигрирует. Xray/3x-ui/GeoData/routing остаются закреплёнными. Будущая main может оказаться несовместимой: Bob прекращает установку, не откатываясь скрыто к старому pin.
 
 <p align="center"><img src="assets/banner.svg" alt="Bob Auto Xray — Self-SNI, automated." width="100%"></p>
 
@@ -15,7 +15,7 @@
 
 Одноразовый установщик разворачивает 3x-ui, HTTPS-заглушку частного облака и подписки для Happ/INCY. Cloudflare WARP выбирается отдельно; без него AI/IP-check идёт через обычный DIRECT. Конфигурации и первый VPN-клиент `admin` создаются автоматически; его подключение и подписку можно получить в панели. Дополнительных клиентов вы добавляете через 3x-ui.
 
-> **v0.3.8 Preview.** Подписки Happ/INCY доступны на общем HTTPS/443 без отдельного публичного порта. Внутренние web/subscription servers используют loopback HTTPS. Сохранены `vless by bob`, постоянный `admin` и GeoSite ads block. Установленные старые ноды не мигрируют автоматически. VPS E2E и reboot этой сборки NOT TESTED.
+> **v0.4.0 Preview.** Добавлен read-only Bob Doctor (`bob doctor`), 3x-ui обновлена до v3.11.0, спонсорские блоки панели отключены через Nginx. Подписки и панель — на общем HTTPS/443. Установленные старые ноды не мигрируют автоматически. Статус проверок этой сборки — в [TESTING.md](docs/TESTING.md).
 
 ## Что получится
 
@@ -30,7 +30,7 @@
 | **Маршрутизация** | Basic UI `blocked`, RU/UA/private/BitTorrent и категории рекламы GeoSite блокируются; `IPOnDemand`, остальное DIRECT |
 | **Geodata** | Штатный Xray hot reload четырёх файлов ежедневно в 03:00 МСК через `direct`, с rollback |
 | **TCP BBR** | Автоматически настраивается на поддерживаемом ядре Linux, с FQ pacing и сохранением после reboot |
-| **IPv4-only** | Настраиваются проектные sysctl и networkd drop-in; известный P1: после reboot на `ens3` может возвращаться IPv6 link-local. Требуются SSH по IPv4 и FQDN без AAAA; production readiness заблокирована |
+| **IPv4-only** | Настраиваются проектные sysctl и networkd drop-in. Известное ограничение: после reboot на основном интерфейсе может вернуться IPv6 link-local (без глобального IPv6); Doctor показывает `WARN`. Требуются SSH по IPv4 и FQDN без AAAA |
 | **Happ / INCY** | Отдельные профили и способы доставки; правила из [DigneZzZ/routing](https://github.com/DigneZzZ/routing) |
 | **Защита** | UFW с сохранением SSH, штатная интеграция Fail2ban 3x-ui |
 
@@ -47,10 +47,10 @@ UFW открывает SSH, 80 и 443; порт панели не открыва
 3. **Запустите установщик одной командой** от root:
 
    ```bash
-   bash <(curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' https://github.com/DaMistic727/Bob-auto-xray/releases/download/v0.3.8/install.sh)
+   bash <(curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' https://github.com/DaMistic727/Bob-auto-xray/releases/download/v0.4.0/install.sh)
    ```
 
-   v0.3.8 запускает мастер с вопросами о домене и сертификате, показывает живой статус длительных операций и объясняет ошибки Certbot. Bootstrap загружает **конкретный релиз** и проверяет закреплённый SHA256 архива до выполнения модулей.
+   v0.4.0 запускает мастер с вопросами о домене и сертификате, показывает живой статус длительных операций и объясняет ошибки Certbot. Bootstrap загружает **конкретный релиз** и проверяет закреплённый SHA256 архива до выполнения модулей.
 
 4. **Сохраните HTTPS-ссылку, логин и пароль**, которые появятся после успешных проверок. На VPS результат хранится в root-only `/var/lib/selfsni/state.json`.
 5. **Откройте `vless by bob` в 3x-ui:** VPN-клиент `admin` уже создан с Vision, без лимита IP/устройств/трафика и срока действия. Получите его подключение или подписку. Дополнительных клиентов можно добавить через панель. Учётная запись панели имеет отдельные случайные username/password.
@@ -109,7 +109,7 @@ bob doctor --json
 bash /root/selfsni/install.sh doctor --json
 ```
 
-Через опубликованный bootstrap: он уже содержит URL и SHA256 своего архива и сверяет SHA256 до запуска. `<tag>` — релиз, в который вошёл Doctor; bootstrap более ранних релизов (v0.3.8 и старше) команду `doctor` не знает и завершится ошибкой разбора аргументов, ничего не установив.
+Через опубликованный bootstrap: он уже содержит URL и SHA256 своего архива и сверяет SHA256 до запуска. `<tag>` — v0.4.0 или новее; bootstrap более ранних релизов (v0.3.8 и старше) команду `doctor` не знает и завершится ошибкой разбора аргументов, ничего не установив.
 
 ```bash
 bash <(curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' https://github.com/DaMistic727/Bob-auto-xray/releases/download/<tag>/install.sh) doctor --json
@@ -121,7 +121,7 @@ bash <(curl --fail --silent --show-error --location --proto '=https' --proto-red
 SELFSNI_RELEASE_URL='https://…/selfsni-<версия>.tar.gz' SELFSNI_RELEASE_SHA256='<64 hex>' bash install.sh doctor --json
 ```
 
-Обычный режим читает state, runtime Xray, службы, listeners, сертификат, routing, GeoData, BBR/FQ, IPv6 (все адреса, включая link-local), SWAP и защиту. Для схемы HTTPS/443 он также проверяет маршруты nginx к панели и подпискам, то, что их внутренние порты слушают только loopback от x-ui и не открыты в UFW, gate запуска x-ui, бинарник Xray против SHA256 установщика, постоянного клиента `admin` и временные файлы state. Сетевых запросов обычный режим не делает. `--deep` добавляет локальные HTTPS GET, публичные пути через 443 (успех только при ответе защищённого proxy) и ограниченные по времени Cloudflare trace через WARP и напрямую.
+Обычный режим читает state, runtime Xray, службы, listeners, сертификат, routing, GeoData, BBR/FQ, IPv6 (все адреса: маршрутизируемый — `FAIL`, только link-local — `WARN`), SWAP и защиту. Для схемы HTTPS/443 он также проверяет маршруты nginx к панели и подпискам, то, что их внутренние порты слушают только loopback от x-ui и не открыты в UFW, gate запуска x-ui, бинарник Xray против SHA256 установщика, постоянного клиента `admin` и временные файлы state. Сетевых запросов обычный режим не делает. `--deep` добавляет локальные HTTPS GET, публичные пути через 443 (успех только при ответе защищённого proxy) и ограниченные по времени Cloudflare trace через WARP и напрямую.
 
 Старые ноды не мигрируют. Doctor определяет их схему по маркерам state (`panel_access`, `admin_client`, `subscription_access`). Политика, которую нода не получала при установке, даёт `WARN`, а не ложный `UNHEALTHY`; на новых нодах эти инварианты обязательны.
 
@@ -131,6 +131,7 @@ Doctor не перезапускает службы, не вызывает API 3
 
 | Платформа / сценарий | Статус |
 |---|---|
+| v0.4.0 | Bob Doctor: VPS E2E PASS на кандидате `4428fd8` (4 ноды Ubuntu 26.04.1); полная сборка v0.4.0 с 3x-ui v3.11.0 на VPS NOT TESTED, см. [TESTING.md](docs/TESTING.md) |
 | v0.3.6 | Локальные тесты, real Nginx и pinned 3x-ui API в CI; VPS clean install/reboot NOT TESTED |
 | v0.3.5 · сообщение владельца | Установка, HTTPS/443, Reality Vision, Happ/INCY, WARP и routing проверены владельцем. Это не E2E v0.3.6 и не подтверждение IPv6 persistence |
 | v0.3.4 · исторический официальный WARP на Ubuntu 26.04.1 amd64 | Smoke E2E #1: чистая установка, новая регистрация, Certbot, REALITY Vision и on-host 27/27. Позднее IPv6 отключение проверено на уже установленной VPS до/после reboot; отдельная чистая установка с этим изменением не проверена |
