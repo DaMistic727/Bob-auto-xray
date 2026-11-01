@@ -52,6 +52,8 @@ Release workflow повторяет локальные проверки пере
 в docs/TESTING.md; CI и локальные проверки реальный VPS E2E не заменяют.
 Bob Doctor: на новых установках `bob doctor [--deep] [--json]`; на уже установленной
 ноде без установки — `bash <(curl …/{a.tag}/install.sh) doctor` (тот же проверенный архив).
+Меню `bob` на работающей ноде v0.4.0+: только CLI, без provision —
+`bash <(curl …/{a.tag}/install.sh) cli-upgrade --check`, затем `cli-upgrade`.
 Старые установки автоматически не мигрируют.
 
 ## Установка от root на чистой VPS

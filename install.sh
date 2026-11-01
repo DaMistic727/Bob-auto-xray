@@ -13,6 +13,11 @@ if [[ -f "$script_dir/versions.lock.json" && -f "$script_dir/src/selfsni/provisi
         shift
         exec python3 -I -B -c 'import sys; sys.path.insert(0, sys.argv.pop(1)); from selfsni.doctor import main; sys.exit(main())' "$script_dir/src" "$@"
     fi
+    if [[ ${1:-} == cli-upgrade ]]; then
+        # Replaces only Bob's own /usr/local/bin/bob and its library; no provisioning.
+        shift
+        exec python3 -I -B -c 'import sys; sys.path.insert(0, sys.argv.pop(1)); from selfsni.cli_install import main; sys.exit(main())' "$script_dir/src" "$@"
+    fi
     export PYTHONPATH="$script_dir/src"
     exec python3 -m selfsni.provision "$@"
 fi
