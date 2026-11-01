@@ -366,7 +366,7 @@ ipv6.py, sysctl, networkd и Netplan в этой ревизии не измен�
 
 # Bob Doctor: контракт и границы
 
-> Перенос PR #11 на main v0.3.8 (`be69945`) и исправления аудита P1–P3 проверены локально и в CI. VPS E2E перенесённого Doctor: **NOT TESTED**. Прежние результаты VPS относятся только к кандидату `badbe6f` на базе v0.3.4 и сохранены в [DOCTOR-E2E.md](DOCTOR-E2E.md) как история.
+> Перенос PR #11 на main v0.3.8 (`be69945`) и исправления аудита P1–P3 проверены локально и в CI. VPS E2E перенесённого Doctor (`4428fd8`): **PASS** на нодах A/B/C/D, отчёт — [E2E-PR11-DOCTOR.md](E2E-PR11-DOCTOR.md). Прежние результаты VPS относятся только к кандидату `badbe6f` на базе v0.3.4 и сохранены в [DOCTOR-E2E.md](DOCTOR-E2E.md) как история.
 
 Запуск от root: `bob doctor [--deep] [--json]` на новых установках или `install.sh doctor [--deep] [--json]` из проверенного архива на любой ноде. Диагностика **не меняет** state, `resume_count`, клиентов, inbound, routing, GeoData, сертификаты, службы, UFW, Fail2ban или WARP, не вызывает `acceptance.verify()` и не берёт установочный lock. Обычный режим не обращается к сети. `--deep` добавляет HTTPS GET (loopback и публичные пути через 443) и Cloudflare trace с timeout; GET может породить обычные логи и PHP-сессию. POST к порталу и API save/update отсутствуют.
 
@@ -386,6 +386,6 @@ ipv6.py, sysctl, networkd и Netplan в этой ревизии не измен�
 | `test_doctor_p3.py` (P3): gate x-ui, клиент admin, временные файлы state; белый список read-only команд полного `--deep` прогона и запрет записи на диск | RED 5/8 (3 guard-теста) → GREEN 8/8 |
 | `test_bootstrap.py`: bootstrap передаёт `doctor --json` только проверенному payload; без `SELFSNI_RELEASE_URL`/`SELFSNI_RELEASE_SHA256` отказывает до загрузки | PASS (guard) |
 | Полный `unittest` | 289 OK, 1 skip |
-| VPS E2E install/skip/adopt, старая нода через `install.sh doctor`, reboot | **NOT TESTED** |
+| VPS E2E install/skip/adopt, старая нода v0.3.4 через `install.sh doctor` (архив и bootstrap), reboot | **PASS**, 34 прогона — [E2E-PR11-DOCTOR.md](E2E-PR11-DOCTOR.md); после reboot `system.ipv6 = FAIL` по оракулу (открытый блокер IPv6) |
 
 Локальная проверка: `PYTHONPATH=src python3 -m unittest discover -s tests -v`, `shellcheck install.sh`, `bash -n install.sh`, `python3 -m compileall -q src tools tests`, затем `python3 tools/release.py --tag "v$(cat VERSION)"` дважды и сравнение `dist/SHA256SUMS`. CI запускает Python 3.10/3.12 на Ubuntu 24.04. Mock-тесты не заменяют E2E на одноразовой VPS: [DOCTOR-E2E.md](DOCTOR-E2E.md).
