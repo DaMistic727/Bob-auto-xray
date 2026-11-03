@@ -28,7 +28,7 @@ from .geodata import (GEODATA_ASSETS, GEODATA_CRON, GEODATA_TIMEZONE,
                       automatic_config, verify_server_geodata)
 from .routing import (BLOCKED_DOMAINS, BLOCKED_IPS, WARP_DOMAINS, TAG, profile,
                       server_template)
-from .xray_pin import pinned_xray_spec
+from .xray_pin import XRAY_VERSION, pinned_xray_spec
 from .clients import (main_inbound, read_clients, validate_admin, verify_admin_runtime,
                       verify_admin_subscriptions, snapshot_clients, cleanup_owned_client)
 
@@ -172,7 +172,7 @@ def verify(s):
         expected = pinned_xray_spec(lock, s['arch'])['binary_sha256']
         require(s.get('xray_sha256') == expected and digest(s['xray_bin']) == expected,
                 'Panel Xray binary differs from the pinned official release')
-        require(run(s['xray_bin'], 'version').startswith('Xray 26.10.21 '),
+        require(run(s['xray_bin'], 'version').startswith('Xray ' + XRAY_VERSION[1:] + ' '),
                 'Panel Xray version differs from the pinned release')
     check('Pinned official Xray binary SHA256 and version', pinned_xray)
     check('Xray configuration',lambda: run(s['xray_bin'],'run','-test','-config','/usr/local/x-ui/bin/config.json'))
