@@ -4,6 +4,27 @@
 
 Проверки: регрессионные `RuntimeAdminTests` в `tests/test_cli.py` (владелец каталогов как в архиве, строгий `state.json`, PASS/WARN/UNKNOWN, повреждённый/отсутствующий/небезопасный runtime, symlink, нет доступа); `tools/test_client_api.py` в CI — `bob admin` на настоящем `config.json` закреплённой 3x-ui v3.11.0 (PASS, без admin — WARN); полный unittest, ShellCheck, воспроизводимая сборка; обновление CLI v0.4.1 → этот код существующим `cli-upgrade` (симуляция). **NOT TESTED:** запуск на реальной VPS.
 
+## Матрица и ссылки на доказательства
+
+Исторические результаты ниже относятся к указанным версиям и сценариям; они не подтверждают VPS E2E v0.4.2.
+
+| Платформа / сценарий | Статус |
+|---|---|
+| v0.4.0 · Ubuntu 26.04.1 amd64, чистая ОС, новый WARP | Чистая установка, повтор, Doctor во всех режимах, внешний VLESS Vision/WARP/routing, восстановление клиента после рестарта Xray и reboot, IPv6 после reboot — [E2E-V040.md](E2E-V040.md). Ubuntu 22.04/24.04, `--no-warp`/`--adopt-warp` этой сборки NOT TESTED |
+| v0.3.6 | Локальные тесты, real Nginx и pinned 3x-ui API в CI; VPS clean install/reboot NOT TESTED |
+| v0.3.5 · сообщение владельца | Установка, HTTPS/443, Reality Vision, Happ/INCY, WARP и routing проверены владельцем. Это не E2E v0.3.6 и не подтверждение IPv6 persistence |
+| v0.3.4 · исторический официальный WARP на Ubuntu 26.04.1 amd64 | Smoke E2E #1: чистая установка, новая регистрация, Certbot, REALITY Vision и on-host 27/27. Позднее IPv6 отключение проверено на уже установленной VPS до/после reboot; отдельная чистая установка с этим изменением не проверена |
+| v0.2.0 · Ubuntu 24.04 amd64 + существующий WARP | Проверены установка через `--adopt-warp`, внешний клиент и reboot |
+| v0.3.1 · Ubuntu 26.04.1 amd64, чистая ОС | Проверены установка всех VPN-компонентов, Target UI, новая регистрация WARP, внешний клиент и reboot |
+| v0.3.3 · кандидат PR #6 на Ubuntu 26.04.1 amd64 | Проверены clean install, новая WARP-регистрация, BBR/FQ и TCP socket, Target UI, 26/26 on-host и 7/7 external checks до/после reboot; опубликованный архив v0.3.3 отдельно не разворачивался |
+| Ubuntu 22.04; arm64 | Предусмотрены в коде; отдельное развёртывание не проверено |
+| Native Geodata Auto-Update · исторические проверки | Проверены 4 assets, UTC→03:00 МСК, hot reload, ошибка, rollback и reboot |
+| Happ / INCY contracts · исторические проверки | Проверены реальные HTTP-ответы, Base64/JSON и deeplink |
+| iOS Happ/INCY | **User-verified E2E: VPN connection, applied routing and WARP confirmed.** Физический iPhone, 18.10.2026 |
+| Android | Пока не проверен |
+
+CI выполняет статические проверки, unit/bootstrap-тесты и воспроизводимую сборку. Он **не заменяет** развёртывание на VPS. Подробные подтверждения: [v0.3.2 clean install + BBR + reboot](reference-v032-e2e.json), [REALITY Target API/DB/editor/runtime](reference-target-acceptance.json), [обезличенный API/runtime snapshot](reference-config-redacted.json), [native geodata E2E](reference-geodata-acceptance.json), [on-host E2E](reference-onhost-acceptance.json), [внешний клиент](reference-external-acceptance.json). Ранние результаты Ubuntu 24.04 сохранены отдельно в [истории](history/README.md).
+
 # v0.4.1 Preview · меню `bob`
 
 Состав: v0.4.0 + read-only меню и команды `bob` (`selfsni.cli`) и обновление только CLI `install.sh cli-upgrade` (`selfsni.cli_install`). Provision, Doctor, шаблоны и конфигурация VPN не менялись; в `provision` изменена только раскладка устанавливаемого CLI (VERSION, манифест, новый wrapper).
