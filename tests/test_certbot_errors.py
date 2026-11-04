@@ -11,6 +11,17 @@ class CertbotErrorTests(unittest.TestCase):
     def test_rate_limit_without_time_does_not_invent_one(self):
         self.assertNotIn('Повторить попытку можно после:', explain('rate limit exceeded'))
 
+    def test_service_busy_is_overload_not_a_domain_limit(self):
+        message = explain('urn:ietf:params:acme:error:rateLimited :: There were too many requests of a '
+                          'given type :: Service busy; retry later.')
+        self.assertIn('временно перегружены', message)
+        self.assertNotIn('лимит повторных', message)
+
+    def test_rate_limits_are_named_by_their_kind(self):
+        self.assertIn('неудачных', explain('rateLimited :: too many failed authorizations (5) in the last 1h0m0s'))
+        self.assertIn('частоту запросов', explain('rateLimited :: too many new registrations (10) from this IP'))
+        self.assertIn('лимит повторных', explain('too many certificates (5) already issued for this exact set'))
+
     def test_common_validation_failures(self):
         self.assertIn('DNS', explain('NXDOMAIN looking up A'))
         self.assertIn('CAA', explain('CAA record forbids issuance'))

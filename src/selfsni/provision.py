@@ -795,8 +795,9 @@ def renewal_failure(kind, output, attempts, step):
     where = f' Последний запрос ACME: {step}.' if step else ''
     if kind == 'transient':
         reach = ', '.join(f'{name} — {acme_reachability(url)}' for name, url in ACME_DIRECTORIES)
-        text = ('Проверка автоматического продления сертификата НЕ выполнена: сетевая ошибка при '
-                f'обращении к тестовому серверу Let’s Encrypt (staging), попыток: {attempts}.{where} '
+        text = ('Проверка автоматического продления сертификата НЕ выполнена: тестовый сервер '
+                'Let’s Encrypt (staging) временно недоступен (сбой соединения или перегрузка «Service '
+                f'busy»), попыток: {attempts}.{where} '
                 f'Доступность каталогов ACME сейчас: {reach}. Боевой сертификат выпущен и не изменён, '
                 'но продление не подтверждено. Запустите установщик повторно позже: он продолжит этап '
                 'защиты без перевыпуска сертификата и без переустановки панели.')
@@ -874,7 +875,7 @@ def renew_hook(s, clock=time.monotonic, sleep=pause, jitter=random.uniform):
             if kind != 'transient' or attempt == RENEWAL_ATTEMPTS or \
                     clock() + delay + RENEWAL_MIN_ATTEMPT > deadline:
                 raise renewal_failure(kind, error.output, attempt, step) from error
-            message = (f'Проверка продления: временная сетевая ошибка ACME staging'
+            message = (f'Проверка продления: временная ошибка ACME staging'
                        f'{" (" + step + ")" if step else ""}; попытка {attempt + 1}/{RENEWAL_ATTEMPTS} '
                        f'через {round(delay)} с')
             stage(message)
