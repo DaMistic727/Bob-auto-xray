@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.4.4 — 2026-11-04 · Preview
+
 - **TCP BBR/FQ и swap больше не останавливают установку.** v0.4.3 падала на preflight с `TCP BBR/FQ is already configured in a foreign persistent sysctl file`, если BBR уже включён VPS-Server-Menu: оно дописывает `net.core.default_qdisc=fq` и `net.ipv4.tcp_congestion_control=bbr` в `/etc/sysctl.conf`. Такая же остановка ждала чужой `/swapfile` размером не 2 ГиБ (VPS-Server-Menu создаёт 1, 2, 4 ГиБ или произвольный).
 - BBR/FQ работает по той же схеме, что IPv6: `managed` / `external` / `skipped` в `state.bbr.mode`. Уже применённая чужая настройка — `external`, Bob ничего не пишет. Контейнер, ядро без BBR, противоречащие значения или сбой с откатом — `skipped` с предупреждением. Чужой swap не трогается (`external`/`skipped`). Установщик выводит отдельную строку по IPv6, BBR/FQ и swap и продолжает.
 - Откаты BBR и swap выполняются и при Ctrl+C, откат BBR перечитывается. Неподтверждённый откат остаётся фатальным. Убран `except Exception: pass` из отката BBR.
