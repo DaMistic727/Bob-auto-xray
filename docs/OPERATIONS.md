@@ -25,8 +25,8 @@
 Существующие установки не обновляются автоматически. Чтобы получить меню (или исправленный CLI) на ноде v0.4.0/v0.4.1, от root запустите проверенный bootstrap нового релиза с командой `cli-upgrade`. Сначала проверка без изменений, затем обновление:
 
 ```bash
-bash <(curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' https://github.com/DaMistic727/Bob-auto-xray/releases/download/v0.4.2/install.sh) cli-upgrade --check
-bash <(curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' https://github.com/DaMistic727/Bob-auto-xray/releases/download/v0.4.2/install.sh) cli-upgrade
+bash <(curl -fsSL --proto '=https' https://github.com/DaMistic727/Bob-auto-xray/releases/download/v0.4.2/install.sh) cli-upgrade --check
+bash <(curl -fsSL --proto '=https' https://github.com/DaMistic727/Bob-auto-xray/releases/download/v0.4.2/install.sh) cli-upgrade
 ```
 
 Заменяются только `/usr/local/bin/bob` и `/usr/local/lib/bob-auto-xray`, и только если они принадлежат Bob: wrapper побайтно совпадает с созданным Bob, библиотека — с деревом релиза v0.4.0 или со своим манифестом. Чужие или вручную изменённые файлы не трогаются, команда завершается отказом (код `3`). Замена атомарная; затем проверяется запуск новой команды, при ошибке прежняя версия восстанавливается (код `1`); если откат не удался (код `5`), команда печатает путь сохранённой прежней библиотеки для ручного восстановления. Provision, службы, state, сертификаты и конфигурация VPN не затрагиваются; при работающем установщике обновление откажет. Ноды без `bob` (до v0.4.0 или с занятым именем) этим способом не обновляются.
