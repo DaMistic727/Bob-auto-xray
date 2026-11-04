@@ -14,10 +14,13 @@ XRAY_ARCHIVES = {
     'amd64': 'Xray-linux-64.zip',
     'arm64': 'Xray-linux-arm64-v8a.zip',
 }
+# Reviewed official release and the commit its `xray version` reports.
+XRAY_VERSION = 'v26.10.31'
+XRAY_COMMIT = 'a4a3dff'
 
 
 def pinned_xray_spec(lock, arch):
-    require(lock.get('xray_version') == 'v26.10.21', 'Unreviewed Xray version')
+    require(lock.get('xray_version') == XRAY_VERSION, 'Unreviewed Xray version')
     require(arch in XRAY_ARCHIVES, 'Unsupported Xray architecture')
     spec = lock.get('xray_downloads', {}).get(arch, {})
     expected_url = ('https://github.com/XTLS/Xray-core/releases/download/'
@@ -35,7 +38,7 @@ def install_pinned_xray(lock, arch, work, destination=None):
     destination = Path(destination or '/usr/local/x-ui/bin/xray-linux-' + arch)
     require(destination.is_file() and not destination.is_symlink(),
             'Panel Xray binary is absent or unsafe')
-    # The panel archive carries the withdrawn core; never leave it running
+    # The panel archive carries an older core; never leave it running
     # while fetching or validating the separately pinned replacement.
     run('systemctl', 'stop', 'x-ui')
     archive_path = download(spec['url'], Path(work)/XRAY_ARCHIVES[arch], spec['sha256'])
@@ -63,7 +66,7 @@ def install_pinned_xray(lock, arch, work, destination=None):
         finally:
             os.close(directory)
         version = run(str(destination), 'version').splitlines()[0]
-        require(version.startswith('Xray 26.10.21 ') and '1b1647c' in version,
+        require(version.startswith('Xray ' + XRAY_VERSION[1:] + ' ') and XRAY_COMMIT in version,
                 'Pinned Xray version/commit mismatch')
         return spec['binary_sha256']
     except zipfile.BadZipFile as error:
