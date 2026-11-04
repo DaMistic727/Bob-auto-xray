@@ -37,7 +37,7 @@ from .portal import generate
 from .tls_renewal import (LEGACY_HOOK_SCRIPT, RELOAD_STAMP, RENEW_HOOK, RENEW_HOOK_SCRIPT,
                           RETRY_DROPIN, retry_dropin)
 from .routing import deeplink, inbound, server_template
-from .xray_pin import install_pinned_xray
+from .xray_pin import XRAY_VERSION, install_pinned_xray, pinned_xray_spec
 
 STATE = Path('/var/lib/selfsni')
 DIAGNOSTIC_LOG = Path('/var/log/bob-auto-xray/install.log')
@@ -1077,7 +1077,13 @@ def main():
                     UI.stage(11, 13, 'Защита и продление сертификата', 'ok')
                 checkpoint(STATE, s, 'ACCEPTANCE'); UI.stage(12, 13, 'Проверка результата')
                 from .acceptance import verify
-                report = verify(s)
+                if late and s['xray_sha256'] != pinned_xray_spec(lock, s['arch'])['binary_sha256']:
+                    # Not upgraded here: Xray is a finished stage, and installed nodes
+                    # are never upgraded automatically.
+                    UI.note(f'Xray на сервере ({s["xray_version"].split()[1]}) отличается от закреплённого '
+                            f'в этом релизе ({XRAY_VERSION[1:]}). При продолжении установки ядро '
+                            'не обновляется; acceptance проверяет ядро, установленное ранее.')
+                report = verify(s, installed_xray=late)
                 save(STATE/'acceptance.json',report)
                 require(all(x['passed'] for x in report['checks']),
                         'Acceptance failed; inspect /var/lib/selfsni/acceptance.json')

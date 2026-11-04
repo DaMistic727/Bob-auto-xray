@@ -515,6 +515,8 @@ class LateResumeInstallerTests(unittest.TestCase):
         self.assertEqual(self.mocks['firewall'].call_args.kwargs, {'public': True})
         self.mocks['install_doctor_cli'].assert_called_once()
         self.mocks['verify'].assert_called_once()
+        # A v0.4.2 node keeps its Xray; acceptance judges the binary verified at PANEL.
+        self.assertEqual(self.mocks['verify'].call_args.kwargs, {'installed_xray': True})
         final = self.saved()
         self.assertEqual(final['status'], 'HEALTHY_LOCAL')
         self.assertEqual(final['last_completed_stage'], 'HEALTHY_LOCAL')
@@ -584,6 +586,48 @@ class LateResumeInstallerTests(unittest.TestCase):
         for action in ('security', 'renew_hook', 'firewall'):
             self.mocks[action].assert_not_called()
         self.assertEqual(self.saved()['stage'], 'SECURITY')
+
+
+class InstalledXrayAcceptanceTests(unittest.TestCase):
+    """A node installed with an earlier Xray pin must still pass a late resume."""
+
+    def setUp(self):
+        import json
+        from selfsni.core import ROOT
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.binary = Path(directory.name) / 'xray-linux-amd64'
+        self.binary.write_bytes(b'xray 26.10.21 binary')
+        self.lock = json.loads((ROOT / 'versions.lock.json').read_text())
+        self.state = dict(arch='amd64', xray_bin=str(self.binary),
+                          xray_sha256=hashlib.sha256(b'xray 26.10.21 binary').hexdigest(),
+                          xray_version='Xray 26.10.21 (Xray, Penetrates Everything.) 1b1647c (go1.25)')
+
+    def check(self, installed, version_line=None):
+        from selfsni import acceptance
+        reply = (version_line or self.state['xray_version']) + '\nA unified platform\n'
+        with patch.object(acceptance, 'run', return_value=reply):
+            acceptance.check_pinned_xray(self.state, self.lock, installed)
+
+    def test_earlier_pin_fails_a_fresh_check_but_passes_as_installed(self):
+        with self.assertRaisesRegex(InstallError, 'pinned official release'):
+            self.check(installed=False)
+        self.check(installed=True)
+
+    def test_installed_binary_must_still_be_the_verified_one(self):
+        self.binary.write_bytes(b'replaced')
+        with self.assertRaisesRegex(InstallError, 'verified at installation'):
+            self.check(installed=True)
+        self.binary.write_bytes(b'xray 26.10.21 binary')
+        with self.assertRaisesRegex(InstallError, 'verified at installation'):
+            self.check(installed=True, version_line='Xray 26.10.31 (Xray) a4a3dff')
+
+    def test_fresh_install_still_requires_this_release_pin(self):
+        spec = self.lock['xray_downloads']['amd64']
+        self.state.update(xray_sha256=spec['binary_sha256'])
+        self.binary.write_bytes(b'not the pinned binary')
+        with self.assertRaisesRegex(InstallError, 'pinned official release'):
+            self.check(installed=False)
 
 
 class LateResumePreflightTests(unittest.TestCase):
