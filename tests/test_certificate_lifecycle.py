@@ -4,6 +4,7 @@ Mock/stub only: no ACME request, no systemd. The retry command itself is run by
 /bin/sh against temporary files.
 """
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -99,7 +100,9 @@ class CertificateResumeTests(unittest.TestCase):
 
 
 class ReloadRetryTests(unittest.TestCase):
-    """The certbot.service ExecStopPost command, run by /bin/sh."""
+    """The certbot.service ExecStopPost command, run by /bin/sh (subclasses: dash, bash)."""
+
+    shell = '/bin/sh'
 
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
@@ -122,7 +125,7 @@ class ReloadRetryTests(unittest.TestCase):
         self.command = line[len(prefix):-1].replace('$$', '$')  # what systemd passes to sh
 
     def run_retry(self, **env):
-        return subprocess.run(['/bin/sh', '-c', self.command], env=dict(os.environ, **env)).returncode
+        return subprocess.run([self.shell, '-c', self.command], env=dict(os.environ, **env)).returncode
 
     def age(self, path, seconds):
         os.utime(path, (1_700_000_000 + seconds, 1_700_000_000 + seconds))
@@ -161,6 +164,13 @@ class ReloadRetryTests(unittest.TestCase):
         self.assertEqual(lines[-1], 'touch /var/lib/selfsni/tls-reloaded')
         self.assertEqual(RENEW_HOOK_SCRIPT, LEGACY_HOOK_SCRIPT + lines[-1] + '\n')
         self.assertIn(RETRY_DROPIN, provision.CONTROLLED_PATHS)
+
+
+# Ubuntu's /bin/sh is dash; its `test -nt` differs from bash for a missing file.
+for _name in ('dash', 'bash'):
+    if shutil.which(_name):
+        globals()[f'ReloadRetry{_name.title()}Tests'] = type(
+            f'ReloadRetry{_name.title()}Tests', (ReloadRetryTests,), {'shell': shutil.which(_name)})
 
 
 class DoctorCertificatePolicyTests(unittest.TestCase):

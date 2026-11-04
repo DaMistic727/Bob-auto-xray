@@ -20,8 +20,11 @@ def retry_dropin(domain, live='/etc/letsencrypt/live', stamp=RELOAD_STAMP, hook=
     day) repeats the hook, and a failure leaves certbot.service failed.
     ExecStopPost also runs when certbot itself fails on another lineage.
     """
-    # systemd turns $$ into $ before /bin/sh sees the command.
+    # systemd turns $$ into $ before /bin/sh sees the command. The missing stamp
+    # is tested explicitly: dash (Ubuntu /bin/sh) answers `-nt` false when the
+    # second file is absent, bash answers true.
     return ('[Service]\n'
             '# Bob Auto Xray: reload nginx and x-ui until they use the renewed certificate.\n'
             f"ExecStopPost=/bin/sh -c 'cert=$$(readlink -f {live}/{domain}/fullchain.pem); "
-            f'if [ "$$cert" -nt {stamp} ]; then exec {hook}; fi\'\n')
+            f'if [ -f "$$cert" ] && {{ [ ! -e {stamp} ] || [ "$$cert" -nt {stamp} ]; }}; '
+            f'then exec {hook}; fi\'\n')
