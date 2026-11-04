@@ -212,5 +212,110 @@ class BbrTests(unittest.TestCase):
                 bbr.preflight(docker, etc, run_root)
 
 
+# Exactly what the official VPS-Server-Menu ("enable BBR") appends to /etc/sysctl.conf.
+MENU_SYSCTL = 'net.core.default_qdisc=fq\nnet.ipv4.tcp_congestion_control=bbr\n'
+
+
+class BestEffortTests(unittest.TestCase):
+    """bbr.apply(): optional for the installation; raises only after a failed rollback."""
+
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.paths = BbrTests.paths(None, Path(directory.name))
+
+    def apply(self, kernel):
+        etc, run_root, managed, module = self.paths
+        with patch('selfsni.bbr.socket_evidence', side_effect=socket_report):
+            return bbr.apply(kernel, managed, module, etc, run_root)
+
+    def assertUntouched(self, kernel, runtime):
+        self.assertFalse(self.paths[2].exists())
+        self.assertFalse(self.paths[3].exists())
+        self.assertEqual({k: kernel.values[k] for k in bbr.DESIRED}, runtime)
+        self.assertEqual([c for c in kernel.calls if c[:2] == ('sysctl', '-w') or c[:1] == ('modprobe',)], [])
+
+    def test_menu_sysctl_already_effective_is_external_without_writes(self):
+        sysctl = self.paths[0] / 'sysctl.conf'
+        sysctl.write_text(MENU_SYSCTL)
+        kernel = FakeKernel('fq', 'bbr')
+        report = self.apply(kernel)
+        self.assertEqual(report['mode'], 'external')
+        self.assertIn('sysctl.conf:1', report['detail'])
+        self.assertEqual(sysctl.read_text(), MENU_SYSCTL)
+        self.assertUntouched(kernel, bbr.DESIRED)
+
+    def test_menu_sysctl_not_effective_is_skipped_not_layered(self):
+        (self.paths[0] / 'sysctl.conf').write_text(MENU_SYSCTL)
+        kernel = FakeKernel()
+        report = self.apply(kernel)
+        self.assertEqual((report['mode'], report['reason']), ('skipped', 'external'))
+        self.assertUntouched(kernel, {'net.core.default_qdisc': 'fq_codel',
+                                      'net.ipv4.tcp_congestion_control': 'cubic'})
+
+    def test_conflict_container_and_unsupported_kernel_are_skipped(self):
+        def docker(kernel):
+            def command(*args):
+                return 'docker\n' if args == ('systemd-detect-virt',) else kernel(*args)
+            return command
+        cases = {'conflict': (FakeKernel(), 'net.ipv4.tcp_congestion_control = cubic\n'),
+                 'container': (FakeKernel(), None),
+                 'unsupported': (FakeKernel(available=('reno', 'cubic'), module='unknown'), None)}
+        for reason, (kernel, foreign) in cases.items():
+            with self.subTest(reason=reason):
+                self.setUp()
+                if foreign:
+                    (self.paths[0] / 'sysctl.d/80-foreign.conf').write_text(foreign)
+                report = self.apply(docker(kernel) if reason == 'container' else kernel)
+                self.assertEqual((report['mode'], report['reason']), ('skipped', reason))
+                self.assertFalse(self.paths[2].exists())
+
+    def test_partial_failure_rolls_back_and_skips(self):
+        kernel = FakeKernel()
+        kernel.fail_once = 'net.ipv4.tcp_congestion_control'
+        report = self.apply(kernel)
+        self.assertEqual((report['mode'], report['reason']), ('skipped', 'apply-failed'))
+        self.assertIn('rolled back', report['detail'])
+        self.assertFalse(self.paths[2].exists())
+        self.assertEqual(kernel.values['net.core.default_qdisc'], 'fq_codel')
+
+    def test_failed_rollback_is_fatal(self):
+        kernel = FakeKernel()
+        original = kernel.__call__
+
+        def command(*args):
+            if args == ('sysctl', '-w', 'net.ipv4.tcp_congestion_control=bbr'):
+                raise InstallError('sysctl exited 1')
+            if args == ('sysctl', '-w', 'net.core.default_qdisc=fq_codel'):
+                raise InstallError('sysctl exited 255')
+            return original(*args)
+        with self.assertRaisesRegex(bbr.RollbackError, 'TCP BBR rollback incomplete'):
+            self.apply(command)
+
+    def test_interrupt_rolls_back_and_propagates(self):
+        kernel = FakeKernel()
+        original = kernel.__call__
+
+        def command(*args):
+            if args == ('sysctl', '-w', 'net.ipv4.tcp_congestion_control=bbr'):
+                raise KeyboardInterrupt
+            return original(*args)
+        with self.assertRaises(KeyboardInterrupt):
+            self.apply(command)
+        self.assertFalse(self.paths[2].exists())
+        self.assertEqual(kernel.values['net.core.default_qdisc'], 'fq_codel')
+
+    def test_fresh_host_is_managed(self):
+        report = self.apply(FakeKernel())
+        self.assertEqual((report['mode'], report['runtime']), ('managed', bbr.DESIRED))
+
+    def test_decision_is_read_only(self):
+        (self.paths[0] / 'sysctl.conf').write_text(MENU_SYSCTL)
+        kernel = FakeKernel(available=('reno', 'cubic'))
+        bbr.decision(kernel, self.paths[0], self.paths[1])
+        self.assertUntouched(kernel, {'net.core.default_qdisc': 'fq_codel',
+                                      'net.ipv4.tcp_congestion_control': 'cubic'})
+
+
 if __name__ == '__main__':
     unittest.main()

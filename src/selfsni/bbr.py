@@ -1,4 +1,9 @@
-"""Install and verify the standard Linux TCP BBR congestion controller."""
+"""Install and verify the standard Linux TCP BBR congestion controller.
+
+Optional for the installation (apply()): Bob manages BBR/FQ only when no other
+tool does ("managed"); BBR/FQ already enabled by another tool is "external";
+anything Bob cannot set up safely is "skipped". The latter two write nothing.
+"""
 import json
 import os
 from pathlib import Path
@@ -15,6 +20,10 @@ DESIRED = {
     'net.core.default_qdisc': 'fq',
     'net.ipv4.tcp_congestion_control': 'bbr',
 }
+class RollbackError(InstallError):
+    """A partial BBR/FQ change could not be undone: the host is in an unknown state."""
+
+
 RESTRICTED_VIRTUALIZATION = {
     'docker', 'lxc', 'lxc-libvirt', 'openvz', 'podman', 'systemd-nspawn', 'wsl',
 }
@@ -153,6 +162,46 @@ def preflight(command=run, etc=Path('/etc'), run_root=Path('/run'), allow_modpro
     return report
 
 
+def decision(command=run, etc=Path('/etc'), run_root=Path('/run'),
+             module_root=Path('/lib/modules')):
+    """Read-only: whether Bob may manage BBR/FQ here. Never fails the installation."""
+    report = probe(command, etc, run_root, module_root)
+    mode, reason, detail = 'managed', None, None
+    if report['restrictedContainer']:
+        mode, reason, detail = 'skipped', 'container', 'restricted container: ' + report['virtualization']
+    elif not report['bbrSupported']:
+        mode, reason, detail = 'skipped', 'unsupported', 'kernel has no BBR and no tcp_bbr module'
+    elif report['conflicts']:
+        mode, reason = 'skipped', 'conflict'
+        detail = 'conflicting persistent sysctl: ' + _where(report['conflicts'])
+    elif report['duplicates']:
+        # Bob never layers its file over another tool's; it is enough when that one is effective.
+        mode = 'external' if report['current'] == DESIRED else 'skipped'
+        reason, detail = 'external', 'configured in ' + _where(report['duplicates'])
+    return dict(report, mode=mode, reason=reason, detail=detail)
+
+
+def _where(items):
+    return ', '.join(f"{item['file']}:{item['line']}" for item in items)
+
+
+def apply(command=run, sysctl_config=SYSCTL_CONFIG, module_config=MODULE_CONFIG,
+          etc=Path('/etc'), run_root=Path('/run'), module_root=Path('/lib/modules')):
+    """Best effort; returns state['bbr']. Raises only when a rollback failed."""
+    report = decision(command, etc, run_root, module_root)
+    if report['mode'] == 'managed':
+        try:
+            return dict(configure(command, sysctl_config, module_config, etc, run_root,
+                                  module_root), mode='managed')
+        except RollbackError:
+            raise
+        except (InstallError, OSError, ValueError) as error:
+            # configure() wrote nothing or rolled every change back.
+            report = dict(report, mode='skipped', reason='apply-failed',
+                          detail=f'{error} (changes rolled back)')
+    return {key: report[key] for key in ('mode', 'reason', 'detail', 'current', 'virtualization')}
+
+
 def _snapshot(path):
     path = Path(path)
     return path.read_bytes() if path.exists() else None
@@ -193,14 +242,32 @@ def configure(command=run, sysctl_config=SYSCTL_CONFIG,
         result = verify(command, sysctl_config, etc, run_root)
         result['moduleLoadedByInstaller'] = loaded
         return result
-    except Exception:
+    except BaseException:
+        # Also on Ctrl+C. Every step is attempted and the result re-read; a
+        # rollback that cannot be proven complete is fatal (RollbackError).
+        errors = []
         for key, value in reversed(list(old_runtime.items())):
             try:
                 command('sysctl', '-w', f'{key}={value}')
-            except Exception:
-                pass
-        _restore(sysctl_config, old_sysctl, 0o644)
-        _restore(module_config, old_module, 0o644)
+            except (InstallError, OSError) as error:
+                errors.append(str(error))
+        for path, previous in ((sysctl_config, old_sysctl), (module_config, old_module)):
+            try:
+                _restore(path, previous, 0o644)
+            except OSError as error:
+                errors.append(str(error))
+        if not errors:
+            try:
+                changed = [key for key, value in old_runtime.items() if _sysctl(command, key) != value]
+                changed += [str(path) for path, previous in ((sysctl_config, old_sysctl),
+                                                             (module_config, old_module))
+                            if _snapshot(path) != previous]
+                if changed:
+                    errors.append('not restored: ' + ', '.join(changed))
+            except (InstallError, OSError) as error:
+                errors.append(str(error))
+        if errors:
+            raise RollbackError('TCP BBR rollback incomplete: ' + '; '.join(errors))
         raise
 
 
@@ -248,9 +315,8 @@ def verify(command=run, sysctl_config=SYSCTL_CONFIG,
     active_conflicts = conflicts(etc, run_root)
     require(not active_conflicts,
             'Conflicting persistent TCP BBR sysctl: ' + json.dumps(active_conflicts))
+    # Agreeing foreign values (e.g. added later by another tool) are harmless.
     foreign_duplicates = duplicates(etc, run_root)
-    require(not foreign_duplicates,
-            'Duplicate foreign TCP BBR/FQ sysctl: ' + json.dumps(foreign_duplicates))
     sockets = socket_evidence(available)
     require(sockets['connectedSocketCongestionControl'] == 'bbr',
             'A new connected TCP socket did not inherit BBR')
@@ -259,6 +325,7 @@ def verify(command=run, sysctl_config=SYSCTL_CONFIG,
                 sockets['explicitAlternative']['selected'],
                 'Explicit per-socket congestion control was not honored')
     return {
+        'mode': 'managed',
         'runtime': current,
         'persistentConfig': str(sysctl_config),
         'availableCongestionControl': available,

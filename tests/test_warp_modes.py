@@ -157,7 +157,7 @@ class WarpModeTests(unittest.TestCase):
              patch.object(provision.socket, 'getaddrinfo', return_value=[(None,None,None,None,('8.8.8.8', 80))]), \
              patch.object(provision.socket, 'socket') as sock, \
              patch.object(provision, 'free_port', side_effect=[21000,22000]), \
-             patch.object(provision.bbr, 'preflight', return_value={}), \
+             patch.object(provision.bbr, 'decision', return_value={}), \
              patch.object(provision.ipv6, 'preflight', return_value={}):
             result = provision.preflight(args)
         self.assertEqual(result['warp_mode'], 'skip')
@@ -190,8 +190,8 @@ class WarpModeTests(unittest.TestCase):
                      patch.object(provision, 'firewall'), \
                      patch.multiple(provision,
                                     ipv6=MagicMock(apply=MagicMock(return_value={'mode': 'managed'}), configure=MagicMock(return_value=({}, {}))),
-                                    bbr=MagicMock(configure=MagicMock(return_value={})),
-                                    swap=MagicMock(configure=MagicMock(return_value={'status': 'skipped'}),
+                                    bbr=MagicMock(apply=MagicMock(return_value={}), configure=MagicMock(return_value={})),
+                                    swap=MagicMock(apply=MagicMock(return_value={'status': 'skipped', 'reason': 'test'}), configure=MagicMock(return_value={'status': 'skipped'}),
                                                    preflight=MagicMock(return_value={}))), \
                      patch.object(provision, 'install_warp') as install, \
                      patch.object(provision, 'adopt_warp') as adopt, \
@@ -266,8 +266,8 @@ class WarpModeTests(unittest.TestCase):
                  patch.object(provision, 'firewall'), \
                  patch.multiple(provision,
                                 ipv6=MagicMock(apply=MagicMock(return_value={'mode': 'managed'}), configure=MagicMock(return_value=({}, {}))),
-                                bbr=MagicMock(configure=MagicMock(return_value={})),
-                                swap=MagicMock(configure=MagicMock(return_value={'status': 'skipped'}))), \
+                                bbr=MagicMock(apply=MagicMock(return_value={}), configure=MagicMock(return_value={})),
+                                swap=MagicMock(apply=MagicMock(return_value={'status': 'skipped', 'reason': 'test'}), configure=MagicMock(return_value={'status': 'skipped'}))), \
                  patch.object(provision, 'adopt_warp') as adopt, \
                  patch.object(provision, 'install_warp') as install, \
                  patch.object(provision, 'certificate', side_effect=InstallError('Certbot failed')), \
@@ -301,8 +301,8 @@ class WarpModeTests(unittest.TestCase):
                  patch.object(provision, 'firewall'), \
                  patch.multiple(provision,
                                 ipv6=MagicMock(apply=MagicMock(return_value={'mode': 'managed'}), configure=MagicMock(return_value=({}, {}))),
-                                bbr=MagicMock(configure=MagicMock(return_value={})),
-                                swap=MagicMock(configure=MagicMock(return_value={'status': 'skipped'}))), \
+                                bbr=MagicMock(apply=MagicMock(return_value={}), configure=MagicMock(return_value={})),
+                                swap=MagicMock(apply=MagicMock(return_value={'status': 'skipped', 'reason': 'test'}), configure=MagicMock(return_value={'status': 'skipped'}))), \
                  patch.object(provision, 'install_warp') as install, \
                  patch.object(provision, 'adopt_warp') as adopt, \
                  patch.multiple(provision, certificate=DEFAULT, decoy=DEFAULT,

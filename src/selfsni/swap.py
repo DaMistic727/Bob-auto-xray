@@ -1,4 +1,8 @@
-"""Optional, persistent 2 GiB swap file for a fresh installation."""
+"""Optional, persistent 2 GiB swap file for a fresh installation.
+
+apply() never fails the installation for a swap Bob does not own: an active
+/swapfile of another tool is "external", any other foreign state is "skipped".
+"""
 import os
 from pathlib import Path
 import shutil
@@ -10,6 +14,10 @@ FSTAB = Path('/etc/fstab')
 LINE = '/swapfile none swap sw 0 0'
 SIZE = 2 * 1024**3
 RESERVE = 2 * 1024**3
+
+
+class RollbackError(InstallError):
+    """A partial swap change could not be undone."""
 
 
 def preflight(command=run, file=FILE, fstab=FSTAB):
@@ -49,7 +57,8 @@ def configure(command=run, file=FILE, fstab=FSTAB, disk_usage=shutil.disk_usage)
                 'Swap activation verification failed')
         require(fstab.read_text().splitlines().count(LINE) == 1,
                 'Swap persistence verification failed')
-    except Exception as error:
+    except BaseException as error:
+        # Also on Ctrl+C: a half-created swap is never left behind.
         failures = []
         try:
             if str(file) in command('swapon', '--show=NAME', '--noheadings', '--raw').splitlines():
@@ -69,12 +78,36 @@ def configure(command=run, file=FILE, fstab=FSTAB, disk_usage=shutil.disk_usage)
             except Exception as rollback_error:
                 failures.append('swap file removal: ' + str(rollback_error))
         if failures:
-            raise InstallError('Swap rollback incomplete: ' + '; '.join(failures)) from error
+            raise RollbackError('Swap rollback incomplete: ' + '; '.join(failures)) from error
         raise
     return {'status': 'created', 'path': str(file), 'bytes': SIZE}
 
 
+def apply(command=run, file=FILE, fstab=FSTAB, disk_usage=shutil.disk_usage):
+    """Best effort; returns state['swap']. Raises only when a rollback failed."""
+    try:
+        preflight(command, file, fstab)
+    except (InstallError, OSError) as error:
+        # Another tool's swap (e.g. VPS-Server-Menu, any size) is left exactly as it is.
+        try:
+            active = str(file) in command('swapon', '--show=NAME', '--noheadings', '--raw').splitlines()
+        except InstallError:
+            active = False
+        if active and file.is_file() and not file.is_symlink():
+            return {'status': 'external', 'path': str(file), 'reason': str(error)}
+        return {'status': 'skipped', 'reason': str(error), 'foreign': True}
+    try:
+        return configure(command, file, fstab, disk_usage)
+    except RollbackError:
+        raise
+    except (InstallError, OSError) as error:
+        return {'status': 'skipped', 'reason': f'swap creation failed and was rolled back: {error}'}
+
+
 def verify(report, command=run, file=FILE, fstab=FSTAB):
+    if report.get('status') == 'external' or report.get('foreign'):
+        # Not Bob's swap; nothing to prove about it.
+        return report
     if report.get('status') == 'skipped':
         require(not file.exists(), 'Skipped swap unexpectedly has a file')
         return report

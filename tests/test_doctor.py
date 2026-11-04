@@ -354,6 +354,36 @@ class DoctorTests(unittest.TestCase):
             probe.sync()
             self.assertEqual(check(doctor.Doctor(probe).run(), 'system.ipv6')['status'], 'UNKNOWN')
 
+    def test_bbr_external_and_skipped_never_degrade_the_node(self):
+        cases = [({'mode': 'external', 'reason': 'external'}, 'bbr', 'PASS'),
+                 ({'mode': 'external', 'reason': 'external'}, 'cubic', 'WARN'),
+                 ({'mode': 'skipped', 'reason': 'container'}, 'cubic', 'SKIP'),
+                 ({'mode': 'skipped', 'reason': 'container'}, 'bbr', 'PASS'),
+                 ({'mode': 'disabled'}, 'bbr', 'UNKNOWN')]
+        for report, runtime, expected in cases:
+            with self.subTest(report=report, runtime=runtime):
+                probe = FakeProbe()
+                probe.state['bbr'] = report
+                probe.sync()
+                del probe.files['/etc/sysctl.d/99-zz-bob-auto-xray-bbr.conf']
+                probe.commands[('sysctl', '-n', 'net.ipv4.tcp_congestion_control')] = (0, runtime + '\n')
+                result = check(doctor.Doctor(probe).run(), 'system.bbr')
+                self.assertEqual(result['status'], expected, result)
+        # State without a BBR result (every node before this change) is checked as before.
+        probe = FakeProbe()
+        del probe.files['/etc/sysctl.d/99-zz-bob-auto-xray-bbr.conf']
+        self.assertEqual(check(doctor.Doctor(probe).run(), 'system.bbr')['status'], 'WARN')
+
+    def test_external_swap_is_skip(self):
+        for report in ({'status': 'external', 'path': '/swapfile', 'reason': 'foreign'},
+                       {'status': 'skipped', 'reason': 'foreign', 'foreign': True}):
+            with self.subTest(report=report):
+                probe = FakeProbe()
+                probe.state['swap'] = report
+                probe.sync()
+                report = doctor.Doctor(probe).run()
+                self.assertEqual(check(report, 'system.swap')['status'], 'SKIP')
+
     def test_ipv6_current_install_and_fail_closed_states(self):
         healthy = doctor.Doctor(FakeProbe()).run()
         self.assertEqual(check(healthy, 'system.ipv6')['status'], 'PASS')

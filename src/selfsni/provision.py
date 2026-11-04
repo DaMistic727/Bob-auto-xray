@@ -29,7 +29,7 @@ from .apt import AptRunner, background_package_processes
 from .menu_upstream import OFFICIAL_REPOSITORY, check_official_menu, install_menu
 from . import menu_warp
 from .install_state import (LATE_RESUME_STAGES, RESUMABLE_FAILURE_STAGES, SECURITY_STEPS, STAGES,
-                            InstallerLock, checkpoint, fail, initialize, ipv6_mode, load,
+                            InstallerLock, bbr_mode, checkpoint, fail, initialize, ipv6_mode, load,
                             upgrade_legacy_apt_failure, validate_resume, warp_mode)
 from .ui import InstallerUI, interactive_wizard
 from .geodata import GEODATA_TIMEZONE, verify_server_geodata
@@ -271,11 +271,13 @@ def carried_results(state, ipv6_report):
     results = dict(
         ipv6=_carried(state, 'ipv6', ipv6_result),
         bbr=_carried(state, 'bbr', lambda r:
+            (isinstance(r['reason'], str) and not bbr.SYSCTL_CONFIG.exists() and
+             not bbr.SYSCTL_CONFIG.is_symlink()) if bbr_mode(r) != 'managed' else
             r['runtime'] == bbr.DESIRED and r['persistentConfig'] == str(bbr.SYSCTL_CONFIG) and
             bbr.SYSCTL_CONFIG.read_text() == ''.join(f'{k} = {v}\n' for k, v in bbr.DESIRED.items())),
         swap=_carried(state, 'swap', lambda r:
             (r['status'] == 'created' and r['path'] == str(swap.FILE) and r['bytes'] == swap.SIZE) or
-            (r['status'] == 'existing' and r['path'] == str(swap.FILE)) or
+            (r['status'] in ('existing', 'external') and r['path'] == str(swap.FILE)) or
             (r['status'] == 'skipped' and isinstance(r['reason'], str))))
     swap.verify(results['swap'])
     # install re-checks health only; adopt re-resolves the menu and overwrites it.
@@ -390,7 +392,8 @@ def preflight(args, resume_state=None):
         sub_port = free_port(excluded | {panel_port})
     # Keep all preflight modes read-only. kmod is installed below before
     # configure() may need modprobe on a minimal Ubuntu image.
-    bbr_report = bbr.preflight()
+    # Read-only decision; an unsupported or foreign BBR/FQ setup never stops the installation.
+    bbr_report = bbr.decision()
     credentials = (dict(panel_path=resume_state['panel_path'], sub_path=resume_state['sub_path'],
                         username=resume_state['username'], password=resume_state['password'])
                    if resume_state else
@@ -438,11 +441,44 @@ def ipv6_notes(report):
     return lines
 
 
-def report_ipv6(report):
-    for line in ipv6_notes(report):
+BBR_REASONS = {
+    'container': 'контейнер без управления sysctl ядра',
+    'unsupported': 'ядро не поддерживает BBR',
+    'conflict': 'внешняя конфигурация задаёт другие значения',
+    'external': 'внешняя конфигурация не применена',
+    'apply-failed': 'применение не удалось, изменения полностью откачены',
+}
+
+
+def bbr_notes(report):
+    mode = bbr_mode(report)
+    if mode == 'managed':
+        return ['✓ TCP BBR/FQ: настроены.']
+    if mode == 'external':
+        return ['✓ TCP BBR/FQ: уже включены внешней конфигурацией; Bob её не менял.']
+    lines = [f'⚠ TCP BBR/FQ: настройка пропущена — {BBR_REASONS.get(report.get("reason"), "причина не определена")}.']
+    if report.get('detail'):
+        lines.append('  ' + redact(str(report['detail'])))
+    return lines
+
+
+def swap_notes(report):
+    status = report.get('status')
+    if status == 'created':
+        return ['✓ Swap 2 ГиБ: создан.']
+    if status == 'existing':
+        return ['✓ Swap: уже настроен.']
+    if status == 'external':
+        return ['✓ Swap: уже есть (/swapfile настроен не Bob), не изменён.']
+    return ['⚠ Swap: пропущен — ' + redact(str(report.get('reason', 'причина не определена'))) + '.']
+
+
+def report_system(s):
+    """Optional host settings: what Bob did, and that the VPN installation goes on regardless."""
+    lines = ipv6_notes(s['ipv6']) + bbr_notes(s['bbr']) + swap_notes(s['swap'])
+    for line in lines:
         UI.note(line)
-    UI.note('✓ TCP BBR/FQ: настроены.')
-    if ipv6_mode(report) != 'managed':
+    if any(line.startswith('⚠') for line in lines):
         UI.note('✓ Установка VPN продолжается.')
 
 
@@ -1017,6 +1053,9 @@ def main():
             decision = checked.get('ipv6_preflight', {})
             if ipv6_mode(decision) != 'managed':
                 UI.note(ipv6_notes(decision)[0])
+            decision = checked.get('bbr_preflight', {})
+            if bbr_mode(decision) != 'managed':
+                UI.note(bbr_notes(decision)[0])
             UI.note('Проверка пройдена. Система не изменена.')
             return
         with InstallerLock(INSTALL_LOCK):
@@ -1083,20 +1122,17 @@ def main():
             with tempfile.TemporaryDirectory(prefix='selfsni-') as wd:
                 work = Path(wd)
                 if pending('BBR'):
-                    checkpoint(STATE, s, 'BBR'); UI.stage(5, 13, 'Настройка IPv6, TCP BBR, FQ и swap')
-                    swap.preflight()
-                    # BBR/FQ and swap never depend on IPv6, and IPv6 never undoes them.
-                    s['bbr'] = bbr.configure()
-                    s['swap'] = swap.configure()
+                    checkpoint(STATE, s, 'BBR'); UI.stage(5, 13, 'Системные настройки: IPv6, TCP BBR/FQ, swap')
+                    # All three are optional and independent: none undoes another, and
+                    # each raises only when its own rollback failed (unknown host state)
+                    # or, for IPv6, when its public exposure cannot be excluded.
+                    s['bbr'] = bbr.apply()
+                    s['swap'] = swap.apply()
                     checkpoint(STATE, s, 'BBR')
-                    # Best effort: managed, external or skipped. Raises only after a
-                    # failed rollback or when IPv6 exposure cannot be excluded.
                     s['ipv6'] = ipv6.apply(s['domain'], s['ssh_ports'])
                     checkpoint(STATE, s, 'BBR', True)
-                    report_ipv6(s['ipv6'])
-                    UI.stage(5, 13, 'Настройка IPv6, TCP BBR, FQ и swap'
-                             if ipv6_mode(s['ipv6']) == 'managed' else
-                             'Настройка TCP BBR, FQ и swap (IPv6 не изменён)', 'ok')
+                    report_system(s)
+                    UI.stage(5, 13, 'Системные настройки', 'ok')
                     checkpoint(STATE, s, 'FIREWALL'); UI.stage(6, 13, 'Настройка сетевой защиты')
                     firewall(s); checkpoint(STATE, s, 'FIREWALL', True)
                     UI.stage(6, 13, 'Настройка сетевой защиты', 'ok')

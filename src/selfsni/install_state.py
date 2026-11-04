@@ -19,18 +19,21 @@ def warp_mode(state):
                                   bool(state['adopt_warp']) != (mode == 'adopt')):
         raise InstallError('Некорректный режим WARP в сохранённом состоянии')
     return mode
-# Who owns the IPv4-only policy (state['ipv6']['mode']); see ipv6.py.
-IPV6_MODES = ('managed', 'external', 'skipped')
+# Who owns an optional host setting (state['ipv6'|'bbr']['mode']); see ipv6.py, bbr.py.
+POLICY_MODES = IPV6_MODES = ('managed', 'external', 'skipped')
 
 
-def ipv6_mode(report):
-    """Mode of the IPv6 stage result. Results written before modes existed were managed."""
+def policy_mode(report):
+    """Mode of an IPv6 or BBR stage result. Results written before modes existed were managed."""
     if not isinstance(report, dict):
-        raise ValueError('ipv6')
+        raise ValueError('policy')
     mode = report.get('mode', 'managed')
-    if mode not in IPV6_MODES:
-        raise ValueError('ipv6 mode')
+    if mode not in POLICY_MODES:
+        raise ValueError('policy mode')
     return mode
+
+
+ipv6_mode = bbr_mode = policy_mode
 
 
 RESUMABLE_FAILURE_STAGES = {'APT_UPDATE', 'APT_UPGRADE', 'APT_INSTALL', 'WARP', 'CERTIFICATE'}
@@ -131,10 +134,11 @@ def validate_late_stage(state, mode):
     if missing or not isinstance(admin, dict) or not admin.get('id') or not admin.get('subId'):
         raise InstallError('Состояние не содержит результатов установки панели '
                            f'({", ".join(missing) or "admin_client"}); resume запрещён')
-    try:
-        ipv6_mode(state['ipv6'])
-    except ValueError as error:
-        raise InstallError('Результат этапа IPv6 в состоянии повреждён; resume запрещён') from error
+    for key, label in (('ipv6', 'IPv6'), ('bbr', 'TCP BBR/FQ')):
+        try:
+            policy_mode(state[key])
+        except ValueError as error:
+            raise InstallError(f'Результат этапа {label} в состоянии повреждён; resume запрещён') from error
     steps = state.get('security_steps')
     if last != 'PANEL' and steps is None:
         # Before per-step checkpoints SECURITY was recorded complete only after all its steps.
