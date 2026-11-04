@@ -4,10 +4,26 @@ import re
 from zoneinfo import ZoneInfo
 
 
+# Let's Encrypt answers overload with urn:ietf:params:acme:error:rateLimited and
+# "Service busy; retry later" (load shedding, frequent on staging). It is not a
+# limit of this domain or account and passes with a later attempt.
+_BUSY = re.compile(r'service busy', re.I)
+
+
 def explain(output):
     lower = output.lower()
-    if 'too many certificates' in lower or 'rate limit' in lower or 'ratelimited' in lower:
-        message = 'Let’s Encrypt временно ограничил выпуск сертификатов для этого домена. Превышен лимит повторных сертификатов.'
+    if _BUSY.search(output):
+        return ('Серверы Let’s Encrypt временно перегружены (Service busy). Это не лимит вашего '
+                'домена: повторите попытку позже.')
+    if 'too many' in lower or 'rate limit' in lower or 'ratelimited' in lower:
+        if 'too many certificates' in lower:
+            message = ('Let’s Encrypt временно ограничил выпуск сертификатов для этого домена. '
+                       'Превышен лимит повторных сертификатов.')
+        elif 'too many failed authorizations' in lower:
+            message = ('Let’s Encrypt временно ограничил проверки домена: слишком много неудачных '
+                       'попыток за последний час. Устраните причину (DNS A-запись, порт 80) и повторите позже.')
+        else:
+            message = 'Let’s Encrypt временно ограничил частоту запросов с этого сервера или аккаунта.'
         match = re.search(r'retry after\s+(\d{4}-\d\d-\d\d[ t]\d\d:\d\d:\d\d(?:\.\d+)?\s*(?:utc|z|[+-]\d\d:?\d\d))', output, re.I)
         if match:
             try:
@@ -76,7 +92,8 @@ def deploy_hook_result(output, log, hook):
 
 def classify_renewal(output, timed_out=False):
     """hook | rate-limit | validation | tls | transient | other. Only transient is retried."""
-    for kind, pattern in (('hook', _HOOK), ('rate-limit', _RATE_LIMIT), ('validation', _VALIDATION),
+    for kind, pattern in (('hook', _HOOK), ('transient', _BUSY), ('rate-limit', _RATE_LIMIT),
+                          ('validation', _VALIDATION),
                           ('tls', _TLS), ('transient', _TRANSIENT)):
         if pattern.search(output or ''):
             return kind

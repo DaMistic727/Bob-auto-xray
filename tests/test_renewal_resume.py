@@ -22,6 +22,15 @@ from selfsni.tls_renewal import LEGACY_HOOK_SCRIPT, retry_dropin
 DOMAIN = 'vpn.example.com'
 RESET = ("Failed to renew certificate vpn.example.com with error: ('Connection aborted.', "
          "ConnectionResetError(104, 'Connection reset by peer'))\nAll simulated renewals failed.")
+# VPS install log 2026-11-04 10:02Z (v0.4.2, Ubuntu 26.04): staging load shedding.
+BUSY = ("Processing /etc/letsencrypt/renewal/vpn.example.com.conf\n\nAccount registered.\n"
+        "Simulating renewal of an existing certificate for vpn.example.com\n\n"
+        "Failed to renew certificate vpn.example.com with error: urn:ietf:params:acme:error:rateLimited :: "
+        "There were too many requests of a given type :: Service busy; retry later.\n\n"
+        "All simulated renewals failed. The following certificates could not be renewed:\n")
+DUPLICATE = ('urn:ietf:params:acme:error:rateLimited :: Error creating new order :: too many certificates (5) '
+             'already issued for this exact set of identifiers in the last 168h0m0s, retry after '
+             '2026-11-09 10:01:42 UTC')
 HTTP01 = ("Certbot failed to authenticate some domains (authenticator: webroot). The Certificate "
           "Authority reported these problems:\n  Domain: vpn.example.com\n  Type:   unauthorized\n"
           "  Detail: 192.0.2.1: Invalid response from http://vpn.example.com/.well-known/"
@@ -73,6 +82,13 @@ class ClassificationTests(unittest.TestCase):
             with self.subTest(output=output[:40]):
                 self.assertEqual(classify_renewal(output), 'transient')
         self.assertEqual(classify_renewal('', timed_out=True), 'transient')
+
+    def test_service_busy_rate_limit_is_overload_not_a_domain_limit(self):
+        self.assertEqual(classify_renewal(BUSY), 'transient')
+        self.assertEqual(classify_renewal(DUPLICATE), 'rate-limit')
+        self.assertEqual(classify_renewal('urn:ietf:params:acme:error:rateLimited :: too many failed '
+                                          'authorizations (5) for "vpn.example.com" in the last 1h0m0s'),
+                         'rate-limit')
 
     def test_configuration_hook_tls_and_rate_limit_are_never_transient(self):
         self.assertEqual(classify_renewal(HTTP01), 'validation')
@@ -335,12 +351,34 @@ class RenewalDryRunTests(unittest.TestCase):
         self.assertEqual([call.kwargs['timeout'] for call in command.call_args_list], [600, 555])
         self.assertEqual(clock.sleeps, [45])
 
+    def test_staging_service_busy_is_retried_and_then_passes(self):
+        state, calls, clock, error = self.renew([(certbot_failure(BUSY), LOG), (HOOK_OK, LOG + HOOK_RUN)])
+        self.assertIsNone(error)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(clock.sleeps, [provision.RENEWAL_BACKOFF])
+        self.assertEqual(state['renewal_check']['attempts'], 2)
+
+    def test_persistent_service_busy_is_reported_as_staging_unavailable_not_a_domain_limit(self):
+        state, calls, _, error = self.renew([(certbot_failure(BUSY), LOG)])
+        self.assertEqual(len(calls), provision.RENEWAL_ATTEMPTS)
+        self.assertIn('Service busy', str(error))
+        self.assertIn('без перевыпуска сертификата', str(error))
+        self.assertNotIn('лимит повторных', str(error))
+        self.assertNotIn('renewal_check', state)
+
+    def test_real_duplicate_certificate_limit_is_not_retried(self):
+        state, calls, clock, error = self.renew([(certbot_failure(DUPLICATE), LOG)])
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(clock.sleeps, [])
+        self.assertIn('лимит повторных сертификатов', str(error))
+        self.assertIn('09.11.2026, 13:01:42 МСК', str(error))
+
     def test_invalid_http01_configuration_is_reported_once_without_retry(self):
         state, calls, clock, error = self.renew([(certbot_failure(HTTP01), LOG)])
         self.assertEqual(len(calls), 1)
         self.assertEqual(clock.sleeps, [])
         self.assertIn('HTTP-01', str(error))
-        self.assertNotIn('сетевая ошибка', str(error))
+        self.assertNotIn('временно недоступен', str(error))
         self.assertEqual(self.probes, [])
         self.assertNotIn('renewal_check', state)
 
