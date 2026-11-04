@@ -479,6 +479,15 @@ class LateStateValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(InstallError, 'Bob Doctor'):
             validate_resume(state, DOMAIN, 'skip')
 
+    def test_unknown_ipv6_mode_blocks_late_resume(self):
+        for value in ({'mode': 'disabled'}, ['managed']):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(InstallError, 'IPv6.*resume запрещён'):
+                    validate_resume(panel_state(ipv6=value), DOMAIN, 'skip')
+        for mode in ('managed', 'external', 'skipped'):
+            state = validate_resume(panel_state(ipv6={'mode': mode, 'reason': 'x'}), DOMAIN, 'skip')
+            self.assertEqual(state['ipv6']['mode'], mode)
+
     def test_healthy_and_panel_failures_stay_non_resumable(self):
         with self.assertRaises(InstallError):
             validate_resume(panel_state(status='HEALTHY_LOCAL'), DOMAIN, 'skip')
@@ -710,12 +719,13 @@ class LateResumePreflightTests(unittest.TestCase):
             return f'Hostname {DOMAIN} does match certificate\n'
         return ''
 
-    def preflight(self, state=None, ipv6_report=None):
+    def preflight(self, state=None, ipv6_report=None, exposure=None):
         args = Namespace(domain=DOMAIN, warp_mode='skip')
         verify = MagicMock(return_value=dict(IPV6) if ipv6_report is None else ipv6_report)
         if isinstance(ipv6_report, Exception):
             verify = MagicMock(side_effect=ipv6_report)
-        self.ipv6 = MagicMock(verify=verify)
+        self.ipv6 = MagicMock(verify=verify, CONFIG=provision.ipv6.CONFIG,
+                              check_exposure=MagicMock(side_effect=exposure))
         with patch.object(provision, 'SYSTEM_ROOT', self.root), \
              patch.object(provision, 'ipv6', self.ipv6), \
              patch.object(provision.os, 'geteuid', return_value=0), \
@@ -785,6 +795,21 @@ class LateResumePreflightTests(unittest.TestCase):
             self.preflight(ipv6_report=moved)
         with self.assertRaisesRegex(InstallError, 'IPv6'):
             self.preflight(dict(self.state, ipv6=['not', 'a', 'report']))
+
+    def test_unmanaged_ipv6_is_only_checked_for_exposure(self):
+        for mode in ('external', 'skipped'):
+            with self.subTest(mode=mode):
+                state = dict(self.state, ipv6={'mode': mode, 'reason': 'conflict', 'detail': 'x'})
+                self.preflight(state)
+                self.ipv6.verify.assert_not_called()
+                self.ipv6.check_exposure.assert_called_once_with([22])
+                self.ipv6.configure.assert_not_called()
+                with self.assertRaisesRegex(InstallError, 'UFW does not filter IPv6.*resume запрещён'):
+                    self.preflight(state, exposure=InstallError('UFW does not filter IPv6'))
+                self.put(str(provision.ipv6.CONFIG), provision.ipv6.CONTENT)
+                with self.assertRaisesRegex(InstallError, 'IPv6-файл Bob.*resume запрещён'):
+                    self.preflight(state)
+                (self.root / str(provision.ipv6.CONFIG).lstrip('/')).unlink()
 
     def test_foreign_certbot_hooks_are_refused(self):
         self.put(f'/etc/letsencrypt/renewal/{DOMAIN}.conf',

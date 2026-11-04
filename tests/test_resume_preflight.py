@@ -334,6 +334,29 @@ class ResumeCarriedStateTests(unittest.TestCase):
                             'sub_path', 'panel_port', 'sub_port'):
                     self.assertEqual(result[key], saved[key])
 
+    def test_unmanaged_ipv6_result_is_carried_only_while_bob_wrote_nothing(self):
+        skipped = {'mode': 'skipped', 'reason': 'conflict', 'detail': 'x', 'runtimeDisabled': False,
+                   'interfaces': ['all', 'default', 'lo', 'ens3']}
+        external = dict(skipped, mode='external', reason='external', runtimeDisabled=True)
+        self.host.ipv6_config.unlink()
+        for stage in ('WARP', 'CERTIFICATE'):
+            for report in (skipped, external):
+                with self.subTest(stage=stage, mode=report['mode']):
+                    saved = self.host.saved(stage, ipv6=dict(report))
+                    self.assertEqual(self.host.preflight(saved)['ipv6'], report)
+        self.host.ipv6_config.write_text(provision.ipv6.CONTENT)
+        with self.assertRaisesRegex(InstallError, r'\(ipv6\).*resume'):
+            self.host.preflight(self.host.saved('WARP', ipv6=dict(skipped)))
+        with self.assertRaisesRegex(InstallError, r'\(ipv6\).*resume'):
+            self.host.preflight(self.host.saved('WARP', ipv6=dict(skipped, mode='disabled')))
+
+    def test_managed_ipv6_resume_refused_when_policy_cannot_be_restored(self):
+        # e.g. the resume runs over IPv6 SSH: Bob's policy must not be re-applied.
+        live = {'mode': 'skipped', 'reason': 'ssh',
+                'detail': 'An active IPv6 SSH connection must not be disconnected'}
+        with self.assertRaisesRegex(InstallError, 'active IPv6 SSH.*resume запрещён'):
+            provision.carried_results(self.host.saved('WARP'), live)
+
     def test_stage_results_are_not_carried_into_stages_that_recompute_them(self):
         results = dict(ipv6={'interfaces': []}, bbr={}, swap={'status': 'created'},
                        menu_revision={})
@@ -438,17 +461,19 @@ class CloudInitPreflightTests(unittest.TestCase):
 class ResumeAfterRebootTests(unittest.TestCase):
     """A reboot between attempts may re-enable IPv6 at runtime (VPS E2E 2026-11-01)."""
 
-    def run_installer(self, stage):
+    def run_installer(self, stage, ipv6_result=None):
         import io
         import json
         from unittest.mock import DEFAULT
         import selfsni.acceptance as acceptance
         from test_warp_modes import state
-        saved = dict(state('skip'), ipv6={'old': True}, bbr={}, swap={'status': 'skipped'})
+        saved = dict(state('skip'), ipv6=ipv6_result or {'old': True}, bbr={}, swap={'status': 'skipped'})
         if stage:
             saved.update(stage=stage, last_completed_stage=PREVIOUS[stage])
         calls = []
         configure = MagicMock(side_effect=lambda domain: calls.append(domain) or ({'fresh': True}, {}))
+        apply = MagicMock(side_effect=lambda domain, ssh_ports: calls.append(domain) or {'fresh': True})
+        self.exposure = MagicMock(side_effect=lambda ports: calls.append(('exposure', ports)))
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             if stage:
@@ -464,7 +489,7 @@ class ResumeAfterRebootTests(unittest.TestCase):
                  patch.object(provision, 'AptRunner'), \
                  patch.object(provision, 'run', return_value='versions'), \
                  patch.object(provision, 'firewall'), \
-                 patch.multiple(provision, ipv6=MagicMock(configure=configure),
+                 patch.multiple(provision, ipv6=MagicMock(configure=configure, apply=apply, check_exposure=self.exposure),
                                 bbr=MagicMock(configure=MagicMock(return_value={})),
                                 swap=MagicMock(configure=MagicMock(return_value={'status': 'skipped'}))), \
                  patch.multiple(provision, certificate=DEFAULT, decoy=DEFAULT, panel=DEFAULT,
@@ -484,6 +509,17 @@ class ResumeAfterRebootTests(unittest.TestCase):
                 self.assertEqual(calls, ['vpn.example.com'])
                 self.assertEqual(final['ipv6'], {'fresh': True})
                 self.assertEqual(final['status'], 'HEALTHY_LOCAL')
+
+    def test_resume_keeps_unmanaged_ipv6_and_rechecks_exposure_only(self):
+        for mode in ('external', 'skipped'):
+            for stage in ('WARP', 'CERTIFICATE'):
+                with self.subTest(mode=mode, stage=stage):
+                    report = {'mode': mode, 'reason': 'conflict', 'detail': 'x'}
+                    calls, final = self.run_installer(stage, report)
+                    # Bob never takes over IPv6 mid-install; nothing is configured.
+                    self.assertEqual(calls, [('exposure', [22])])
+                    self.assertEqual(final['ipv6'], report)
+                    self.assertEqual(final['status'], 'HEALTHY_LOCAL')
 
     def test_fresh_install_applies_ipv6_once(self):
         calls, final = self.run_installer(None)

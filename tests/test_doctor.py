@@ -34,6 +34,7 @@ class FakeProbe:
         self.free = 3 * 1024**3
         self.conflicting_bbr = False
         self.conflicting_ipv6 = False
+        self.ufw_ipv6 = True
         self.ipv6_values = {'all': '1', 'default': '1', 'ens3': '1'}
         self.ipv6_addresses = []
         self.network_path = Path('/etc/systemd/network/10-netplan-ens3.network.d/' + ipv6.NETWORK_DROPIN)
@@ -211,8 +212,14 @@ class FakeProbe:
     def ipv6_snapshot(self):
         return self.network_path, self.ipv6_values, self.ipv6_addresses
 
+    def ipv6_runtime(self):
+        return self.ipv6_values, self.ipv6_addresses
+
     def ipv6_conflicts(self):
         return self.conflicting_ipv6
+
+    def ufw_filters_ipv6(self):
+        return self.ufw_ipv6
 
     def categories(self, path):
         self.calls.append(('categories', path))
@@ -300,6 +307,52 @@ class DoctorTests(unittest.TestCase):
         report = doctor.Doctor(probe).run()
         self.assertEqual(check(report, 'system.bbr')['status'], 'WARN')
         self.assertEqual(report['overallStatus'], 'DEGRADED')
+
+    def unmanaged(self, mode, reason='conflict'):
+        probe = FakeProbe()
+        probe.state['ipv6'] = {'mode': mode, 'reason': reason, 'detail': 'x'}
+        del probe.files[str(ipv6.CONFIG)]
+        probe.missing_stats.add(str(ipv6.CONFIG))
+        probe.sync()
+        # Bob's own managed-mode probe must never be needed for these modes.
+        probe.ipv6_snapshot = lambda: (_ for _ in ()).throw(AssertionError('managed probe'))
+        return probe
+
+    def test_ipv6_external_and_skipped_are_never_reported_as_bob_policy(self):
+        link_local = [{'ifname': 'ens3', 'addr_info': [{'local': 'fe80::1', 'scope': 'link'}]}]
+        global_ = [{'ifname': 'ens3', 'addr_info': [{'local': '2001:db8::1', 'scope': 'global'}]}]
+        cases = [
+            ('external', {}, 'PASS'),
+            ('external', {'conflicting_ipv6': True}, 'WARN'),
+            ('external', {'ipv6_addresses': link_local}, 'WARN'),
+            ('external', {'ipv6_addresses': global_, 'ufw_ipv6': False}, 'FAIL'),
+            ('skipped', {}, 'WARN'),
+            ('skipped', {'ipv6_addresses': global_}, 'WARN'),
+            ('skipped', {'ipv6_addresses': global_, 'ufw_ipv6': False}, 'FAIL'),
+            ('skipped', {'ipv6_addresses': link_local, 'ufw_ipv6': False}, 'FAIL'),
+        ]
+        for mode, change, expected in cases:
+            with self.subTest(mode=mode, change=change):
+                probe = self.unmanaged(mode)
+                for key, value in change.items():
+                    setattr(probe, key, value)
+                if 'ipv6_addresses' in change:
+                    probe.ipv6_values = dict(probe.ipv6_values, ens3='0')
+                result = check(doctor.Doctor(probe).run(), 'system.ipv6')
+                self.assertEqual(result['status'], expected, result)
+                self.assertEqual(result['details']['mode'], mode)
+                self.assertNotIn('закреплён', result['summary'])
+
+    def test_ipv6_unmanaged_state_with_bob_file_or_bad_mode_is_unknown(self):
+        probe = self.unmanaged('skipped')
+        probe.files[str(ipv6.CONFIG)] = ipv6.CONTENT
+        probe.missing_stats.discard(str(ipv6.CONFIG))
+        self.assertEqual(check(doctor.Doctor(probe).run(), 'system.ipv6')['status'], 'UNKNOWN')
+        for value in ({'mode': 'disabled'}, {'mode': 'skipped'}):
+            probe = self.unmanaged('skipped')
+            probe.state['ipv6'] = value
+            probe.sync()
+            self.assertEqual(check(doctor.Doctor(probe).run(), 'system.ipv6')['status'], 'UNKNOWN')
 
     def test_ipv6_current_install_and_fail_closed_states(self):
         healthy = doctor.Doctor(FakeProbe()).run()

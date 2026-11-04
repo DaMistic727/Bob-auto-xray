@@ -109,7 +109,7 @@ class CliInstallTests(unittest.TestCase):
                      patch.object(provision, 'run', return_value='versions'), \
                      patch.object(provision, 'firewall'), \
                      patch.multiple(provision,
-                                    ipv6=MagicMock(configure=MagicMock(return_value=({}, {}))),
+                                    ipv6=MagicMock(apply=MagicMock(return_value={'mode': 'managed'}), configure=MagicMock(return_value=({}, {}))),
                                     bbr=MagicMock(configure=MagicMock(return_value={})),
                                     swap=MagicMock(configure=MagicMock(return_value={'status': 'skipped'}))), \
                      patch.multiple(provision, certificate=DEFAULT, decoy=DEFAULT, panel=DEFAULT,

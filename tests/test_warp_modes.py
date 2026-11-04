@@ -189,7 +189,7 @@ class WarpModeTests(unittest.TestCase):
                      patch.object(provision, 'run'), \
                      patch.object(provision, 'firewall'), \
                      patch.multiple(provision,
-                                    ipv6=MagicMock(configure=MagicMock(return_value=({}, {}))),
+                                    ipv6=MagicMock(apply=MagicMock(return_value={'mode': 'managed'}), configure=MagicMock(return_value=({}, {}))),
                                     bbr=MagicMock(configure=MagicMock(return_value={})),
                                     swap=MagicMock(configure=MagicMock(return_value={'status': 'skipped'}),
                                                    preflight=MagicMock(return_value={}))), \
@@ -265,7 +265,7 @@ class WarpModeTests(unittest.TestCase):
                  patch.object(provision, 'run'), \
                  patch.object(provision, 'firewall'), \
                  patch.multiple(provision,
-                                ipv6=MagicMock(configure=MagicMock(return_value=({}, {}))),
+                                ipv6=MagicMock(apply=MagicMock(return_value={'mode': 'managed'}), configure=MagicMock(return_value=({}, {}))),
                                 bbr=MagicMock(configure=MagicMock(return_value={})),
                                 swap=MagicMock(configure=MagicMock(return_value={'status': 'skipped'}))), \
                  patch.object(provision, 'adopt_warp') as adopt, \
@@ -300,7 +300,7 @@ class WarpModeTests(unittest.TestCase):
                  patch.object(provision, 'run', return_value='versions') as commands, \
                  patch.object(provision, 'firewall'), \
                  patch.multiple(provision,
-                                ipv6=MagicMock(configure=MagicMock(return_value=({}, {}))),
+                                ipv6=MagicMock(apply=MagicMock(return_value={'mode': 'managed'}), configure=MagicMock(return_value=({}, {}))),
                                 bbr=MagicMock(configure=MagicMock(return_value={})),
                                 swap=MagicMock(configure=MagicMock(return_value={'status': 'skipped'}))), \
                  patch.object(provision, 'install_warp') as install, \

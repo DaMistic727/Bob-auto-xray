@@ -19,7 +19,7 @@ import sys
 
 from .geodata import GEODATA_CRON, GEODATA_TIMEZONE, REQUIRED, automatic_config, categories
 from .core import InstallError, fqdn
-from .install_state import SCHEMA, warp_mode
+from .install_state import SCHEMA, ipv6_mode, warp_mode
 from .routing import BLOCKED_DOMAINS, BLOCKED_IPS, WARP_DOMAINS
 from . import ipv6, swap
 from .tls_renewal import LEGACY_HOOK_SCRIPT, RENEW_HOOK, RENEW_HOOK_SCRIPT, RETRY_DROPIN, retry_dropin
@@ -154,8 +154,23 @@ class Probe:
         addresses = json.loads(output('ip', '-j', '-6', 'address', 'show'))
         return path, values, addresses
 
+    def ipv6_runtime(self):
+        """disable_ipv6 values and addresses only, for hosts whose IPv6 Bob does not manage."""
+        def output(*args):
+            code, value = self.command(*args)
+            if code:
+                raise OSError('IPv6 probe unavailable')
+            return value
+        names = ['all', 'default', *ipv6._interfaces(output)]
+        values = {name: output('sysctl', '-n', f'net.ipv6.conf.{name}.disable_ipv6').strip()
+                  for name in dict.fromkeys(names)}
+        return values, json.loads(output('ip', '-j', '-6', 'address', 'show'))
+
     def ipv6_conflicts(self):
         return ipv6._foreign(Path('/etc'), Path('/run'), ipv6.CONFIG)
+
+    def ufw_filters_ipv6(self):
+        return ipv6.ufw_filters_ipv6()
 
     def categories(self, path):
         return categories(path)
@@ -822,7 +837,13 @@ class Doctor:
                 return self.answer('SKIP', 'Эта установка Bob не управляла IPv6.')
             return self.answer('UNKNOWN', 'IPv6-файл существует без подтверждения в state.',
                                suggestion=SUGGEST['ipv6'])
-        if not isinstance(report, dict) or not isinstance(report.get('networkDropin'), str):
+        try:
+            mode = ipv6_mode(report)
+        except ValueError:
+            return self.answer('UNKNOWN', 'Состояние IPv6 неполно.', suggestion=SUGGEST['ipv6'])
+        if mode != 'managed':
+            return self.unmanaged_ipv6(mode, report)
+        if not isinstance(report.get('networkDropin'), str):
             return self.answer('UNKNOWN', 'Состояние IPv6 неполно.', suggestion=SUGGEST['ipv6'])
         try:
             if (self.p.is_symlink(ipv6.CONFIG) or self.p.is_symlink(ipv6.CONFIG.parent)
@@ -888,6 +909,46 @@ class Doctor:
             return self.answer('WARN', 'IPv6 отключён, но networkd drop-in старого формата v0.3.4.',
                                suggestion=SUGGEST['ipv6'])
         return self.answer('PASS', 'IPv6 отключён на текущих интерфейсах и закреплён.')
+
+    def unmanaged_ipv6(self, mode, report):
+        """external/skipped: Bob never applied IPv4-only, so it is never reported as Bob's."""
+        if not isinstance(report.get('reason'), str):
+            return self.answer('UNKNOWN', 'Состояние IPv6 неполно.', suggestion=SUGGEST['ipv6'])
+        try:
+            self.p.stat(ipv6.CONFIG)
+            present = True
+        except FileNotFoundError:
+            present = self.p.is_symlink(ipv6.CONFIG)
+        if present:
+            return self.answer('UNKNOWN', 'IPv6-файл Bob существует, хотя Bob не управлял IPv6.',
+                               suggestion=SUGGEST['ipv6'])
+        values, addresses = self.p.ipv6_runtime()
+        if (len(values) < 3 or not isinstance(addresses, list) or
+                any(not isinstance(row, dict) for row in addresses)):
+            return self.answer('UNKNOWN', 'Список IPv6-интерфейсов неполон.',
+                               suggestion=SUGGEST['ipv6'])
+        enabled = sorted(name for name, value in values.items() if value != '1')
+        scopes = [info.get('scope') if isinstance(info, dict) else None
+                  for row in addresses for info in (row.get('addr_info') or [])]
+        routable = sum(scope not in ('link', 'host') for scope in scopes)
+        details = {'mode': mode, 'reason': report['reason'], 'enabledInterfaces': enabled,
+                   'linkLocalAddresses': len(scopes) - routable, 'globalAddresses': routable}
+        if (enabled or scopes) and not self.p.ufw_filters_ipv6():
+            return self.answer('FAIL', 'IPv6 включён, а UFW не фильтрует IPv6 (IPV6=yes).', details,
+                               suggestion='Включите IPV6=yes в /etc/default/ufw и выполните ufw reload.')
+        if enabled or scopes:
+            return self.answer('WARN', 'IPv6 включён: Bob не отключал IPv6 '
+                               '(при установке настройка пропущена).' if mode == 'skipped' else
+                               'IPv6 снова включён: внешняя конфигурация его не удерживает.',
+                               details, suggestion=SUGGEST['ipv6'])
+        if mode == 'skipped':
+            return self.answer('WARN', 'IPv6 сейчас отключён, но не Bob: при установке настройка '
+                               'пропущена, сохранение после reboot не подтверждено.', details,
+                               suggestion=SUGGEST['ipv6'])
+        if self.p.ipv6_conflicts():
+            return self.answer('WARN', 'IPv6 отключён внешней конфигурацией, но persistent sysctl '
+                               'включит его после reboot.', details, suggestion=SUGGEST['ipv6'])
+        return self.answer('PASS', 'IPv6 отключён внешней конфигурацией; Bob её не изменял.', details)
 
     def swap_check(self):
         report = self.state.get('swap')
