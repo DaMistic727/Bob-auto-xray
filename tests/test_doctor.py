@@ -25,6 +25,7 @@ class FakeProbe:
         self.now_value = datetime(2026, 10, 24, tzinfo=timezone.utc)
         self.expiry = self.now_value + timedelta(days=60)
         self.cert_matches = True
+        self.issued = None
         self.cert_hash = b'current-cert'
         self.tls_hash = b'current-cert'
         self.tls_error = None
@@ -164,7 +165,7 @@ class FakeProbe:
 
     def certificate(self, path, domain):
         self.calls.append(('certificate', path))
-        return self.expiry, self.cert_matches, self.cert_hash
+        return self.expiry, self.cert_matches, self.cert_hash, self.issued or self.expiry - timedelta(days=90)
 
     def tls(self, domain, port):
         self.calls.append(('tls', port))

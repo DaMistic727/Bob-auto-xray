@@ -32,3 +32,66 @@ def explain(output):
     if any(x in lower for x in ('network is unreachable', 'temporary failure', 'connection reset')):
         return 'Сетевая ошибка при обращении к Let’s Encrypt. Проверьте подключение и повторите позже.'
     return 'Let’s Encrypt не выдал сертификат. Подробная причина сохранена в журнале установки.'
+
+
+# `certbot renew --dry-run` failures, most specific first. Order matters:
+# an ACME validation detail ("Timeout during connect") or a deploy-hook error
+# must never be mistaken for a client-side network failure worth retrying.
+# certbot 2.9 (Ubuntu 24.04) and 4.0 (26.04), display.ops.report_executed_command:
+# a non-zero hook exit is only logged ("Hook 'deploy-hook' reported error code 1")
+# and certbot still exits 0. Hook stderr alone is not a failure: `nginx -t`
+# reports success on stderr.
+_HOOK = re.compile(r"Hook 'deploy-hook' reported error code", re.I)
+_RATE_LIMIT = re.compile(r'too many|rate.?limit', re.I)
+_VALIDATION = re.compile(
+    r'urn:ietf:params:acme:error:(?:unauthorized|connection|dns|caa|incorrectresponse|'
+    r'rejectedidentifier)|failed to authenticate|reported these problems|challenge failed|'
+    r'some challenges have failed|invalid response from|timeout during connect|acme-challenge|'
+    r'dns problem|no valid a records|nxdomain|incorrect ip address', re.I)
+_TLS = re.compile(r'certificate.?verify.?failed|hostname .{0,80}doesn.t match|wrong version number', re.I)
+_TRANSIENT = re.compile(
+    r'connection reset|connection aborted|remotedisconnected|connection refused|'
+    r'max retries exceeded|failed to establish a new connection|connecttimeout|readtimeout|'
+    r'read timed out|timed out|temporary failure in name resolution|name or service not known|'
+    r'network is unreachable|no route to host|eof occurred in violation of protocol|unexpected.eof|'
+    r'urn:ietf:params:acme:error:(?:serverinternal|badnonce)|\b5\d\d server error|'
+    r'service unavailable|bad gateway|gateway time-?out', re.I)
+
+
+def deploy_hook_result(output, log, hook):
+    """ran | failed | skipped | not-run for one dry run that exited 0.
+
+    `log` is the part of letsencrypt.log written by that run: certbot logs each
+    hook start ("Running deploy-hook command: <cmd>") at INFO, which reaches only
+    the log file. `ran` requires exactly one start, of exactly `hook`.
+    """
+    text = (output or '') + '\n' + (log or '')
+    if _HOOK.search(text):
+        return 'failed'
+    if re.search(r'skipping deploy hook', text, re.I):
+        return 'skipped'
+    started = [x.strip() for x in re.findall(r'Running deploy-hook command: ([^\n]*)', log or '')]
+    return 'ran' if started == [hook] else 'not-run'
+
+
+def classify_renewal(output, timed_out=False):
+    """hook | rate-limit | validation | tls | transient | other. Only transient is retried."""
+    for kind, pattern in (('hook', _HOOK), ('rate-limit', _RATE_LIMIT), ('validation', _VALIDATION),
+                          ('tls', _TLS), ('transient', _TRANSIENT)):
+        if pattern.search(output or ''):
+            return kind
+    return 'transient' if timed_out else 'other'
+
+
+_REQUEST = re.compile(r'Sending (GET|HEAD|POST) request to https://([A-Za-z0-9.-]+)(/[^\s]*?)?\.?(?:\s|$)')
+
+
+def acme_step(log_text):
+    """Last ACME request as 'METHOD host step', without account/order identifiers."""
+    matches = _REQUEST.findall(log_text or '')
+    if not matches:
+        return None
+    method, host, path = matches[-1]
+    parts = [x for x in (path or '/').split('/') if x]
+    step = (parts[1] if parts[:1] == ['acme'] and len(parts) > 1 else parts[0] if parts else 'directory')
+    return f'{method} {host} {step if re.fullmatch(r"[a-z0-9-]{1,32}", step) else "other"}'

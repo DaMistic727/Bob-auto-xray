@@ -69,7 +69,28 @@ def editor_reality_target(row):
     require(target == '/run/selfsni/nginx.sock', '3x-ui editor model lost REALITY Target')
     return target
 
-def verify(s):
+def check_pinned_xray(s, lock, installed=False):
+    """The panel's Xray is the official release this run pinned.
+
+    installed=True (late resume): the binary install_pinned_xray() verified at
+    PANEL and recorded in state, judged as Bob Doctor judges installed nodes.
+    Installed nodes are never upgraded automatically, so a newer pin in this
+    release must not make an otherwise finished installation unrecoverable.
+    """
+    if installed:
+        require(digest(s['xray_bin']) == s['xray_sha256'],
+                'Panel Xray binary differs from the one verified at installation')
+        require(run(s['xray_bin'], 'version').splitlines()[0] == s['xray_version'],
+                'Panel Xray version differs from the one verified at installation')
+        return
+    expected = pinned_xray_spec(lock, s['arch'])['binary_sha256']
+    require(s.get('xray_sha256') == expected and digest(s['xray_bin']) == expected,
+            'Panel Xray binary differs from the pinned official release')
+    require(run(s['xray_bin'], 'version').startswith('Xray ' + XRAY_VERSION[1:] + ' '),
+            'Panel Xray version differs from the pinned release')
+
+
+def verify(s, installed_xray=False):
     mode = s.get('warp_mode', 'adopt' if s.get('adopt_warp') else 'install')
     require(mode in ('install', 'adopt', 'skip'), 'Unknown WARP mode')
     checks = []
@@ -168,12 +189,7 @@ def verify(s):
     check('nginx configuration',lambda: run('nginx','-t'))
     def pinned_xray():
         from .core import ROOT
-        lock = json.loads((ROOT/'versions.lock.json').read_text())
-        expected = pinned_xray_spec(lock, s['arch'])['binary_sha256']
-        require(s.get('xray_sha256') == expected and digest(s['xray_bin']) == expected,
-                'Panel Xray binary differs from the pinned official release')
-        require(run(s['xray_bin'], 'version').startswith('Xray ' + XRAY_VERSION[1:] + ' '),
-                'Panel Xray version differs from the pinned release')
+        check_pinned_xray(s, json.loads((ROOT/'versions.lock.json').read_text()), installed_xray)
     check('Pinned official Xray binary SHA256 and version', pinned_xray)
     check('Xray configuration',lambda: run(s['xray_bin'],'run','-test','-config','/usr/local/x-ui/bin/config.json'))
     def runtime_shape():
