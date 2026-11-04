@@ -32,6 +32,13 @@ sysctl net.ipv4.tcp_congestion_control
 sysctl net.core.default_qdisc
 ```
 
+BBR/FQ, swap и IPv6 — необязательные системные настройки: ни одна из них не останавливает установку VPN и не отменяет другую. Для BBR/FQ результат пишется в `state.bbr.mode`.
+- **`managed`** — Bob пишет собственные файлы, только если другой инструмент BBR/FQ не настраивал.
+- **`external`** — те же значения уже заданы чужим файлом, например `/etc/sysctl.conf` от VPS-Server-Menu, и применены. Bob ничего не пишет.
+- **`skipped`** — контейнер без управления sysctl, ядро без BBR, противоречащие значения, чужая настройка не применена или сбой с полным откатом. Чужие файлы не изменяются.
+
+Чужой swap (`/swapfile` любого размера, например от VPS-Server-Menu) не трогается: `state.swap.status` `external` или `skipped`. Откаты BBR и swap выполняются и при Ctrl+C. Фатален только откат, который не удалось подтвердить: состояние хоста тогда неизвестно. Acceptance проверяет BBR/FQ только в режиме `managed`, Doctor показывает внешнюю настройку как `PASS`/`SKIP`.
+
 ## Проверяемые зависимости
 
 `versions.lock.json` фиксирует 3x-ui, upstream scripts и commit routing. VPS-Server-Menu клонируется с официальной main при установке, проверяются origin/branch/upstream, чистота, CLI и конфликты команд. Статических commit/archive pins меню нет. В skip меню не проверяется и не скачивается. Release assets 3x-ui сверяются с SHA256 GitHub release metadata, записанным в lock при разработке. Оригинальный non-interactive `install.sh` 3x-ui запускается без изменений; временный offline curl adapter обслуживает исключительно заранее скачанные и проверенные файлы. Доступ к неизвестным URL прекращается. До применения loopback/TLS и проверенного ядра старт службы заблокирован systemd ConditionPathExists. Порт панели никогда не открывается в UFW; публичный доступ идёт через существующий Self-SNI listener 443. Root-only marker создаётся после успешной настройки; ExecStartPre повторно устанавливает loopback перед каждым стартом службы.

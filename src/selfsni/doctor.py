@@ -19,7 +19,7 @@ import sys
 
 from .geodata import GEODATA_CRON, GEODATA_TIMEZONE, REQUIRED, automatic_config, categories
 from .core import InstallError, fqdn
-from .install_state import SCHEMA, ipv6_mode, warp_mode
+from .install_state import SCHEMA, bbr_mode, ipv6_mode, warp_mode
 from .routing import BLOCKED_DOMAINS, BLOCKED_IPS, WARP_DOMAINS
 from . import ipv6, swap
 from .tls_renewal import LEGACY_HOOK_SCRIPT, RENEW_HOOK, RENEW_HOOK_SCRIPT, RETRY_DROPIN, retry_dropin
@@ -282,7 +282,7 @@ class Doctor:
                                suggestion=SUGGEST['state'])
         self.state = {key: value.get(key) for key in (
             'domain', 'panel_port', 'sub_port', 'panel_path', 'sub_path',
-            'php_service', 'xray_bin', 'ipv6', 'swap', 'panel_access', 'subscription_access',
+            'php_service', 'xray_bin', 'ipv6', 'bbr', 'swap', 'panel_access', 'subscription_access',
             'xray_sha256')}
         # Only the presence of the permanent client is kept, never its identity.
         self.state['admin_client'] = isinstance(value.get('admin_client'), dict)
@@ -807,13 +807,24 @@ class Doctor:
 
     def bbr(self):
         expected = {'net.ipv4.tcp_congestion_control': 'bbr', 'net.core.default_qdisc': 'fq'}
+        try:
+            # State without a BBR result (older nodes) was always managed.
+            mode = bbr_mode(self.state.get('bbr') or {})
+        except ValueError:
+            return self.answer('UNKNOWN', 'Состояние BBR/FQ неполно.', suggestion=SUGGEST['system'])
         for key, value in expected.items():
             code, actual = self.p.command('sysctl', '-n', key)
             if code:
                 return self.answer('UNKNOWN', 'Runtime sysctl недоступен.', suggestion=SUGGEST['system'])
             if actual.strip() != value:
+                if mode == 'skipped':
+                    return self.answer('SKIP', 'Настройка BBR/FQ необязательна и была пропущена при установке.',
+                                       {'reason': self.state['bbr'].get('reason')})
                 return self.answer('WARN', 'BBR/FQ runtime параметры отличаются.',
                                    suggestion=SUGGEST['system'])
+        if mode != 'managed':
+            return self.answer('PASS', 'BBR/FQ работают; их настроил не Bob, Bob их не менял.',
+                               {'mode': mode})
         try:
             text = self.p.read('/etc/sysctl.d/99-zz-bob-auto-xray-bbr.conf')
         except FileNotFoundError:
@@ -977,8 +988,13 @@ class Doctor:
                 return self.answer('SKIP', 'Старая установка не управляла SWAP.')
             return self.answer('UNKNOWN', 'SWAP присутствует без подтверждения в state.',
                                suggestion=SUGGEST['swap'])
-        if not isinstance(report, dict) or report.get('status') not in ('created', 'existing', 'skipped'):
+        if not isinstance(report, dict) or report.get('status') not in ('created', 'existing', 'skipped',
+                                                                         'external'):
             return self.answer('UNKNOWN', 'Состояние SWAP неполно.', suggestion=SUGGEST['swap'])
+        if report['status'] == 'external' or report.get('foreign'):
+            # Another tool's swap (any size) was found at installation and left untouched.
+            return self.answer('SKIP', 'SWAP настроен не Bob; Bob его не менял.',
+                               {'active': bool(active_paths)})
         if report['status'] == 'skipped':
             if info is None and not active and not owned_entries and not foreign:
                 return self.answer('SKIP', 'Создание SWAP штатно пропущено.')

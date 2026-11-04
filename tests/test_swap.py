@@ -96,5 +96,88 @@ class SwapTests(unittest.TestCase):
             self.assertEqual(file.read_text(), 'foreign')
 
 
+class BestEffortTests(unittest.TestCase):
+    """swap.apply(): another tool's swap is left alone; only a failed rollback is fatal."""
+
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.file = Path(directory.name) / 'swapfile'
+        self.fstab = Path(directory.name) / 'fstab'
+        self.fstab.write_text('# existing\n')
+        self.space = lambda _: SimpleNamespace(free=swap.SIZE + swap.RESERVE)
+
+    def test_menu_swap_of_another_size_is_external_and_untouched(self):
+        # VPS-Server-Menu: 1/2/4 GiB or custom /swapfile with the same fstab line.
+        with self.file.open('wb') as stream:
+            stream.truncate(1024**3)
+        self.file.chmod(0o600)
+        self.fstab.write_text('# existing\n' + swap.LINE + '\n')
+        command = Commands(self.file)
+        command.active = True
+        report = swap.apply(command, self.file, self.fstab, self.space)
+        self.assertEqual((report['status'], report['path']), ('external', str(self.file)))
+        self.assertEqual(self.file.stat().st_size, 1024**3)
+        self.assertEqual(self.fstab.read_text(), '# existing\n' + swap.LINE + '\n')
+        self.assertEqual(swap.verify(report, command, self.file, self.fstab), report)
+
+    def test_inactive_foreign_file_or_entry_is_skipped(self):
+        for case in ('file', 'entry', 'symlink'):
+            with self.subTest(case=case):
+                self.setUp()
+                if case == 'file':
+                    self.file.write_text('foreign')
+                elif case == 'entry':
+                    self.fstab.write_text(f'{self.file} none swap defaults,pri=5 0 0\n')
+                else:
+                    target = self.fstab.with_name('real')
+                    target.write_text(self.fstab.read_text())
+                    self.fstab.unlink()
+                    self.fstab.symlink_to(target)
+                before = self.fstab.read_text()
+                report = swap.apply(Commands(self.file), self.file, self.fstab, self.space)
+                self.assertEqual((report['status'], report['foreign']), ('skipped', True))
+                self.assertEqual(self.fstab.read_text(), before)
+                self.assertEqual(swap.verify(report, Commands(self.file), self.file, self.fstab), report)
+
+    def test_creation_failure_rolls_back_and_skips(self):
+        report = swap.apply(Commands(self.file, 'mkswap'), self.file, self.fstab, self.space)
+        self.assertEqual(report['status'], 'skipped')
+        self.assertIn('rolled back', report['reason'])
+        self.assertFalse(self.file.exists())
+        self.assertEqual(self.fstab.read_text(), '# existing\n')
+
+    def test_failed_rollback_is_fatal(self):
+        command = Commands(self.file, 'mkswap')
+        original = command.__call__
+        attempted = []
+
+        def failing(*args):
+            if args[0] == 'mkswap':
+                attempted.append(args)
+            elif attempted and args == ('swapon', '--show=NAME', '--noheadings', '--raw'):
+                raise InstallError('swapon exited 1')  # the rollback cannot prove swapoff
+            return original(*args)
+        with self.assertRaisesRegex(swap.RollbackError, 'Swap rollback incomplete'):
+            swap.apply(failing, self.file, self.fstab, self.space)
+
+    def test_interrupt_rolls_back_and_propagates(self):
+        command = Commands(self.file)
+        original = command.__call__
+
+        def interrupted(*args):
+            if args[0] == 'mkswap':
+                raise KeyboardInterrupt
+            return original(*args)
+        with self.assertRaises(KeyboardInterrupt):
+            swap.apply(interrupted, self.file, self.fstab, self.space)
+        self.assertFalse(self.file.exists())
+        self.assertEqual(self.fstab.read_text(), '# existing\n')
+
+    def test_clean_host_creates_managed_swap(self):
+        report = swap.apply(Commands(self.file), self.file, self.fstab, self.space)
+        self.assertEqual(report['status'], 'created')
+
+
 if __name__ == '__main__':
     unittest.main()

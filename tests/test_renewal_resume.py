@@ -488,6 +488,13 @@ class LateStateValidationTests(unittest.TestCase):
             state = validate_resume(panel_state(ipv6={'mode': mode, 'reason': 'x'}), DOMAIN, 'skip')
             self.assertEqual(state['ipv6']['mode'], mode)
 
+    def test_unknown_bbr_mode_blocks_late_resume(self):
+        with self.assertRaisesRegex(InstallError, 'TCP BBR/FQ.*resume запрещён'):
+            validate_resume(panel_state(bbr={'mode': 'disabled'}), DOMAIN, 'skip')
+        for mode in ('managed', 'external', 'skipped'):
+            state = validate_resume(panel_state(bbr={'mode': mode, 'reason': 'x'}), DOMAIN, 'skip')
+            self.assertEqual(state['bbr']['mode'], mode)
+
     def test_healthy_and_panel_failures_stay_non_resumable(self):
         with self.assertRaises(InstallError):
             validate_resume(panel_state(status='HEALTHY_LOCAL'), DOMAIN, 'skip')

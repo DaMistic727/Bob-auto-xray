@@ -110,8 +110,8 @@ class CliInstallTests(unittest.TestCase):
                      patch.object(provision, 'firewall'), \
                      patch.multiple(provision,
                                     ipv6=MagicMock(apply=MagicMock(return_value={'mode': 'managed'}), configure=MagicMock(return_value=({}, {}))),
-                                    bbr=MagicMock(configure=MagicMock(return_value={})),
-                                    swap=MagicMock(configure=MagicMock(return_value={'status': 'skipped'}))), \
+                                    bbr=MagicMock(apply=MagicMock(return_value={}), configure=MagicMock(return_value={})),
+                                    swap=MagicMock(apply=MagicMock(return_value={'status': 'skipped', 'reason': 'test'}), configure=MagicMock(return_value={'status': 'skipped'}))), \
                      patch.multiple(provision, certificate=DEFAULT, decoy=DEFAULT, panel=DEFAULT,
                                     security=DEFAULT, renew_hook=DEFAULT), \
                      patch.object(provision, 'install_doctor_cli', return_value=result), \

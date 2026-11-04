@@ -146,7 +146,7 @@ class Host:
              patch.object(provision, 'run', side_effect=self.command), \
              patch.object(provision.socket, 'getaddrinfo', return_value=[(None, None, None, None, ('8.8.8.8', 80))]), \
              patch.object(provision.socket, 'socket', side_effect=self.socket), \
-             patch.object(provision.bbr, 'preflight', return_value={'live': 'bbr'}), \
+             patch.object(provision.bbr, 'decision', return_value={'live': 'bbr'}), \
              patch.object(provision.ipv6, 'preflight', return_value={'live': 'ipv6', 'networkDropin': str(self.dropin)}):
             return provision.preflight(args, state)
 
@@ -350,6 +350,23 @@ class ResumeCarriedStateTests(unittest.TestCase):
         with self.assertRaisesRegex(InstallError, r'\(ipv6\).*resume'):
             self.host.preflight(self.host.saved('WARP', ipv6=dict(skipped, mode='disabled')))
 
+    def test_preflight_never_refuses_on_bbr(self):
+        # v0.4.3 stopped here: "TCP BBR/FQ is already configured in a foreign persistent sysctl file".
+        with patch.object(provision.bbr, 'preflight', side_effect=AssertionError('strict BBR preflight')):
+            self.host.preflight(self.host.saved('APT_UPDATE'))
+
+    def test_unmanaged_bbr_and_external_swap_are_carried_while_bob_wrote_nothing(self):
+        results = dict(bbr={'mode': 'external', 'reason': 'external', 'detail': 'x'},
+                       swap={'status': 'external', 'path': '/swapfile', 'reason': 'foreign'})
+        self.host.bbr_config.unlink()
+        for stage in ('WARP', 'CERTIFICATE'):
+            with self.subTest(stage=stage):
+                result = self.host.preflight(self.host.saved(stage, **results))
+                self.assertEqual((result['bbr'], result['swap']), (results['bbr'], results['swap']))
+        self.host.bbr_config.write_text('net.core.default_qdisc = fq\n')
+        with self.assertRaisesRegex(InstallError, r'\(bbr\).*resume'):
+            self.host.preflight(self.host.saved('WARP', **results))
+
     def test_managed_ipv6_resume_refused_when_policy_cannot_be_restored(self):
         # e.g. the resume runs over IPv6 SSH: Bob's policy must not be re-applied.
         live = {'mode': 'skipped', 'reason': 'ssh',
@@ -490,8 +507,8 @@ class ResumeAfterRebootTests(unittest.TestCase):
                  patch.object(provision, 'run', return_value='versions'), \
                  patch.object(provision, 'firewall'), \
                  patch.multiple(provision, ipv6=MagicMock(configure=configure, apply=apply, check_exposure=self.exposure),
-                                bbr=MagicMock(configure=MagicMock(return_value={})),
-                                swap=MagicMock(configure=MagicMock(return_value={'status': 'skipped'}))), \
+                                bbr=MagicMock(apply=MagicMock(return_value={}), configure=MagicMock(return_value={})),
+                                swap=MagicMock(apply=MagicMock(return_value={'status': 'skipped', 'reason': 'test'}), configure=MagicMock(return_value={'status': 'skipped'}))), \
                  patch.multiple(provision, certificate=DEFAULT, decoy=DEFAULT, panel=DEFAULT,
                                 security=DEFAULT, renew_hook=DEFAULT), \
                  patch.object(provision, 'install_doctor_cli', return_value={'status': 'installed'}), \

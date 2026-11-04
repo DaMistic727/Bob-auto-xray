@@ -490,12 +490,13 @@ EXTERNAL = {'mode': 'external', 'reason': 'external', 'runtimeDisabled': True,
 class InstallerStageTests(unittest.TestCase):
     """main() stage 5: BBR/FQ and swap never depend on the IPv6 result."""
 
-    def run_installer(self, apply=None, bbr=None):
+    def run_installer(self, apply=None, bbr=None, bbr_result=None, swap_result=None):
         import selfsni.acceptance as acceptance
         from test_warp_modes import state
         self.ipv6 = MagicMock(apply=MagicMock(side_effect=apply or (lambda *a: dict(EXTERNAL))))
-        self.bbr = MagicMock(configure=MagicMock(side_effect=bbr, return_value={'runtime': 'bbr'}))
-        self.swap = MagicMock(configure=MagicMock(return_value={'status': 'skipped', 'reason': 't'}))
+        self.bbr = MagicMock(apply=MagicMock(side_effect=bbr, return_value=bbr_result or {'runtime': 'bbr'}))
+        self.swap = MagicMock(apply=MagicMock(return_value=swap_result or {
+            'status': 'created', 'path': '/swapfile', 'bytes': 2 * 1024**3}))
         out = io.StringIO()
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -550,11 +551,35 @@ class InstallerStageTests(unittest.TestCase):
         self.assertEqual((saved['status'], saved['stage']), ('FAILED', 'BBR'))
         self.assertIn('IPv6 rollback incomplete', saved['failure'])
         self.assertEqual(saved['bbr'], {'runtime': 'bbr'})
-        self.assertEqual(saved['swap']['status'], 'skipped')
+        self.assertEqual(saved['swap']['status'], 'created')
         self.assertNotIn('ipv6', saved)
         self.bbr.rollback.assert_not_called()
         self.swap.rollback.assert_not_called()
         self.assertNotIn('Установка VPN продолжается', output)
+
+    def test_vps_server_menu_host_installs_with_every_setting_left_to_the_menu(self):
+        # The reported VPS: IPv6, BBR/FQ and swap were all set up by VPS-Server-Menu.
+        code, saved, output = self.run_installer(
+            bbr_result={'mode': 'external', 'reason': 'external',
+                        'detail': 'configured in /etc/sysctl.conf:1, /etc/sysctl.conf:2'},
+            swap_result={'status': 'external', 'path': '/swapfile', 'reason': 'foreign'})
+        self.assertEqual(code, 0)
+        self.assertEqual(saved['status'], 'HEALTHY_LOCAL')
+        self.assertEqual((saved['bbr']['mode'], saved['swap']['status']), ('external', 'external'))
+        for line in ('⚠ IPv6: настройка пропущена — обнаружена внешняя конфигурация.',
+                     '✓ TCP BBR/FQ: уже включены внешней конфигурацией; Bob её не менял.',
+                     '✓ Swap: уже есть (/swapfile настроен не Bob), не изменён.',
+                     '✓ Установка VPN продолжается.'):
+            self.assertIn(line, [x.strip() for x in output.splitlines()])
+        self.assertNotIn('TCP BBR/FQ: настроены', output)
+
+    def test_skipped_bbr_is_a_warning_not_a_failure(self):
+        code, saved, output = self.run_installer(
+            apply=lambda *a: {'mode': 'managed'},
+            bbr_result={'mode': 'skipped', 'reason': 'container', 'detail': 'restricted container: lxc'})
+        self.assertEqual(code, 0)
+        self.assertIn('⚠ TCP BBR/FQ: настройка пропущена — контейнер без управления sysctl ядра.', output)
+        self.assertIn('✓ Установка VPN продолжается.', output)
 
     def test_bbr_failure_never_touches_ipv6(self):
         code, saved, _ = self.run_installer(bbr=InstallError('modprobe tcp_bbr failed'))

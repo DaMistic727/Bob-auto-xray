@@ -21,7 +21,7 @@ from .api import PANEL_ACCESS, LocalTLS, Panel, public_panel_port, request, publ
 from .panel_checks import panel_login, panel_network, panel_routes
 from .bbr import verify as verify_bbr
 from .ipv6 import check_exposure as check_ipv6_exposure, verify as verify_ipv6
-from .install_state import ipv6_mode
+from .install_state import bbr_mode, ipv6_mode
 from .swap import verify as verify_swap
 from .core import (digest, json_obj, InstallError, require, run, save, token,
                    free_port, wait_for)
@@ -345,7 +345,12 @@ def verify(s, installed_xray=False):
     check('Certbot timer',lambda:run('systemctl','is-enabled','certbot.timer'))
     def tcp_bbr():
         bbr_report.update(verify_bbr())
-    check('TCP BBR congestion control and FQ persistence', tcp_bbr)
+    bbr_policy = bbr_mode(s.get('bbr', {}))
+    if bbr_policy == 'managed':
+        check('TCP BBR congestion control and FQ persistence', tcp_bbr)
+    else:
+        # Optional and not Bob's: recorded, never a reason to fail the installation.
+        bbr_report.update(mode=bbr_policy, reason=s['bbr'].get('reason'))
     ipv6_policy = ipv6_mode(s.get('ipv6', {}))
     if ipv6_policy == 'managed':
         check('Persistent IPv4-only sysctl and all IPv6 interfaces disabled', verify_ipv6)

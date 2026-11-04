@@ -232,8 +232,8 @@ class FailureTests(unittest.TestCase):
                  patch.object(provision,'run'), patch.object(provision,'firewall'), \
                  patch.multiple(provision,
                                 ipv6=MagicMock(apply=MagicMock(return_value={'mode': 'managed'}), configure=MagicMock(return_value=({}, {}))),
-                                bbr=MagicMock(configure=MagicMock(return_value={})),
-                                swap=MagicMock(configure=MagicMock(return_value={'status':'skipped'}))), \
+                                bbr=MagicMock(apply=MagicMock(return_value={}), configure=MagicMock(return_value={})),
+                                swap=MagicMock(apply=MagicMock(return_value={'status': 'skipped', 'reason': 'test'}), configure=MagicMock(return_value={'status': 'skipped'}))), \
                  patch.object(provision,'install_warp'), \
                  patch.object(provision,'certificate',side_effect=InstallError('Certbot validation failed')), \
                  patch.object(provision,'decoy') as next_stage, \

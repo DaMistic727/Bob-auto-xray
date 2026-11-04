@@ -1,3 +1,9 @@
+# v0.4.4 Preview · TCP BBR/FQ и swap необязательны
+
+Состав: v0.4.3 + #30. v0.4.3 останавливалась на preflight с `TCP BBR/FQ is already configured in a foreign persistent sysctl file`. Причина подтверждена по исходникам VPS-Server-Menu: `enable_bbr` дописывает `fq`/`bbr` в `/etc/sysctl.conf`. По тем же исходникам найдена следующая остановка: чужой `/swapfile` размером не 2 ГиБ. BBR/FQ (`managed`/`external`/`skipped`) и swap (`external`/`skipped`) теперь best effort, как IPv6.
+
+Проверки: полный unittest (487) с регрессионными тестами BBR/swap — точные строки меню, конфликт, контейнер, ядро без BBR, откат, неудачный откат, Ctrl+C, swap меню на 1 ГиБ — и сценарием установщика на хосте, где IPv6, BBR и swap настроены VPS-Server-Menu (до `HEALTHY_LOCAL`); CI на Python 3.10/3.12, real Nginx, закреплённая 3x-ui, пакетный certbot 24.04/26.04, ShellCheck, воспроизводимая сборка. **NOT TESTED:** VPS E2E этой сборки (включая ноду с VPS-Server-Menu), Ubuntu 24.04, arm64.
+
 # v0.4.3 Preview · IPv6 best effort, Xray 26.10.31, resume после SECURITY
 
 Состав: v0.4.2 + изменения #25–#28 из [CHANGELOG](../CHANGELOG.md#v043--2026-11-04--preview):
@@ -22,7 +28,7 @@
 
 ## Матрица и ссылки на доказательства
 
-Исторические результаты ниже относятся к указанным версиям и сценариям; они не подтверждают VPS E2E v0.4.3.
+Исторические результаты ниже относятся к указанным версиям и сценариям; они не подтверждают VPS E2E v0.4.4.
 
 | Платформа / сценарий | Статус |
 |---|---|
