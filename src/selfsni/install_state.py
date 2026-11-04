@@ -19,6 +19,20 @@ def warp_mode(state):
                                   bool(state['adopt_warp']) != (mode == 'adopt')):
         raise InstallError('Некорректный режим WARP в сохранённом состоянии')
     return mode
+# Who owns the IPv4-only policy (state['ipv6']['mode']); see ipv6.py.
+IPV6_MODES = ('managed', 'external', 'skipped')
+
+
+def ipv6_mode(report):
+    """Mode of the IPv6 stage result. Results written before modes existed were managed."""
+    if not isinstance(report, dict):
+        raise ValueError('ipv6')
+    mode = report.get('mode', 'managed')
+    if mode not in IPV6_MODES:
+        raise ValueError('ipv6 mode')
+    return mode
+
+
 RESUMABLE_FAILURE_STAGES = {'APT_UPDATE', 'APT_UPGRADE', 'APT_INSTALL', 'WARP', 'CERTIFICATE'}
 # After PANEL every credential, key and identity exists; a late resume reuses
 # them as saved and repeats only unfinished SECURITY steps and acceptance.
@@ -117,6 +131,10 @@ def validate_late_stage(state, mode):
     if missing or not isinstance(admin, dict) or not admin.get('id') or not admin.get('subId'):
         raise InstallError('Состояние не содержит результатов установки панели '
                            f'({", ".join(missing) or "admin_client"}); resume запрещён')
+    try:
+        ipv6_mode(state['ipv6'])
+    except ValueError as error:
+        raise InstallError('Результат этапа IPv6 в состоянии повреждён; resume запрещён') from error
     steps = state.get('security_steps')
     if last != 'PANEL' and steps is None:
         # Before per-step checkpoints SECURITY was recorded complete only after all its steps.

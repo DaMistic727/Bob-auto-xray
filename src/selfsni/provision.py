@@ -29,7 +29,7 @@ from .apt import AptRunner, background_package_processes
 from .menu_upstream import OFFICIAL_REPOSITORY, check_official_menu, install_menu
 from . import menu_warp
 from .install_state import (LATE_RESUME_STAGES, RESUMABLE_FAILURE_STAGES, SECURITY_STEPS, STAGES,
-                            InstallerLock, checkpoint, fail, initialize, load,
+                            InstallerLock, checkpoint, fail, initialize, ipv6_mode, load,
                             upgrade_legacy_apt_failure, validate_resume, warp_mode)
 from .ui import InstallerUI, interactive_wizard
 from .geodata import GEODATA_TIMEZONE, verify_server_geodata
@@ -254,13 +254,22 @@ def carried_results(state, ipv6_report):
             f'Этап {stage} не согласован с last_completed_stage; resume запрещён')
     if stage not in ('WARP', 'CERTIFICATE'):
         return {}
+    def ipv6_result(r):
+        if ipv6_mode(r) == 'managed' and ipv6_report.get('mode', 'managed') != 'managed':
+            raise InstallError('IPv6 настроен Bob, но сейчас его политику проверить и восстановить нельзя '
+                               f'({ipv6_report.get("detail")}); resume запрещён')
+        if ipv6_mode(r) != 'managed':
+            # Bob wrote nothing; its file must still be absent. The exposure
+            # gate is re-checked by main() before the remaining stages.
+            return (isinstance(r['reason'], str) and
+                    not ipv6.CONFIG.exists() and not ipv6.CONFIG.is_symlink())
+        return (r['persistentConfig'] == str(ipv6.CONFIG) and ipv6.CONFIG.read_text() == ipv6.CONTENT and
+                r['networkDropin'] == ipv6_report.get('networkDropin') and
+                Path(r['networkDropin']).name == ipv6.NETWORK_DROPIN and
+                Path(r['networkDropin']).read_text() == ipv6.NETWORK_CONTENT and
+                isinstance(r['interfaces'], list) and all(isinstance(x, str) for x in r['interfaces']))
     results = dict(
-        ipv6=_carried(state, 'ipv6', lambda r:
-            r['persistentConfig'] == str(ipv6.CONFIG) and ipv6.CONFIG.read_text() == ipv6.CONTENT and
-            r['networkDropin'] == ipv6_report.get('networkDropin') and
-            Path(r['networkDropin']).name == ipv6.NETWORK_DROPIN and
-            Path(r['networkDropin']).read_text() == ipv6.NETWORK_CONTENT and
-            isinstance(r['interfaces'], list) and all(isinstance(x, str) for x in r['interfaces'])),
+        ipv6=_carried(state, 'ipv6', ipv6_result),
         bbr=_carried(state, 'bbr', lambda r:
             r['runtime'] == bbr.DESIRED and r['persistentConfig'] == str(bbr.SYSCTL_CONFIG) and
             bbr.SYSCTL_CONFIG.read_text() == ''.join(f'{k} = {v}\n' for k, v in bbr.DESIRED.items())),
@@ -367,7 +376,7 @@ def preflight(args, resume_state=None):
             'DNS A must contain only this public IPv4; disable CDN proxying')
     v6 = {x for x in addresses if ipaddress.ip_address(x).version == 6}
     require(not v6, 'Installation FQDN has an AAAA record; IPv4-only requires removing it')
-    ipv6_report = ipv6.preflight(domain)
+    ipv6_report = ipv6.preflight(domain, ufw_defaults=ipv6.UFW_DEFAULTS)
     excluded = set(ssh_ports) | {80,443,40000,62789,11111}
     if resume_state:
         panel_port = int(resume_state['panel_port'])
@@ -401,6 +410,41 @@ def preflight(args, resume_state=None):
         fresh.update({key: resume_state[key] for key in preserved if key in resume_state})
         fresh.update(carried_results(resume_state, ipv6_report))
     return fresh
+
+IPV6_REASONS = {
+    'external': 'обнаружена внешняя конфигурация',
+    'conflict': 'обнаружена внешняя конфигурация',
+    'ssh': 'SSH-сессия не подтверждена как IPv4',
+    'topology': 'сетевой интерфейс не управляется netplan/systemd-networkd',
+    'snapshot': 'текущее состояние IPv6 не удалось сохранить для отката',
+    'apply-failed': 'применение не удалось, изменения полностью откачены',
+}
+
+
+def ipv6_notes(report):
+    """Installer lines for the IPv6 decision; IPv4-only is claimed only when Bob verified it."""
+    mode = ipv6_mode(report)
+    if mode == 'managed':
+        return ['✓ IPv6: отключён и закреплён (IPv4-only).']
+    lines = [f'⚠ IPv6: настройка пропущена — {IPV6_REASONS.get(report.get("reason"), "причина не определена")}.']
+    if report.get('detail'):
+        lines.append('  ' + redact(str(report['detail'])))
+    if mode == 'external':
+        lines.append('  IPv6 уже отключён другим инструментом; Bob его конфигурацию не меняет.')
+    else:
+        lines.append('  IPv6 не отключён Bob; конфликтующие файлы не изменены.')
+    if report.get('exposure'):
+        lines.append('  UFW фильтрует IPv6, внутренние службы через IPv6 недоступны.')
+    return lines
+
+
+def report_ipv6(report):
+    for line in ipv6_notes(report):
+        UI.note(line)
+    UI.note('✓ TCP BBR/FQ: настроены.')
+    if ipv6_mode(report) != 'managed':
+        UI.note('✓ Установка VPN продолжается.')
+
 
 def check_ufw_rules(allowed, root=Path('/etc/ufw')):
     for name in ['user.rules', 'user6.rules']:
@@ -469,12 +513,24 @@ def late_resume_preflight(args, state):
     # BBR already proved the IPv4-only policy persistent across reboot; a late
     # resume only reads it (sysctl, networkd drop-in, runtime) and never rewrites it.
     try:
-        report = ipv6.verify()
-    except InstallError as error:
-        raise InstallError(f'IPv6-политика не соответствует установке ({error}); resume запрещён') from error
-    require(isinstance(s['ipv6'], dict) and
-            all(report[key] == s['ipv6'].get(key) for key in ('persistentConfig', 'networkDropin')),
-            'Файлы IPv6-политики отличаются от сохранённых; resume запрещён')
+        managed = ipv6_mode(s['ipv6']) == 'managed'
+    except ValueError as error:
+        raise InstallError('Результат этапа IPv6 в состоянии повреждён; resume запрещён') from error
+    if managed:
+        try:
+            report = ipv6.verify()
+        except InstallError as error:
+            raise InstallError(f'IPv6-политика не соответствует установке ({error}); resume запрещён') from error
+        require(all(report[key] == s['ipv6'].get(key) for key in ('persistentConfig', 'networkDropin')),
+                'Файлы IPv6-политики отличаются от сохранённых; resume запрещён')
+    else:
+        require(not host(ipv6.CONFIG).exists() and not host(ipv6.CONFIG).is_symlink(),
+                'IPv6-файл Bob появился, хотя IPv6 не управлялся Bob; resume запрещён')
+        try:
+            ipv6.check_exposure(s['ssh_ports'])
+        except InstallError as error:
+            raise InstallError(f'IPv6 не исключает доступ к внутренним службам ({error}); '
+                               'resume запрещён') from error
     run('nginx', '-t')
     verify_panel_bootstrap(s)
     s['status'] = 'INSTALLING'
@@ -956,8 +1012,11 @@ def main():
             check_official_menu(lock)
         if args.preflight_only:
             UI.stage(1, 13, 'Проверка системы')
-            preflight(args)
+            checked = preflight(args)
             UI.stage(1, 13, 'Проверка системы', 'ok')
+            decision = checked.get('ipv6_preflight', {})
+            if ipv6_mode(decision) != 'managed':
+                UI.note(ipv6_notes(decision)[0])
             UI.note('Проверка пройдена. Система не изменена.')
             return
         with InstallerLock(INSTALL_LOCK):
@@ -1026,15 +1085,18 @@ def main():
                 if pending('BBR'):
                     checkpoint(STATE, s, 'BBR'); UI.stage(5, 13, 'Настройка IPv6, TCP BBR, FQ и swap')
                     swap.preflight()
-                    s['ipv6'], ipv6_before = ipv6.configure(s['domain'])
-                    try:
-                        s['bbr'] = bbr.configure()
-                        s['swap'] = swap.configure()
-                    except Exception:
-                        ipv6.rollback(ipv6_before)
-                        raise
+                    # BBR/FQ and swap never depend on IPv6, and IPv6 never undoes them.
+                    s['bbr'] = bbr.configure()
+                    s['swap'] = swap.configure()
+                    checkpoint(STATE, s, 'BBR')
+                    # Best effort: managed, external or skipped. Raises only after a
+                    # failed rollback or when IPv6 exposure cannot be excluded.
+                    s['ipv6'] = ipv6.apply(s['domain'], s['ssh_ports'])
                     checkpoint(STATE, s, 'BBR', True)
-                    UI.stage(5, 13, 'Настройка IPv6, TCP BBR, FQ и swap', 'ok')
+                    report_ipv6(s['ipv6'])
+                    UI.stage(5, 13, 'Настройка IPv6, TCP BBR, FQ и swap'
+                             if ipv6_mode(s['ipv6']) == 'managed' else
+                             'Настройка TCP BBR, FQ и swap (IPv6 не изменён)', 'ok')
                     checkpoint(STATE, s, 'FIREWALL'); UI.stage(6, 13, 'Настройка сетевой защиты')
                     firewall(s); checkpoint(STATE, s, 'FIREWALL', True)
                     UI.stage(6, 13, 'Настройка сетевой защиты', 'ok')
@@ -1042,7 +1104,11 @@ def main():
                     # A reboot between attempts can re-enable IPv6 on the interface while the
                     # persisted files stay intact; restore the runtime policy before acceptance.
                     # A late resume has verified it read-only in late_resume_preflight().
-                    s['ipv6'], _ = ipv6.configure(s['domain'])
+                    # The mode chosen at BBR is kept: Bob never takes over IPv6 mid-install.
+                    if ipv6_mode(s.get('ipv6', {})) == 'managed':
+                        s['ipv6'], _ = ipv6.configure(s['domain'])
+                    else:
+                        ipv6.check_exposure(s['ssh_ports'])
                 if pending('WARP'):
                     checkpoint(STATE, s, 'WARP')
                     if s['warp_mode'] == 'skip':
