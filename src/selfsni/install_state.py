@@ -20,6 +20,13 @@ def warp_mode(state):
         raise InstallError('Некорректный режим WARP в сохранённом состоянии')
     return mode
 RESUMABLE_FAILURE_STAGES = {'APT_UPDATE', 'APT_UPGRADE', 'APT_INSTALL', 'WARP', 'CERTIFICATE'}
+# After PANEL every credential, key and identity exists; a late resume reuses
+# them as saved and repeats only unfinished SECURITY steps and acceptance.
+LATE_RESUME_STAGES = ('SECURITY', 'ACCEPTANCE')
+SECURITY_STEPS = ('fail2ban', 'renewal', 'firewall', 'doctor')
+PANEL_RESULTS = ('ipv4', 'arch', 'ssh_ports', 'ipv6', 'bbr', 'swap', 'portal', 'php_service',
+                 'api_token', 'xray_sha256', 'xray_bin', 'reality_private', 'reality_public',
+                 'short_id', 'admin_client', 'xray_version', 'xui_version')
 STAGES = (
     'PREFLIGHT', 'APT_UPDATE', 'APT_UPGRADE', 'APT_INSTALL', 'BBR', 'FIREWALL',
     'WARP', 'CERTIFICATE', 'NGINX_PORTAL', 'PANEL', 'ROUTING', 'SECURITY',
@@ -82,17 +89,45 @@ def validate_resume(state, domain, mode):
     if state.get('schema') != SCHEMA or not state.get('installation_id'):
         raise InstallError('Состояние не доказывает принадлежность Bob Auto Xray; продолжение запрещено')
     stage = state.get('stage')
-    if state.get('status') not in ('FAILED', 'INSTALLING') or stage not in RESUMABLE_FAILURE_STAGES:
+    if state.get('status') not in ('FAILED', 'INSTALLING') or \
+            stage not in RESUMABLE_FAILURE_STAGES | set(LATE_RESUME_STAGES):
         raise InstallError(f'Безопасное продолжение после этапа {stage or "UNKNOWN"} не поддерживается')
     if state.get('domain') != domain or warp_mode(state) != mode:
         raise InstallError('Для продолжения повторите исходные --domain и режим WARP (--adopt-warp/--no-warp)')
     required = ('username', 'password', 'panel_port', 'sub_port', 'panel_path', 'sub_path')
     if any(not state.get(key) for key in required):
         raise InstallError('В состоянии отсутствуют исходные credentials; продолжение запрещено')
+    if stage in LATE_RESUME_STAGES:
+        validate_late_stage(state, mode)
     state['resume_count'] = int(state.get('resume_count', 0)) + 1
     state['warp_mode'] = mode
     state['status'] = 'INSTALLING'
     return state
+
+
+def validate_late_stage(state, mode):
+    """Fail closed unless the saved state is a complete record of PANEL and earlier."""
+    stage, last = state['stage'], state.get('last_completed_stage')
+    expected = {'SECURITY': ('PANEL', 'SECURITY'), 'ACCEPTANCE': ('SECURITY', 'ACCEPTANCE')}[stage]
+    if last not in expected:
+        raise InstallError(f'Этап {stage} не согласован с last_completed_stage; resume запрещён')
+    required = PANEL_RESULTS + (('menu_revision',) if mode != 'skip' else ())
+    missing = [key for key in required if not state.get(key)]
+    admin = state.get('admin_client')
+    if missing or not isinstance(admin, dict) or not admin.get('id') or not admin.get('subId'):
+        raise InstallError('Состояние не содержит результатов установки панели '
+                           f'({", ".join(missing) or "admin_client"}); resume запрещён')
+    steps = state.get('security_steps')
+    if last != 'PANEL' and steps is None:
+        # Before per-step checkpoints SECURITY was recorded complete only after all its steps.
+        steps = list(SECURITY_STEPS)
+    steps = [] if steps is None else steps
+    if not isinstance(steps, list) or steps != list(SECURITY_STEPS[:len(steps)]) or \
+            (last != 'PANEL' and len(steps) != len(SECURITY_STEPS)):
+        raise InstallError('Шаги этапа SECURITY в состоянии повреждены; resume запрещён')
+    if 'doctor' in steps and not isinstance(state.get('doctor_cli'), dict):
+        raise InstallError('Результат установки Bob Doctor отсутствует; resume запрещён')
+    state['security_steps'] = steps
 
 
 def upgrade_legacy_apt_failure(state, state_root, controlled_paths):
