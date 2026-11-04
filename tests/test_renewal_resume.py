@@ -251,6 +251,23 @@ class RenewalDryRunTests(unittest.TestCase):
                 self.assertIn('не подтверждён', str(error))
                 self.assertNotIn('renewal_check', state)
 
+    def test_log_truncated_in_place_is_read_from_the_start(self):
+        self.systemd = []
+
+        def truncate(*parts, **kwargs):
+            if parts[0] == 'systemctl':
+                return self.system(*parts)
+            self.log.write_text(HOOK_RUN)  # same inode, shorter than before the run
+            self.stamp.write_text('')
+            return HOOK_OK
+
+        clock = Clock()
+        self.log.write_text('x' * 4096)
+        with patch.object(provision, 'run', side_effect=truncate), self.patches():
+            state = {'domain': DOMAIN}
+            provision.renew_hook(state, clock=clock, sleep=clock.sleep, jitter=lambda a, b: 0)
+        self.assertEqual(state['renewal_check']['status'], 'PASS')
+
     def test_rotated_log_is_read_from_the_start(self):
         self.systemd = []
 

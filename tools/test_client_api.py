@@ -24,7 +24,7 @@ from selfsni.clients import (ensure_admin, read_clients, validate_admin,
                              verify_admin_runtime, verify_admin_subscriptions)
 from selfsni.core import ROOT, download, free_port, json_obj, require, save, token, wait_for
 from selfsni.geodata import verify_server_geodata
-from selfsni.provision import render
+from selfsni.provision import check_panel_settings, render
 from selfsni.routing import inbound, server_template, deeplink
 
 
@@ -134,7 +134,8 @@ def main():
                                 subHappTunType='xray', subHappLocalProxyAuth='auto',
                                 subEnable=True, subListen='127.0.0.1', subPort=sub_port,
                                 subPath=sub_path, subDomain='127.0.0.1', subURI='https://127.0.0.1'+sub_path, subEncrypt=True,
-                                subCertFile=str(root/'sub.crt'), subKeyFile=str(root/'sub.key'))
+                                subCertFile=str(root/'sub.crt'), subKeyFile=str(root/'sub.key'),
+                                webListen='127.0.0.1', trustedProxyCIDRs='127.0.0.1/32')
                 api.call('setting/update', settings)
                 os.killpg(process.pid, signal.SIGTERM)
                 process.wait(timeout=15)
@@ -264,6 +265,12 @@ def main():
                 except subprocess.TimeoutExpired:
                     os.killpg(process.pid, signal.SIGKILL)
                     process.wait(timeout=5)
+        # A late resume re-reads the bootstrap settings after configure_panel()'s full
+        # setting/update; the pinned CLI must still report them exactly once each.
+        cli('-webCert', str(root/'sub.crt'), '-webCertKey', str(root/'sub.key'))
+        check_panel_settings(cli('-getListen', '-getCert', '-show'), str(root/'sub.crt'),
+                             str(root/'sub.key'), port, base)
+        print('PASS: pinned x-ui settings readback after setting/update matches the late-resume check')
 
 
 if __name__ == '__main__':

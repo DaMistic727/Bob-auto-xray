@@ -673,16 +673,21 @@ def panel(s, lock, work):
     configure_panel(s, lock)
 
 
+def check_panel_settings(output, cert, key, port, path):
+    """`x-ui setting -getListen -getCert -show`; tools/test_client_api.py checks the
+    contract with the pinned binary after a full setting/update, as on a late resume."""
+    for name, value in (('listenIP', '127.0.0.1'), ('cert', cert), ('key', key), ('port', str(port)),
+                        ('webBasePath', path), ('hasDefaultCredential', 'false')):
+        require(re.findall(r'^' + name + r':[ \t]*([^\r\n]*)$', output, re.M) == [value],
+                'Panel bootstrap settings verification failed')
+
+
 def verify_panel_bootstrap(s):
     # The pinned CLI can exit 0 after failed settings writes. Read them back
     # while the service is still gated, and validate the actual certificate/key.
     cert = f'/etc/letsencrypt/live/{s["domain"]}/'
-    output = run('/usr/local/x-ui/x-ui', 'setting', '-getListen', '-getCert', '-show')
-    for key, value in (('listenIP', '127.0.0.1'), ('cert', cert+'fullchain.pem'),
-                       ('key', cert+'privkey.pem'), ('port', str(s['panel_port'])),
-                       ('webBasePath', s['panel_path']), ('hasDefaultCredential', 'false')):
-        require(re.findall(r'^'+key+r':[ \t]*([^\r\n]*)$', output, re.M) == [value],
-                'Panel bootstrap settings verification failed')
+    check_panel_settings(run('/usr/local/x-ui/x-ui', 'setting', '-getListen', '-getCert', '-show'),
+                         cert + 'fullchain.pem', cert + 'privkey.pem', s['panel_port'], s['panel_path'])
     try:
         ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER).load_cert_chain(cert+'fullchain.pem', cert+'privkey.pem')
     except (OSError, ssl.SSLError) as error:
@@ -831,7 +836,9 @@ def certbot_log_since(mark):
     """What one certbot run wrote, whether or not certbot rotated the log."""
     try:
         with CERTBOT_LOG.open('rb') as log:
-            if mark and os.fstat(log.fileno()).st_ino == mark[0]:
+            info = os.fstat(log.fileno())
+            # A new inode (rotated) or a shorter file (truncated in place) is read whole.
+            if mark and info.st_ino == mark[0] and info.st_size >= mark[1]:
                 log.seek(mark[1])
             return log.read().decode('utf-8', errors='replace')
     except OSError:
