@@ -13,9 +13,9 @@ class XrayPinTests(unittest.TestCase):
     def test_official_lock_keeps_panel_at_3110(self):
         lock = verify_bundle('skip')
         self.assertEqual(lock['xui_version'], 'v3.11.0')
-        self.assertEqual(lock['xray_version'], 'v26.10.21')
+        self.assertEqual(lock['xray_version'], 'v26.10.31')
         for arch in XRAY_ARCHIVES:
-            self.assertIn('XTLS/Xray-core/releases/download/v26.10.21/',
+            self.assertIn('XTLS/Xray-core/releases/download/v26.10.31/',
                           pinned_xray_spec(lock, arch)['url'])
 
     def test_verified_binary_replaces_stopped_panel_core(self):
@@ -27,15 +27,15 @@ class XrayPinTests(unittest.TestCase):
             member.external_attr = (0o100755 << 16)
             with zipfile.ZipFile(archive, 'w') as zipped:
                 zipped.writestr(member, payload)
-            lock = {'xray_version': 'v26.10.21', 'xray_downloads': {'amd64': {
-                'url': 'https://github.com/XTLS/Xray-core/releases/download/v26.10.21/Xray-linux-64.zip',
+            lock = {'xray_version': 'v26.10.31', 'xray_downloads': {'amd64': {
+                'url': 'https://github.com/XTLS/Xray-core/releases/download/v26.10.31/Xray-linux-64.zip',
                 'sha256': hashlib.sha256(archive.read_bytes()).hexdigest(),
                 'binary_sha256': hashlib.sha256(payload).hexdigest(),
             }}}
             destination = root/'xray-linux-amd64'
             destination.write_bytes(b'withdrawn binary')
             with patch('selfsni.xray_pin.download', return_value=archive) as fetch, \
-                 patch('selfsni.xray_pin.run', side_effect=['', 'Xray 26.10.21 1b1647c']) as command:
+                 patch('selfsni.xray_pin.run', side_effect=['', 'Xray 26.10.31 a4a3dff']) as command:
                 result = install_pinned_xray(lock, 'amd64', root, destination)
             self.assertEqual(result, lock['xray_downloads']['amd64']['binary_sha256'])
             self.assertEqual(destination.read_bytes(), payload)
@@ -54,10 +54,10 @@ class XrayPinTests(unittest.TestCase):
             member.external_attr = (0o100755 << 16)
             with zipfile.ZipFile(archive, 'w') as zipped:
                 zipped.writestr(member, b'actual')
-            spec = {'url': 'https://github.com/XTLS/Xray-core/releases/download/v26.10.21/Xray-linux-64.zip',
+            spec = {'url': 'https://github.com/XTLS/Xray-core/releases/download/v26.10.31/Xray-linux-64.zip',
                     'sha256': hashlib.sha256(archive.read_bytes()).hexdigest(),
                     'binary_sha256': hashlib.sha256(b'expected').hexdigest()}
-            lock = {'xray_version': 'v26.10.21', 'xray_downloads': {'amd64': spec}}
+            lock = {'xray_version': 'v26.10.31', 'xray_downloads': {'amd64': spec}}
             destination = root/'xray-linux-amd64'
             destination.write_bytes(b'withdrawn binary')
             with patch('selfsni.xray_pin.download', return_value=archive), \
@@ -68,9 +68,37 @@ class XrayPinTests(unittest.TestCase):
             self.assertEqual([call.args for call in command.call_args_list],
                              [('systemctl', 'stop', 'x-ui')])
             self.assertFalse(list(root.glob('.xray-*')))
-            spec['url'] = 'https://github.com/other/Xray-core/releases/download/v26.10.21/Xray-linux-64.zip'
+            spec['url'] = 'https://github.com/other/Xray-core/releases/download/v26.10.31/Xray-linux-64.zip'
             with self.assertRaisesRegex(InstallError, 'pinned official release'):
                 pinned_xray_spec(lock, 'amd64')
+
+    def test_previous_release_is_unreviewed(self):
+        lock = verify_bundle('skip')
+        lock['xray_version'] = 'v26.10.21'
+        with self.assertRaisesRegex(InstallError, 'Unreviewed Xray version'):
+            pinned_xray_spec(lock, 'amd64')
+
+    def test_binary_reporting_previous_core_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root/'official.zip'
+            payload = b'verified xray binary'
+            member = zipfile.ZipInfo('xray')
+            member.external_attr = (0o100755 << 16)
+            with zipfile.ZipFile(archive, 'w') as zipped:
+                zipped.writestr(member, payload)
+            lock = {'xray_version': 'v26.10.31', 'xray_downloads': {'amd64': {
+                'url': 'https://github.com/XTLS/Xray-core/releases/download/v26.10.31/Xray-linux-64.zip',
+                'sha256': hashlib.sha256(archive.read_bytes()).hexdigest(),
+                'binary_sha256': hashlib.sha256(payload).hexdigest(),
+            }}}
+            destination = root/'xray-linux-amd64'
+            destination.write_bytes(b'panel binary')
+            for reported in ('Xray 26.10.21 1b1647c', 'Xray 26.10.31 1b1647c'):
+                with patch('selfsni.xray_pin.download', return_value=archive), \
+                     patch('selfsni.xray_pin.run', side_effect=['', reported]):
+                    with self.assertRaisesRegex(InstallError, 'version/commit mismatch'):
+                        install_pinned_xray(lock, 'amd64', root, destination)
 
 
 if __name__ == '__main__':
