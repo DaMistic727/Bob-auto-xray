@@ -5,7 +5,7 @@
 ## Versioned bootstrap
 
 ```bash
-bash <(curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' https://github.com/DaMistic727/Bob-auto-xray/releases/download/v0.4.2/install.sh)
+bash <(curl -fsSL --proto '=https' https://github.com/DaMistic727/Bob-auto-xray/releases/download/v0.4.3/install.sh)
 ```
 
 Эта команда запускается от root на чистой поддерживаемой VPS. Она использует bootstrap **конкретного релиза**, а не плавающей ветки. Опубликованный `install.sh` содержит URL и SHA256 своего payload archive. Проверка digest выполняется до распаковки и исполнения модулей; archive traversal, symlinks и devices запрещены.
@@ -13,8 +13,8 @@ bash <(curl --fail --silent --show-error --location --proto '=https' --proto-red
 Bootstrap получен по HTTPS от GitHub. Встроенный SHA256 проверяет соответствие архива этому bootstrap, но не является отдельной подписью владельца. Доверие к самому bootstrap зависит от источника его получения и GitHub-аккаунта. Для предварительного просмотра и ручной проверки:
 
 ```bash
-curl --fail --location --proto '=https' --proto-redir '=https' -o install.sh https://github.com/DaMistic727/Bob-auto-xray/releases/download/v0.4.2/install.sh
-curl --fail --location --proto '=https' --proto-redir '=https' -o SHA256SUMS https://github.com/DaMistic727/Bob-auto-xray/releases/download/v0.4.2/SHA256SUMS
+curl -fL --proto '=https' -o install.sh https://github.com/DaMistic727/Bob-auto-xray/releases/download/v0.4.3/install.sh
+curl -fL --proto '=https' -o SHA256SUMS https://github.com/DaMistic727/Bob-auto-xray/releases/download/v0.4.3/SHA256SUMS
 # Сравните SHA256 с доверенным значением релиза; просмотр кода не требует root.
 sha256sum install.sh
 less install.sh
@@ -25,10 +25,10 @@ SHA256SUMS, полученный с того же источника, помог
 
 ## Локальный архив
 
-Скачайте `selfsni-0.4.2.tar.gz`, проверьте его SHA256, распакуйте в `/root`:
+Скачайте `selfsni-0.4.3.tar.gz`, проверьте его SHA256, распакуйте в `/root`:
 
 ```bash
-tar -xzf selfsni-0.4.2.tar.gz -C /root
+tar -xzf selfsni-0.4.3.tar.gz -C /root
 bash /root/selfsni/install.sh
 ```
 
@@ -83,7 +83,7 @@ Dirty/diverged/неизвестный checkout отклоняется без res
 
 В v0.3.4 в `versions.lock.json` были закреплены официальный VPS-Server-Menu commit `3ed5166bbc5b4fb4cc3bb26616bc4db3bbe2734c` и SHA256 codeload-архива `9d7a2aced39fe206a9cb4cd46481ee6876471458a63988b9fca152238fa7ec29`. Его 25 файлов побайтно сверены с отдельным Git checkout этого commit. Тогда Bob проверял архив до системных изменений и отказывал при неизвестном origin/HEAD/изменённом checkout. Миграция форка выполняется только вручную. Smoke E2E #1 подтвердил новую установку официального WARP, Certbot, REALITY Vision и on-host acceptance 27/27 на чистой одноразовой Ubuntu 26.04.1 amd64; владелец отдельно проверил VPN и WARP вручную. Позднее добавленное отключение IPv6 прошло reboot-тест на уже установленной VPS. Чистая установка с этим изменением, независимый автоматизированный внешний E2E финального кандидата v0.3.4 и reboot сразу после его чистой установки **не были проверены**. Это был Preview release; ограничения подробно описаны в [отчёте](TESTING.md).
 
-Эти результаты относятся к v0.3.4. Проверки v0.4.0 и ограничения v0.4.2 приведены отдельно в [TESTING.md](TESTING.md).
+Эти результаты относятся к v0.3.4. Проверки v0.4.0 и ограничения v0.4.3 приведены отдельно в [TESTING.md](TESTING.md).
 
 ## Acceptance
 

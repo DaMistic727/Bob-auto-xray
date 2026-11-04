@@ -59,7 +59,7 @@ Bob Doctor: на новых установках `bob doctor [--deep] [--json]`;
 ## Установка от root на чистой VPS
 
 ```bash
-bash <(curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' https://github.com/{a.repo}/releases/download/{a.tag}/install.sh)
+bash <(curl -fsSL --proto '=https' https://github.com/{a.repo}/releases/download/{a.tag}/install.sh)
 ```
 
 Bootstrap закрепляет immutable URL и SHA256 payload; SHA256SUMS опубликован в assets.
