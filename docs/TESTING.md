@@ -17,7 +17,7 @@
 | v0.2.0 · Ubuntu 24.04 amd64 + существующий WARP | Проверены установка через `--adopt-warp`, внешний клиент и reboot |
 | v0.3.1 · Ubuntu 26.04.1 amd64, чистая ОС | Проверены установка всех VPN-компонентов, Target UI, новая регистрация WARP, внешний клиент и reboot |
 | v0.3.3 · кандидат PR #6 на Ubuntu 26.04.1 amd64 | Проверены clean install, новая WARP-регистрация, BBR/FQ и TCP socket, Target UI, 26/26 on-host и 7/7 external checks до/после reboot; опубликованный архив v0.3.3 отдельно не разворачивался |
-| Ubuntu 22.04; arm64 | Предусмотрены в коде; отдельное развёртывание не проверено |
+| Ubuntu 24.04 (текущая сборка); arm64 | Предусмотрены в коде; отдельное развёртывание не проверено. Ubuntu 22.04 не поддерживается и отклоняется preflight |
 | Native Geodata Auto-Update · исторические проверки | Проверены 4 assets, UTC→03:00 МСК, hot reload, ошибка, rollback и reboot |
 | Happ / INCY contracts · исторические проверки | Проверены реальные HTTP-ответы, Base64/JSON и deeplink |
 | iOS Happ/INCY | **User-verified E2E: VPN connection, applied routing and WARP confirmed.** Физический iPhone, 18.10.2026 |

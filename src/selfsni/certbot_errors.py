@@ -37,10 +37,11 @@ def explain(output):
 # `certbot renew --dry-run` failures, most specific first. Order matters:
 # an ACME validation detail ("Timeout during connect") or a deploy-hook error
 # must never be mistaken for a client-side network failure worth retrying.
-# Non-zero hook exit: certbot 2.x "Hook 'deploy-hook' reported error code 1", 1.x
-# 'deploy-hook command "..." returned error code 1'. Hook stderr alone is not a
-# failure: `nginx -t` reports success on stderr.
-_HOOK = re.compile(r'deploy-hook.{0,300}?(?:reported|returned) error code', re.I)
+# certbot 2.9 (Ubuntu 24.04) and 4.0 (26.04), display.ops.report_executed_command:
+# a non-zero hook exit is only logged ("Hook 'deploy-hook' reported error code 1")
+# and certbot still exits 0. Hook stderr alone is not a failure: `nginx -t`
+# reports success on stderr.
+_HOOK = re.compile(r"Hook 'deploy-hook' reported error code", re.I)
 _RATE_LIMIT = re.compile(r'too many|rate.?limit', re.I)
 _VALIDATION = re.compile(
     r'urn:ietf:params:acme:error:(?:unauthorized|connection|dns|caa|incorrectresponse|'
@@ -57,16 +58,20 @@ _TRANSIENT = re.compile(
     r'service unavailable|bad gateway|gateway time-?out', re.I)
 
 
-def deploy_hook_problem(output):
-    """Reason a dry run that exited 0 still does not prove the deploy hook, else None.
+def deploy_hook_result(output, log, hook):
+    """ran | failed | skipped | not-run for one dry run that exited 0.
 
-    Certbot only logs a failing deploy hook and may still exit 0.
+    `log` is the part of letsencrypt.log written by that run: certbot logs each
+    hook start ("Running deploy-hook command: <cmd>") at INFO, which reaches only
+    the log file. `ran` requires exactly one start, of exactly `hook`.
     """
-    if _HOOK.search(output or ''):
+    text = (output or '') + '\n' + (log or '')
+    if _HOOK.search(text):
         return 'failed'
-    if re.search(r'skipping deploy hook', output or '', re.I):
+    if re.search(r'skipping deploy hook', text, re.I):
         return 'skipped'
-    return None
+    started = [x.strip() for x in re.findall(r'Running deploy-hook command: ([^\n]*)', log or '')]
+    return 'ran' if started == [hook] else 'not-run'
 
 
 def classify_renewal(output, timed_out=False):

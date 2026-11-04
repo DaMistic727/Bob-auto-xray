@@ -57,3 +57,24 @@ jobs:
           cmp /tmp/selfsni-first-build.sha256 dist/SHA256SUMS
           (cd dist && sha256sum -c SHA256SUMS)
           shellcheck dist/install.sh
+  certbot-cli:
+    # Bob supports Ubuntu 24.04 (certbot 2.9) and 26.04 (certbot 4.0) only.
+    name: Packaged Certbot CLI (Ubuntu ${{ matrix.ubuntu }})
+    runs-on: ubuntu-24.04
+    container: ubuntu:${{ matrix.ubuntu }}
+    strategy:
+      fail-fast: false
+      matrix:
+        ubuntu: ['24.04', '26.04']
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install the distribution certbot
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: apt-get update && apt-get install -y --no-install-recommends certbot
+      - name: Renewal dry-run command line is accepted
+        env:
+          PYTHONPATH: src
+        run: python3 tools/check_certbot_cli.py

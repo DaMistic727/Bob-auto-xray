@@ -24,7 +24,7 @@ from .core import (ROOT, CommandError, InstallError, configure_diagnostics, reda
                    register_secrets, require, run, write, save, token, free_port,
                    fqdn, download, verify_bundle, wait_for, digest,
                    configure_activity)
-from .certbot_errors import acme_step, classify_renewal, deploy_hook_problem, explain as explain_certbot
+from .certbot_errors import acme_step, classify_renewal, deploy_hook_result, explain as explain_certbot
 from .apt import AptRunner, background_package_processes
 from .menu_upstream import OFFICIAL_REPOSITORY, check_official_menu, install_menu
 from . import menu_warp
@@ -48,6 +48,8 @@ ACME_WEBROOT = '/var/lib/selfsni-acme'
 RENEW_HOOK = '/etc/letsencrypt/renewal-hooks/deploy/50-selfsni'
 RENEW_HOOK_SCRIPT = '#!/bin/sh\nset -eu\nnginx -t\nsystemctl reload nginx\nsystemctl restart x-ui\n'
 CERTBOT_LOG = Path('/var/log/letsencrypt/letsencrypt.log')
+# Certbot reads defaults, hooks included, from these files.
+CERTBOT_CLI_INI = ('/etc/letsencrypt/cli.ini', '/root/.config/letsencrypt/cli.ini')
 ACME_DIRECTORIES = (('staging', 'https://acme-staging-v02.api.letsencrypt.org/directory'),
                     ('production', 'https://acme-v02.api.letsencrypt.org/directory'))
 # Bounded retry of the renewal dry-run on transient network/ACME 5xx failures only.
@@ -79,8 +81,9 @@ def os_info(path='/etc/os-release'):
         if '=' in line:
             k, v = line.split('=', 1)
             values[k] = v.strip('"')
-    require(values.get('ID') == 'ubuntu' and values.get('VERSION_ID') in ('22.04','24.04','26.04'),
-            'Supported OS: Ubuntu 22.04, 24.04, 26.04 LTS')
+    # 22.04 is not supported: its certbot 1.21 lacks --run-deploy-hooks.
+    require(values.get('ID') == 'ubuntu' and values.get('VERSION_ID') in ('24.04', '26.04'),
+            'Supported OS: Ubuntu 24.04, 26.04 LTS')
     require(platform.machine() in ('x86_64', 'aarch64'), 'Supported architectures: amd64, arm64')
     return values
 
@@ -417,15 +420,7 @@ def late_resume_preflight(args, state):
         require(ok, f'{path} не совпадает с сохранённым состоянием; resume запрещён')
 
     require(host(STATE / 'panel-ready').is_file(), 'Маркер готовности панели отсутствует; resume запрещён')
-    renewal = host(f'/etc/letsencrypt/renewal/{domain}.conf')
-    try:
-        renewal_text = renewal.read_text()
-    except OSError:
-        renewal_text = ''
-    require(re.search(r'^authenticator = webroot$', renewal_text, re.M) and
-            re.search(r'^webroot_path = ' + re.escape(ACME_WEBROOT) + r',?$', renewal_text, re.M) and
-            re.search(r'^server = https://acme-v02\.api\.letsencrypt\.org/directory$', renewal_text, re.M),
-            'Renewal-конфигурация сертификата не соответствует HTTP-01 webroot Bob; resume запрещён')
+    check_renewal_config(domain)
     fullchain = f'/etc/letsencrypt/live/{domain}/fullchain.pem'
     try:
         run('openssl', 'x509', '-checkend', '0', '-noout', '-in', host(fullchain))
@@ -450,10 +445,47 @@ def late_resume_preflight(args, state):
         same(RENEW_HOOK, RENEW_HOOK_SCRIPT, 0o700)
     if shutil.which('ufw'):
         check_ufw_rules(set(s['ssh_ports']) | {80, 443}, host('/etc/ufw'))
+    # BBR already proved the IPv4-only policy persistent across reboot; a late
+    # resume only reads it (sysctl, networkd drop-in, runtime) and never rewrites it.
+    try:
+        report = ipv6.verify()
+    except InstallError as error:
+        raise InstallError(f'IPv6-политика не соответствует установке ({error}); resume запрещён') from error
+    require(isinstance(s['ipv6'], dict) and
+            all(report[key] == s['ipv6'].get(key) for key in ('persistentConfig', 'networkDropin')),
+            'Файлы IPv6-политики отличаются от сохранённых; resume запрещён')
     run('nginx', '-t')
     verify_panel_bootstrap(s)
     s['status'] = 'INSTALLING'
     return s
+
+
+def check_renewal_config(domain):
+    """Bob's lineage renews over HTTP-01 webroot from production with no hooks of its own.
+
+    The dry run disables directory hooks and names Bob's deploy hook, but
+    certbot would still run pre/post hooks of the lineage or of cli.ini, even
+    in a dry run, and a lineage renew_hook would run on a real renewal.
+    """
+    try:
+        text = host(f'/etc/letsencrypt/renewal/{domain}.conf').read_text()
+    except OSError:
+        text = ''
+    require(re.search(r'^authenticator = webroot$', text, re.M) and
+            re.search(r'^webroot_path = ' + re.escape(ACME_WEBROOT) + r',?$', text, re.M) and
+            re.search(r'^server = https://acme-v02\.api\.letsencrypt\.org/directory$', text, re.M),
+            'Renewal-конфигурация сертификата не соответствует HTTP-01 webroot Bob')
+    require(not re.search(r'^\s*(?:pre|post|renew)_hook\s*=', text, re.M),
+            'В renewal-конфигурации сертификата Bob заданы посторонние hooks')
+    for path in CERTBOT_CLI_INI:
+        try:
+            ini = host(path).read_text()
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            raise InstallError(f'{path} недоступен для проверки hooks Certbot') from error
+        require(not re.search(r'^\s*(?:pre|post|deploy|renew)[-_]hook\s*=', ini, re.M | re.I),
+                f'{path} задаёт hooks Certbot; изолированная проверка продления невозможна')
 
 
 def saved_secrets(s):
@@ -764,24 +796,49 @@ def pause(seconds):
             UI.pulse()
 
 
+def certbot_log_mark():
+    try:
+        info = CERTBOT_LOG.stat()
+    except OSError:
+        return None
+    return info.st_ino, info.st_size
+
+
+def certbot_log_since(mark):
+    """What one certbot run wrote, whether or not certbot rotated the log."""
+    try:
+        with CERTBOT_LOG.open('rb') as log:
+            if mark and os.fstat(log.fileno()).st_ino == mark[0]:
+                log.seek(mark[1])
+            return log.read().decode('utf-8', errors='replace')
+    except OSError:
+        return ''
+
+
+def renewal_command(domain):
+    # tools/check_certbot_cli.py runs this exact line against packaged certbot in CI.
+    return ('certbot', 'renew', '--dry-run', '--cert-name', domain, '--no-directory-hooks',
+            '--deploy-hook', RENEW_HOOK, '--run-deploy-hooks', '--no-random-sleep-on-renew')
+
+
 def renew_hook(s, clock=time.monotonic, sleep=pause, jitter=random.uniform):
     write(RENEW_HOOK, RENEW_HOOK_SCRIPT, 0o700)
+    check_renewal_config(s['domain'])
     # All services use the live certificate path directly; no stale copies.
-    # --cert-name: never exercise another lineage or run its deploy hooks.
-    # The dry run uses ACME staging and leaves live/ and renewal/ unchanged, so a
+    # Only Bob's lineage (--cert-name) and only Bob's hook run: directory hooks
+    # are disabled and the same file is named explicitly. Real renewals by
+    # certbot.timer run it from renewal-hooks/deploy. A dry run uses ACME staging
+    # and writes neither live/ nor renewal/ (no --deploy-hook is saved), so a
     # repeat is safe; only failures classified as transient are repeated.
-    command = ('certbot', 'renew', '--dry-run', '--cert-name', s['domain'], '--run-deploy-hooks',
-               '--no-random-sleep-on-renew')
+    command = renewal_command(s['domain'])
     deadline = clock() + RENEWAL_BUDGET
     for attempt in range(1, RENEWAL_ATTEMPTS + 1):
+        mark = certbot_log_mark()
         try:
             output = run(*command, timeout=min(RENEWAL_ATTEMPT_TIMEOUT, deadline - clock()))
         except CommandError as error:
             kind = classify_renewal(error.output, error.timed_out)
-            try:
-                step = acme_step(CERTBOT_LOG.read_text(errors='replace'))
-            except OSError:
-                step = None
+            step = acme_step(certbot_log_since(mark))
             delay = RENEWAL_BACKOFF * 2 ** (attempt - 1)
             delay += jitter(0, delay / 2)
             if kind != 'transient' or attempt == RENEWAL_ATTEMPTS or \
@@ -795,10 +852,11 @@ def renew_hook(s, clock=time.monotonic, sleep=pause, jitter=random.uniform):
                 UI.note(message)
             sleep(delay)
             continue
-        if deploy_hook_problem(output) == 'failed':
+        hook = deploy_hook_result(output, certbot_log_since(mark), RENEW_HOOK)
+        if hook == 'failed':
             raise renewal_failure('hook', output, attempt, None)
-        require(deploy_hook_problem(output) is None,
-                'Certbot пропустил deploy hook при тестовом продлении; продление не подтверждено')
+        require(hook == 'ran', 'Запуск deploy hook Bob при тестовом продлении не подтверждён '
+                               f'({hook}); продление не подтверждено')
         s['renewal_check'] = {'status': 'PASS', 'attempts': attempt,
                               'checked_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}
         return
@@ -942,9 +1000,10 @@ def main():
                     checkpoint(STATE, s, 'FIREWALL'); UI.stage(6, 13, 'Настройка сетевой защиты')
                     firewall(s); checkpoint(STATE, s, 'FIREWALL', True)
                     UI.stage(6, 13, 'Настройка сетевой защиты', 'ok')
-                else:
+                elif not late:
                     # A reboot between attempts can re-enable IPv6 on the interface while the
                     # persisted files stay intact; restore the runtime policy before acceptance.
+                    # A late resume has verified it read-only in late_resume_preflight().
                     s['ipv6'], _ = ipv6.configure(s['domain'])
                 if pending('WARP'):
                     checkpoint(STATE, s, 'WARP')

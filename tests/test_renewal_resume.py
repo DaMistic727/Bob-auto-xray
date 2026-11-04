@@ -14,7 +14,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from selfsni import provision
-from selfsni.certbot_errors import acme_step, classify_renewal
+from selfsni.certbot_errors import acme_step, classify_renewal, deploy_hook_result
 from selfsni.core import CommandError, InstallError
 from selfsni.install_state import SECURITY_STEPS, initialize, validate_resume
 
@@ -28,8 +28,6 @@ HTTP01 = ("Certbot failed to authenticate some domains (authenticator: webroot).
 HOOK = ("Hook 'deploy-hook' ran with error output:\n nginx: the configuration file "
         "/etc/nginx/nginx.conf syntax is ok\n Job for x-ui.service failed: connection reset\n"
         "Hook 'deploy-hook' reported error code 1\n")
-HOOK_V1 = ('deploy-hook command "/etc/letsencrypt/renewal-hooks/deploy/50-selfsni" returned error code 1\n'
-           'Error output from deploy-hook command 50-selfsni:\nJob for x-ui.service failed\n')
 HOOK_OK = ("Simulating renewal of an existing certificate for vpn.example.com\n"
            "Hook 'deploy-hook' ran with error output:\n nginx: the configuration file "
            "/etc/nginx/nginx.conf syntax is ok\n nginx: configuration file /etc/nginx/nginx.conf "
@@ -38,6 +36,12 @@ LOG = ("2026-11-04 10:00:00,000:DEBUG:acme.client:Sending GET request to "
        "https://acme-staging-v02.api.letsencrypt.org/directory.\n"
        "2026-11-04 10:00:01,000:DEBUG:acme.client:Sending POST request to "
        "https://acme-staging-v02.api.letsencrypt.org/acme/new-order. args: (), kwargs: {}\n")
+HOOK_RUN = ('2026-11-04 10:00:09,000:INFO:certbot.compat.misc:Running deploy-hook command: '
+            '/etc/letsencrypt/renewal-hooks/deploy/50-selfsni\n')
+RENEWAL_CONF = ('[renewalparams]\naccount = 0123\nauthenticator = webroot\n'
+                'webroot_path = /var/lib/selfsni-acme,\n'
+                'server = https://acme-v02.api.letsencrypt.org/directory\nkey_type = ecdsa\n'
+                '[[webroot_map]]\nvpn.example.com = /var/lib/selfsni-acme\n')
 
 
 def certbot_failure(output, timed_out=False):
@@ -75,7 +79,6 @@ class ClassificationTests(unittest.TestCase):
                                           '.well-known/acme-challenge/a: Timeout during connect '
                                           '(likely firewall problem)'), 'validation')
         self.assertEqual(classify_renewal(HOOK), 'hook')
-        self.assertEqual(classify_renewal(HOOK_V1), 'hook')
         self.assertEqual(classify_renewal('SSLError(SSLCertVerificationError(1, "[SSL: '
                                           'CERTIFICATE_VERIFY_FAILED] certificate verify failed"))'), 'tls')
         self.assertEqual(classify_renewal('urn:ietf:params:acme:error:rateLimited :: too many '
@@ -90,23 +93,48 @@ class ClassificationTests(unittest.TestCase):
                          'POST acme-staging-v02.api.letsencrypt.org finalize')
         self.assertIsNone(acme_step('no requests'))
 
+    def test_hook_result_needs_exactly_one_start_of_bob_hook(self):
+        hook = provision.RENEW_HOOK
+        self.assertEqual(deploy_hook_result(HOOK_OK, HOOK_RUN, hook), 'ran')
+        self.assertEqual(deploy_hook_result(HOOK, HOOK_RUN, hook), 'failed')
+        self.assertEqual(deploy_hook_result('', 'Dry run: skipping deploy hook command: ' + hook, hook),
+                         'skipped')
+        self.assertEqual(deploy_hook_result(HOOK_OK, '', hook), 'not-run')
+        foreign = HOOK_RUN.replace('50-selfsni', '10-foreign')
+        self.assertEqual(deploy_hook_result(HOOK_OK, foreign + HOOK_RUN, hook), 'not-run')
+        self.assertEqual(deploy_hook_result(HOOK_OK, HOOK_RUN + HOOK_RUN, hook), 'not-run')
+
 
 class RenewalDryRunTests(unittest.TestCase):
+    """renew_hook() with a fake certbot that answers and appends to letsencrypt.log."""
+
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
-        self.log = Path(directory.name) / 'letsencrypt.log'
-        self.log.write_text(LOG)
+        self.root = Path(directory.name)
+        self.log = self.root / 'var/log/letsencrypt/letsencrypt.log'
+        self.log.parent.mkdir(parents=True)
+        self.log.write_text('2026-11-03 earlier run: Running deploy-hook command: '
+                            '/etc/letsencrypt/renewal-hooks/deploy/50-selfsni\n')
+        self.put(f'/etc/letsencrypt/renewal/{DOMAIN}.conf', RENEWAL_CONF)
         self.writes = []
         self.probes = []
 
-    def renew(self, outcomes, clock=None):
+    def put(self, path, content):
+        target = self.root / path.lstrip('/')
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content)
+
+    def renew(self, outcomes, clock=None, jitter=lambda a, b: 0):
+        """outcomes: (console output or CommandError, text certbot logs during that run)."""
         clock = clock or Clock()
         calls = []
 
         def command(*parts, timeout=None, **kwargs):
             calls.append((parts, timeout))
-            outcome = outcomes[min(len(calls), len(outcomes)) - 1]
+            outcome, logged = outcomes[min(len(calls), len(outcomes)) - 1]
+            with self.log.open('a') as log:
+                log.write(logged)
             if isinstance(outcome, BaseException):
                 raise outcome
             return outcome
@@ -114,31 +142,94 @@ class RenewalDryRunTests(unittest.TestCase):
         state = {'domain': DOMAIN}
         with patch.object(provision, 'run', side_effect=command), \
              patch.object(provision, 'write', side_effect=lambda *a: self.writes.append(a)), \
+             patch.object(provision, 'SYSTEM_ROOT', self.root), \
              patch.object(provision, 'CERTBOT_LOG', self.log), \
              patch.object(provision, 'UI', None), \
              patch.object(provision, 'acme_reachability',
                           side_effect=lambda url: self.probes.append(url) or 'HTTP 200'):
             try:
-                provision.renew_hook(state, clock=clock, sleep=clock.sleep, jitter=lambda a, b: 0)
+                provision.renew_hook(state, clock=clock, sleep=clock.sleep, jitter=jitter)
                 error = None
             except InstallError as caught:
                 error = caught
         return state, calls, clock, error
 
-    def test_command_is_scoped_to_bob_lineage_and_never_forces_or_redirects(self):
-        state, calls, _, error = self.renew([HOOK_OK])
+    def test_only_bob_lineage_and_bob_hook_run_and_nothing_is_forced_or_redirected(self):
+        state, calls, _, error = self.renew([(HOOK_OK, LOG + HOOK_RUN)])
         self.assertIsNone(error)
         command = calls[0][0]
         self.assertEqual(command, ('certbot', 'renew', '--dry-run', '--cert-name', DOMAIN,
+                                   '--no-directory-hooks', '--deploy-hook', provision.RENEW_HOOK,
                                    '--run-deploy-hooks', '--no-random-sleep-on-renew'))
-        for forbidden in ('--force-renewal', '--server', '--staging', '--no-verify-ssl'):
+        for forbidden in ('--force-renewal', '--server', '--staging', '--no-verify-ssl',
+                          '--disable-hook-validation', '--pre-hook', '--post-hook'):
             self.assertNotIn(forbidden, command)
         self.assertEqual(self.writes, [(provision.RENEW_HOOK, provision.RENEW_HOOK_SCRIPT, 0o700)])
         self.assertEqual(state['renewal_check']['status'], 'PASS')
         self.assertEqual(state['renewal_check']['attempts'], 1)
 
+    def test_foreign_hooks_cannot_join_the_dry_run(self):
+        # renewal-hooks/deploy/10-foreign is excluded by --no-directory-hooks; hooks
+        # certbot would still run from the lineage or cli.ini refuse the check.
+        foreign = HOOK_RUN.replace('50-selfsni', '10-foreign')
+        state, _, _, error = self.renew([(HOOK_OK, foreign + HOOK_RUN)])
+        self.assertIn('не подтверждён', str(error))
+        self.assertNotIn('renewal_check', state)
+        cases = {
+            'lineage pre_hook': (f'/etc/letsencrypt/renewal/{DOMAIN}.conf',
+                                 RENEWAL_CONF.replace('key_type', 'pre_hook = systemctl stop nginx\nkey_type')),
+            'lineage renew_hook': (f'/etc/letsencrypt/renewal/{DOMAIN}.conf',
+                                   RENEWAL_CONF.replace('key_type', 'renew_hook = /opt/x\nkey_type')),
+            'cli.ini post-hook': ('/etc/letsencrypt/cli.ini', 'max-log-backups = 0\npost-hook = /opt/x\n'),
+            'root cli.ini deploy-hook': ('/root/.config/letsencrypt/cli.ini', 'deploy-hook = /opt/x\n'),
+            'staging lineage': (f'/etc/letsencrypt/renewal/{DOMAIN}.conf',
+                                RENEWAL_CONF.replace('acme-v02', 'acme-staging-v02')),
+        }
+        for name, (path, content) in cases.items():
+            with self.subTest(name):
+                self.setUp()
+                self.put(path, content)
+                state, calls, _, error = self.renew([(HOOK_OK, HOOK_RUN)])
+                self.assertIsInstance(error, InstallError)
+                self.assertEqual(calls, [])
+                self.assertNotIn('renewal_check', state)
+        self.setUp()
+        self.put('/etc/letsencrypt/cli.ini', '# Debian default\nmax-log-backups = 0\n')
+        self.assertIsNone(self.renew([(HOOK_OK, HOOK_RUN)])[3])
+
+    def test_own_hook_failure_with_certbot_exit_zero_is_not_a_pass(self):
+        state, calls, _, error = self.renew([(HOOK, HOOK_RUN)])  # certbot only logs the failure
+        self.assertEqual(len(calls), 1)
+        self.assertIn('deploy hook', str(error))
+        self.assertIn('не сбой Let’s Encrypt', str(error))
+        self.assertNotIn('renewal_check', state)
+
+    def test_skipped_or_unlogged_hook_is_not_a_pass(self):
+        for name, logged in (('skipped', 'Dry run: skipping deploy hook command: x\n'),
+                             ('only an older run logged it', '')):
+            with self.subTest(name):
+                self.setUp()
+                state, _, _, error = self.renew([(HOOK_OK, logged)])
+                self.assertIn('не подтверждён', str(error))
+                self.assertNotIn('renewal_check', state)
+
+    def test_rotated_log_is_read_from_the_start(self):
+        def rotate():
+            self.log.rename(self.log.with_suffix('.log.1'))
+            self.log.write_text(HOOK_RUN)
+            return HOOK_OK
+
+        clock = Clock()
+        with patch.object(provision, 'run', side_effect=lambda *a, **k: rotate()), \
+             patch.object(provision, 'write'), patch.object(provision, 'UI', None), \
+             patch.object(provision, 'SYSTEM_ROOT', self.root), \
+             patch.object(provision, 'CERTBOT_LOG', self.log):
+            state = {'domain': DOMAIN}
+            provision.renew_hook(state, clock=clock, sleep=clock.sleep, jitter=lambda a, b: 0)
+        self.assertEqual(state['renewal_check']['status'], 'PASS')
+
     def test_staging_connection_reset_with_production_certificate_fails_without_pass(self):
-        state, calls, clock, error = self.renew([certbot_failure(RESET)])
+        state, calls, clock, error = self.renew([(certbot_failure(RESET), LOG)])
         self.assertIsInstance(error, InstallError)
         self.assertNotIn('renewal_check', state)
         self.assertEqual(len(calls), provision.RENEWAL_ATTEMPTS)
@@ -151,14 +242,14 @@ class RenewalDryRunTests(unittest.TestCase):
         self.assertEqual(self.probes, [url for _, url in provision.ACME_DIRECTORIES])
 
     def test_transient_failure_then_success_passes_after_one_backoff(self):
-        state, calls, clock, error = self.renew([certbot_failure(RESET), HOOK_OK])
+        state, calls, clock, error = self.renew([(certbot_failure(RESET), LOG), (HOOK_OK, LOG + HOOK_RUN)])
         self.assertIsNone(error)
         self.assertEqual(len(calls), 2)
         self.assertEqual(clock.sleeps, [provision.RENEWAL_BACKOFF])
         self.assertEqual(state['renewal_check']['attempts'], 2)
 
     def test_all_attempts_transient_use_exponential_backoff_and_bounded_count(self):
-        _, calls, clock, error = self.renew([certbot_failure(RESET)])
+        _, calls, clock, error = self.renew([(certbot_failure(RESET), LOG)])
         self.assertIsNotNone(error)
         self.assertEqual(clock.sleeps, [30, 60, 120])
         self.assertTrue(all(timeout <= provision.RENEWAL_ATTEMPT_TIMEOUT for _, timeout in calls))
@@ -166,12 +257,17 @@ class RenewalDryRunTests(unittest.TestCase):
     def test_jitter_is_bounded_and_total_time_never_exceeds_budget(self):
         clock = Clock()
 
+        class Hang(CommandError):
+            def __init__(self):
+                super().__init__('certbot', output='', timed_out=True)
+
         def slow_failure(*parts, timeout=None, **kwargs):
             clock.now += timeout  # every attempt hangs until its own timeout
-            raise certbot_failure('', timed_out=True)
+            raise Hang()
 
         with patch.object(provision, 'run', side_effect=slow_failure) as command, \
              patch.object(provision, 'write'), patch.object(provision, 'UI', None), \
+             patch.object(provision, 'SYSTEM_ROOT', self.root), \
              patch.object(provision, 'CERTBOT_LOG', self.log), \
              patch.object(provision, 'acme_reachability', return_value='нет ответа'):
             with self.assertRaises(InstallError):
@@ -183,7 +279,7 @@ class RenewalDryRunTests(unittest.TestCase):
         self.assertEqual(clock.sleeps, [45])
 
     def test_invalid_http01_configuration_is_reported_once_without_retry(self):
-        state, calls, clock, error = self.renew([certbot_failure(HTTP01)])
+        state, calls, clock, error = self.renew([(certbot_failure(HTTP01), LOG)])
         self.assertEqual(len(calls), 1)
         self.assertEqual(clock.sleeps, [])
         self.assertIn('HTTP-01', str(error))
@@ -191,20 +287,11 @@ class RenewalDryRunTests(unittest.TestCase):
         self.assertEqual(self.probes, [])
         self.assertNotIn('renewal_check', state)
 
-    def test_deploy_hook_failure_is_not_reported_as_acme_outage(self):
-        state, calls, clock, error = self.renew([certbot_failure(HOOK)])
+    def test_hook_failure_with_non_zero_exit_is_not_retried(self):
+        state, calls, clock, error = self.renew([(certbot_failure(HOOK), HOOK_RUN)])
         self.assertEqual(len(calls), 1)
+        self.assertEqual(clock.sleeps, [])
         self.assertIn('deploy hook', str(error))
-        self.assertIn('не сбой Let’s Encrypt', str(error))
-        self.assertNotIn('renewal_check', state)
-
-    def test_zero_exit_with_failed_or_skipped_hook_is_not_a_pass(self):
-        state, calls, _, error = self.renew([HOOK])  # certbot only logs the hook failure
-        self.assertEqual(len(calls), 1)
-        self.assertIn('deploy hook', str(error))
-        self.assertNotIn('renewal_check', state)
-        state, _, _, error = self.renew(['Dry run: skipping deploy hook command: /etc/x\n'])
-        self.assertIn('пропустил deploy hook', str(error))
         self.assertNotIn('renewal_check', state)
 
     def test_interrupt_during_backoff_propagates(self):
@@ -215,10 +302,16 @@ class RenewalDryRunTests(unittest.TestCase):
 
         with patch.object(provision, 'run', side_effect=certbot_failure(RESET)), \
              patch.object(provision, 'write'), patch.object(provision, 'UI', None), \
+             patch.object(provision, 'SYSTEM_ROOT', self.root), \
              patch.object(provision, 'CERTBOT_LOG', self.log):
             with self.assertRaises(KeyboardInterrupt):
                 provision.renew_hook({'domain': DOMAIN}, clock=clock, sleep=interrupted,
                                      jitter=lambda a, b: 0)
+
+
+IPV6 = {'interfaces': ['all', 'default', 'lo', 'ens3'],
+        'persistentConfig': '/etc/sysctl.d/99-zz-bob-auto-xray-ipv6.conf',
+        'networkDropin': '/etc/systemd/network/10-netplan-ens3.network.d/99-zz-bob-auto-xray-ipv4-only.conf'}
 
 
 def panel_state(mode='skip', **extra):
@@ -229,7 +322,7 @@ def panel_state(mode='skip', **extra):
         panel_path='/' + 'a' * 48 + '/', sub_path='/' + 'b' * 48 + '/',
         username='u' + '1' * 16, password='p' * 48, warp_mode=mode, adopt_warp=mode == 'adopt',
         bbr_preflight={}, ipv6_preflight={}, email='',
-        ipv6={'interfaces': ['all']}, bbr={'runtime': {}}, swap={'status': 'skipped', 'reason': 'test'},
+        ipv6=dict(IPV6), bbr={'runtime': {}}, swap={'status': 'skipped', 'reason': 'test'},
         portal={'AUTH': 's' + 'c' * 16, 'ICON': 's' + 'd' * 16, 'STYLE': 's' + 'e' * 16,
                 'NAME': 'Alderspace', 'CSRF': 's' + 'f' * 16},
         php_service='php8.3-fpm', api_token='T' * 40, xray_sha256='0' * 64,
@@ -247,7 +340,8 @@ def panel_state(mode='skip', **extra):
     return state
 
 
-IDENTITY = ('installation_id', 'username', 'password', 'panel_path', 'sub_path', 'panel_port',
+IDENTITY = ('ipv6', 'bbr', 'swap', 'xray_sha256', 'xray_bin', 'xray_version', 'xui_version',
+            'installation_id', 'username', 'password', 'panel_path', 'sub_path', 'panel_port',
             'sub_port', 'api_token', 'reality_private', 'reality_public', 'short_id',
             'admin_client', 'portal')
 
@@ -349,6 +443,9 @@ class LateResumeInstallerTests(unittest.TestCase):
         self.mocks['AptRunner'].return_value.install.assert_not_called()
         self.mocks['bbr'].configure.assert_not_called()
         self.mocks['swap'].configure.assert_not_called()
+        # IPv6 was proven read-only by late_resume_preflight(); nothing rewrites it.
+        self.mocks['ipv6'].configure.assert_not_called()
+        self.mocks['ipv6'].rollback.assert_not_called()
 
     def test_resume_after_failed_security_reaches_healthy_without_redoing_earlier_stages(self):
         original = panel_state()
@@ -474,9 +571,14 @@ class LateResumePreflightTests(unittest.TestCase):
             return f'Hostname {DOMAIN} does match certificate\n'
         return ''
 
-    def preflight(self, state=None):
+    def preflight(self, state=None, ipv6_report=None):
         args = Namespace(domain=DOMAIN, warp_mode='skip')
+        verify = MagicMock(return_value=dict(IPV6) if ipv6_report is None else ipv6_report)
+        if isinstance(ipv6_report, Exception):
+            verify = MagicMock(side_effect=ipv6_report)
+        self.ipv6 = MagicMock(verify=verify)
         with patch.object(provision, 'SYSTEM_ROOT', self.root), \
+             patch.object(provision, 'ipv6', self.ipv6), \
              patch.object(provision.os, 'geteuid', return_value=0), \
              patch.object(provision, 'os_info', return_value={}), \
              patch.object(provision.shutil, 'which', return_value='/usr/sbin/ufw'), \
@@ -531,6 +633,25 @@ class LateResumePreflightTests(unittest.TestCase):
                 damage()
                 with self.assertRaises(InstallError):
                     self.preflight()
+
+    def test_ipv6_is_only_read_and_any_drift_is_refused(self):
+        self.preflight()
+        self.ipv6.verify.assert_called_once_with()
+        self.ipv6.configure.assert_not_called()
+        self.ipv6.rollback.assert_not_called()
+        with self.assertRaisesRegex(InstallError, 'IPv6 remains enabled.*resume запрещён'):
+            self.preflight(ipv6_report=InstallError('IPv6 remains enabled on an interface'))
+        moved = dict(IPV6, networkDropin='/etc/systemd/network/10-other.network.d/x.conf')
+        with self.assertRaisesRegex(InstallError, 'IPv6'):
+            self.preflight(ipv6_report=moved)
+        with self.assertRaisesRegex(InstallError, 'IPv6'):
+            self.preflight(dict(self.state, ipv6=['not', 'a', 'report']))
+
+    def test_foreign_certbot_hooks_are_refused(self):
+        self.put(f'/etc/letsencrypt/renewal/{DOMAIN}.conf',
+                 self.root.joinpath(f'etc/letsencrypt/renewal/{DOMAIN}.conf').read_text() +
+                 'post_hook = systemctl restart foreign\n')
+        self.assertRefused('посторонние hooks')
 
     def test_completed_renewal_step_requires_bob_hook(self):
         self.state['security_steps'] = ['fail2ban', 'renewal']

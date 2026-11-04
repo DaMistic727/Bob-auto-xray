@@ -2,7 +2,7 @@
 
 План отражает непроверенные сценарии и задачи, а не обещание уже реализованной совместимости.
 
-- [ ] Ubuntu 22.04 amd64: установка, Certbot, внешний клиент, reboot.
+- [ ] Ubuntu 24.04 amd64: чистая установка текущей сборки, Certbot renewal, внешний клиент, reboot. Ubuntu 22.04 не поддерживается (certbot 1.21 без `--run-deploy-hooks`).
 - [x] Ubuntu 26.04 amd64: чистая установка, новый WARP, native geodata, внешний клиент и reboot.
 - [ ] arm64 VPS: проверка release binary и WARP package.
 - [x] iOS Happ/INCY на физическом iPhone: user-verified VPN connection, applied routing and WARP.

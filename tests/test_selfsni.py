@@ -132,6 +132,19 @@ class InstallerTests(unittest.TestCase):
             p=Path(d)/'os-release'; p.write_text('ID=debian\nVERSION_ID="12"\n')
             with self.assertRaises(InstallError): os_info(p)
 
+    def test_only_ubuntu_24_04_and_26_04_are_supported(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d)/'os-release'
+            for version, codename in (('24.04', 'noble'), ('26.04', 'resolute')):
+                p.write_text(f'ID=ubuntu\nVERSION_ID="{version}"\nVERSION_CODENAME={codename}\n')
+                with patch('selfsni.provision.platform.machine', return_value='x86_64'):
+                    self.assertEqual(os_info(p)['VERSION_ID'], version)
+            for version in ('22.04', '20.04', '25.10'):
+                p.write_text(f'ID=ubuntu\nVERSION_ID="{version}"\n')
+                with patch('selfsni.provision.platform.machine', return_value='x86_64'), \
+                     self.assertRaisesRegex(InstallError, 'Ubuntu 24.04, 26.04 LTS'):
+                    os_info(p)
+
     def test_apt_key_is_readable_under_private_installer_umask(self):
         with tempfile.TemporaryDirectory() as d:
             target = Path(d) / 'archive-keyring.gpg'
