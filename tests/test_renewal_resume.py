@@ -17,6 +17,7 @@ from selfsni import provision
 from selfsni.certbot_errors import acme_step, classify_renewal, deploy_hook_result
 from selfsni.core import CommandError, InstallError
 from selfsni.install_state import SECURITY_STEPS, initialize, validate_resume
+from selfsni.tls_renewal import LEGACY_HOOK_SCRIPT, retry_dropin
 
 DOMAIN = 'vpn.example.com'
 RESET = ("Failed to renew certificate vpn.example.com with error: ('Connection aborted.', "
@@ -119,32 +120,51 @@ class RenewalDryRunTests(unittest.TestCase):
         self.put(f'/etc/letsencrypt/renewal/{DOMAIN}.conf', RENEWAL_CONF)
         self.writes = []
         self.probes = []
+        self.stamp = self.root / 'var/lib/selfsni/tls-reloaded'
+        self.stamp.parent.mkdir(parents=True)
 
     def put(self, path, content):
         target = self.root / path.lstrip('/')
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content)
 
+    def system(self, *parts, **kwargs):
+        # systemctl after a proven dry run: daemon-reload and the drop-in readback.
+        self.systemd.append(parts)
+        if parts[:2] == ('systemctl', 'show'):
+            return provision.RETRY_DROPIN + '\n'
+        return ''
+
+    def patches(self):
+        from contextlib import ExitStack
+        stack = ExitStack()
+        for target, value in (('write', MagicMock(side_effect=lambda *a: self.writes.append(a))),
+                              ('SYSTEM_ROOT', self.root), ('CERTBOT_LOG', self.log),
+                              ('RELOAD_STAMP', str(self.stamp)), ('UI', None)):
+            stack.enter_context(patch.object(provision, target, value))
+        return stack
+
     def renew(self, outcomes, clock=None, jitter=lambda a, b: 0):
         """outcomes: (console output or CommandError, text certbot logs during that run)."""
         clock = clock or Clock()
         calls = []
+        self.systemd = []
 
         def command(*parts, timeout=None, **kwargs):
+            if parts[0] == 'systemctl':
+                return self.system(*parts)
             calls.append((parts, timeout))
             outcome, logged = outcomes[min(len(calls), len(outcomes)) - 1]
             with self.log.open('a') as log:
                 log.write(logged)
+            if HOOK_RUN in logged and outcome == HOOK_OK:
+                self.stamp.write_text('')  # what the real hook does last
             if isinstance(outcome, BaseException):
                 raise outcome
             return outcome
 
         state = {'domain': DOMAIN}
-        with patch.object(provision, 'run', side_effect=command), \
-             patch.object(provision, 'write', side_effect=lambda *a: self.writes.append(a)), \
-             patch.object(provision, 'SYSTEM_ROOT', self.root), \
-             patch.object(provision, 'CERTBOT_LOG', self.log), \
-             patch.object(provision, 'UI', None), \
+        with patch.object(provision, 'run', side_effect=command), self.patches(), \
              patch.object(provision, 'acme_reachability',
                           side_effect=lambda url: self.probes.append(url) or 'HTTP 200'):
             try:
@@ -164,9 +184,27 @@ class RenewalDryRunTests(unittest.TestCase):
         for forbidden in ('--force-renewal', '--server', '--staging', '--no-verify-ssl',
                           '--disable-hook-validation', '--pre-hook', '--post-hook'):
             self.assertNotIn(forbidden, command)
-        self.assertEqual(self.writes, [(provision.RENEW_HOOK, provision.RENEW_HOOK_SCRIPT, 0o700)])
+        self.assertEqual(self.writes, [(provision.RENEW_HOOK, provision.RENEW_HOOK_SCRIPT, 0o700),
+                                       (provision.RETRY_DROPIN, retry_dropin(DOMAIN), 0o644)])
+        self.assertEqual(self.systemd, [('systemctl', 'daemon-reload'),
+                                        ('systemctl', 'show', 'certbot.service',
+                                         '--property=DropInPaths', '--value')])
         self.assertEqual(state['renewal_check']['status'], 'PASS')
         self.assertEqual(state['renewal_check']['attempts'], 1)
+
+    def test_retry_dropin_is_installed_only_after_a_proven_hook(self):
+        for outcomes in ([(HOOK, HOOK_RUN)], [(certbot_failure(RESET), LOG)], [(certbot_failure(HTTP01), LOG)]):
+            with self.subTest(outcomes[0][0].__class__.__name__):
+                self.setUp()
+                self.renew(outcomes)
+                self.assertNotIn(provision.RETRY_DROPIN, [w[0] for w in self.writes])
+                self.assertEqual(self.systemd, [])
+
+    def test_unapplied_retry_dropin_is_not_a_pass(self):
+        self.system = lambda *parts, **kw: ''  # systemd does not list the drop-in
+        state, _, _, error = self.renew([(HOOK_OK, HOOK_RUN)])
+        self.assertIn('не применил', str(error))
+        self.assertNotIn('renewal_check', state)
 
     def test_foreign_hooks_cannot_join_the_dry_run(self):
         # renewal-hooks/deploy/10-foreign is excluded by --no-directory-hooks; hooks
@@ -214,16 +252,18 @@ class RenewalDryRunTests(unittest.TestCase):
                 self.assertNotIn('renewal_check', state)
 
     def test_rotated_log_is_read_from_the_start(self):
-        def rotate():
+        self.systemd = []
+
+        def rotate(*parts, **kwargs):
+            if parts[0] == 'systemctl':
+                return self.system(*parts)
             self.log.rename(self.log.with_suffix('.log.1'))
             self.log.write_text(HOOK_RUN)
+            self.stamp.write_text('')
             return HOOK_OK
 
         clock = Clock()
-        with patch.object(provision, 'run', side_effect=lambda *a, **k: rotate()), \
-             patch.object(provision, 'write'), patch.object(provision, 'UI', None), \
-             patch.object(provision, 'SYSTEM_ROOT', self.root), \
-             patch.object(provision, 'CERTBOT_LOG', self.log):
+        with patch.object(provision, 'run', side_effect=rotate), self.patches():
             state = {'domain': DOMAIN}
             provision.renew_hook(state, clock=clock, sleep=clock.sleep, jitter=lambda a, b: 0)
         self.assertEqual(state['renewal_check']['status'], 'PASS')
@@ -658,7 +698,16 @@ class LateResumePreflightTests(unittest.TestCase):
         self.assertRefused('50-selfsni')
         self.put(provision.RENEW_HOOK, provision.RENEW_HOOK_SCRIPT)
         os.chmod(self.root / provision.RENEW_HOOK.lstrip('/'), 0o700)
+        self.assertRefused('certbot.service.d/50-selfsni.conf')  # the reload retry is part of it
+        self.put(provision.RETRY_DROPIN, retry_dropin(DOMAIN))
         self.preflight()
+
+    def test_v042_hook_left_by_the_failed_dry_run_is_accepted(self):
+        # What the reported VPS has: v0.4.2 wrote its hook, then the dry run failed.
+        self.put(provision.RENEW_HOOK, LEGACY_HOOK_SCRIPT)
+        self.assertEqual(self.preflight()['security_steps'], [])
+        self.put(provision.RETRY_DROPIN, retry_dropin('other.example.com'))
+        self.assertRefused('certbot.service.d/50-selfsni.conf')
 
 
 if __name__ == '__main__':

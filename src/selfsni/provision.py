@@ -34,6 +34,8 @@ from .install_state import (LATE_RESUME_STAGES, RESUMABLE_FAILURE_STAGES, SECURI
 from .ui import InstallerUI, interactive_wizard
 from .geodata import GEODATA_TIMEZONE, verify_server_geodata
 from .portal import generate
+from .tls_renewal import (LEGACY_HOOK_SCRIPT, RELOAD_STAMP, RENEW_HOOK, RENEW_HOOK_SCRIPT,
+                          RETRY_DROPIN, retry_dropin)
 from .routing import deeplink, inbound, server_template
 from .xray_pin import install_pinned_xray
 
@@ -45,8 +47,6 @@ UI = None
 # Paths read by the late-resume preflight; tests point this at a disposable tree.
 SYSTEM_ROOT = Path('/')
 ACME_WEBROOT = '/var/lib/selfsni-acme'
-RENEW_HOOK = '/etc/letsencrypt/renewal-hooks/deploy/50-selfsni'
-RENEW_HOOK_SCRIPT = '#!/bin/sh\nset -eu\nnginx -t\nsystemctl reload nginx\nsystemctl restart x-ui\n'
 CERTBOT_LOG = Path('/var/log/letsencrypt/letsencrypt.log')
 # Certbot reads defaults, hooks included, from these files.
 CERTBOT_CLI_INI = ('/etc/letsencrypt/cli.ini', '/root/.config/letsencrypt/cli.ini')
@@ -96,7 +96,7 @@ CONTROLLED_PATHS = [
     '/etc/fail2ban/jail.d/selfsni-ssh.local',
     '/etc/apt/sources.list.d/cloudflare-client.list', str(bbr.SYSCTL_CONFIG),
     str(bbr.MODULE_CONFIG), str(ipv6.CONFIG),
-    '/usr/local/lib/bob-auto-xray',
+    '/usr/local/lib/bob-auto-xray', RETRY_DROPIN,
 ]
 
 DOCTOR_LIB = cli_install.LIBRARY
@@ -212,6 +212,25 @@ def owned_nginx_http(resume_state, listeners, command=run, proc_root=None, nginx
     return True
 
 
+def check_resume_letsencrypt(state):
+    """/etc/letsencrypt was absent before this installation: allow only Bob's lineage.
+
+    A failure after `certbot certonly` succeeded (certbot.timer, a timeout after
+    saving, Ctrl+C) leaves exactly live/README, live/<FQDN>, archive/<FQDN> and
+    renewal/<FQDN>.conf; certificate() then keeps that certificate.
+    """
+    le, domain = host('/etc/letsencrypt'), state['domain']
+    allowed = {'live': {'README', domain}, 'archive': {domain}, 'renewal': {domain + '.conf'}}
+    present = {name: {x.name for x in (le / name).glob('*')} for name in allowed} if le.exists() else {}
+    require(all(names <= allowed[name] for name, names in present.items()),
+            'Чужие Let’s Encrypt certificates обнаружены во время resume')
+    lineage = [bool(present.get(name, set()) & {domain, domain + '.conf'}) for name in allowed]
+    if any(lineage):
+        require(state.get('stage') == 'CERTIFICATE' and all(lineage),
+                'Неполный сертификат Let’s Encrypt обнаружен во время resume')
+        check_renewal_config(domain)
+
+
 def _carried(state, key, valid):
     value = state.get(key)
     try:
@@ -281,11 +300,7 @@ def preflight(args, resume_state=None):
                 if p == '/etc/nginx':
                     check_resume_nginx_config(resume_state['stage'])
                 if p == '/etc/letsencrypt':
-                    le = Path('/etc/letsencrypt')
-                    foreign = [x for name in ('live', 'archive', 'renewal')
-                               for x in (le/name).glob('*')] if le.exists() else []
-                    require(not foreign,
-                            'Чужие Let’s Encrypt certificates обнаружены во время resume')
+                    check_resume_letsencrypt(resume_state)
                 continue
         # Existing WARP files belong to the operator in adopt/skip mode.
         if (p == '/root/VPS-Server-Menu' and args.warp_mode != 'skip') or (
@@ -437,12 +452,18 @@ def late_resume_preflight(args, state):
         same(path, content)
     same('/etc/systemd/system/x-ui.service.d/20-selfsni.conf', xui_unit_override(s['warp_mode']), 0o644)
     require(digest(host(s['xray_bin'])) == s['xray_sha256'], 'Бинарный файл Xray изменён; resume запрещён')
-    for path, content in ((RENEW_HOOK, RENEW_HOOK_SCRIPT), (SSH_JAIL, ssh_jail(s))):
-        # An unfinished step may have written its file; a different file is not Bob's.
+    # An unfinished step may have written its file; a different file is not Bob's.
+    # v0.4.2 wrote the legacy hook before its renewal dry run.
+    hook = host(RENEW_HOOK)
+    done = 'renewal' in s['security_steps']
+    legacy = hook.is_file() and not hook.is_symlink() and hook.read_text() == LEGACY_HOOK_SCRIPT
+    if (hook.exists() or hook.is_symlink() or done) and not legacy:
+        same(RENEW_HOOK, RENEW_HOOK_SCRIPT, 0o700 if done else None)
+    for path, content in ((RETRY_DROPIN, retry_dropin(domain)), (SSH_JAIL, ssh_jail(s))):
         if host(path).exists() or host(path).is_symlink():
             same(path, content)
-    if 'renewal' in s['security_steps']:
-        same(RENEW_HOOK, RENEW_HOOK_SCRIPT, 0o700)
+    if done and not legacy:
+        same(RETRY_DROPIN, retry_dropin(domain), 0o644)
     if shutil.which('ufw'):
         check_ufw_rules(set(s['ssh_ports']) | {80, 443}, host('/etc/ufw'))
     # BBR already proved the IPv4-only policy persistent across reboot; a late
@@ -545,7 +566,9 @@ def certificate(s, email):
     run('nginx', '-t')
     run('systemctl', 'enable', '--now', 'nginx')
     run('systemctl', 'reload', 'nginx')
-    cmd = ['certbot','certonly','--non-interactive','--agree-tos','--webroot','-w',
+    # --keep-until-expiring: a resumed run never reissues a valid certificate
+    # (Let's Encrypt allows 5 identical certificates per week).
+    cmd = ['certbot','certonly','--non-interactive','--agree-tos','--keep-until-expiring','--webroot','-w',
            '/var/lib/selfsni-acme','-d',s['domain'],'--key-type','ecdsa']
     if email:
         cmd += ['--email', email]
@@ -857,6 +880,13 @@ def renew_hook(s, clock=time.monotonic, sleep=pause, jitter=random.uniform):
             raise renewal_failure('hook', output, attempt, None)
         require(hook == 'ran', 'Запуск deploy hook Bob при тестовом продлении не подтверждён '
                                f'({hook}); продление не подтверждено')
+        # The proven hook has just written RELOAD_STAMP; from now on certbot.service
+        # repeats it after a renewal until it succeeds.
+        require(Path(RELOAD_STAMP).is_file(), 'Deploy hook Bob не записал отметку перезагрузки TLS')
+        write(RETRY_DROPIN, retry_dropin(s['domain']), 0o644)
+        run('systemctl', 'daemon-reload')
+        require(RETRY_DROPIN in run('systemctl', 'show', 'certbot.service', '--property=DropInPaths',
+                                    '--value'), 'systemd не применил повтор deploy hook для certbot.service')
         s['renewal_check'] = {'status': 'PASS', 'attempts': attempt,
                               'checked_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}
         return

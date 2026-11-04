@@ -4,7 +4,7 @@ Never call acceptance.verify here: acceptance intentionally writes panel setting
 All output is assembled from fixed text and small, non-secret measurements.
 """
 import argparse
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import email.utils
 import hashlib
 import json
@@ -22,6 +22,7 @@ from .core import InstallError, fqdn
 from .install_state import SCHEMA, warp_mode
 from .routing import BLOCKED_DOMAINS, BLOCKED_IPS, WARP_DOMAINS
 from . import ipv6, swap
+from .tls_renewal import LEGACY_HOOK_SCRIPT, RENEW_HOOK, RENEW_HOOK_SCRIPT, RETRY_DROPIN, retry_dropin
 
 
 STATE = '/var/lib/selfsni/state.json'
@@ -80,17 +81,19 @@ class Probe:
         return result.returncode, result.stdout
 
     def certificate(self, path, domain):
-        code, value = self.command('openssl', 'x509', '-enddate', '-noout', '-in', path)
-        if code or not value.startswith('notAfter='):
+        code, value = self.command('openssl', 'x509', '-startdate', '-enddate', '-noout', '-in', path)
+        dates = dict(line.split('=', 1) for line in value.splitlines() if '=' in line)
+        if code or not {'notBefore', 'notAfter'} <= dates.keys():
             raise ValueError('certificate date unavailable')
-        expiry = email.utils.parsedate_to_datetime(value.split('=', 1)[1].strip())
+        issued, expiry = (email.utils.parsedate_to_datetime(dates[key].strip())
+                          for key in ('notBefore', 'notAfter'))
         code, value = self.command('openssl', 'x509', '-checkhost', domain, '-noout', '-in', path)
         if code and 'does NOT match certificate' not in value:
             raise ValueError('certificate hostname unavailable')
         matches = 'does match certificate' in value and 'does NOT match' not in value
         pem = self.read(path).split('-----END CERTIFICATE-----', 1)[0] + '-----END CERTIFICATE-----\n'
         fingerprint = hashlib.sha256(ssl.PEM_cert_to_DER_cert(pem)).digest()
-        return expiry, matches, fingerprint
+        return expiry, matches, fingerprint, issued
 
     def tls(self, domain, port):
         context = verified_context()
@@ -437,7 +440,7 @@ class Doctor:
             return self.answer('UNKNOWN', 'Сертификат недоступен с текущими правами.',
                                suggestion=SUGGEST['cert'])
         try:
-            expiry, matches, fingerprint = self.p.certificate(path, self.state['domain'])
+            expiry, matches, fingerprint, issued = self.p.certificate(path, self.state['domain'])
         except ValueError:
             return self.answer('FAIL', 'Сертификат Let’s Encrypt повреждён.',
                                suggestion=SUGGEST['cert'])
@@ -448,8 +451,13 @@ class Doctor:
                                suggestion=SUGGEST['cert'])
         if days < 0:
             return self.answer('FAIL', 'Сертификат истёк.', {'daysRemaining': days}, SUGGEST['cert'])
-        if days < 30:
-            return self.answer('WARN', 'Срок сертификата скоро истекает.',
+        # Let's Encrypt shortens lifetimes (64 days from 2027-02, 45 from 2028-02).
+        # certbot 2.9 (24.04) renews 30 days before expiry, 4.0 (26.04) with 1/3 of
+        # the lifetime left (1/2 under 10 days): warn only once renewal is overdue.
+        lifetime = expiry - issued
+        due = lifetime / (2 if lifetime < timedelta(days=10) else 3)
+        if expiry - self.p.now() < due - min(timedelta(days=3), due / 2):
+            return self.answer('WARN', 'Срок сертификата скоро истекает: продление запаздывает, проверьте certbot.timer.',
                                {'daysRemaining': days}, SUGGEST['cert'])
         return self.answer('PASS', 'Сертификат действителен.', {'daysRemaining': days})
 
@@ -473,18 +481,25 @@ class Doctor:
         return self.answer('PASS', 'Все локальные TLS listeners используют текущий сертификат.')
 
     def renew_hook(self):
-        path = '/etc/letsencrypt/renewal-hooks/deploy/50-selfsni'
+        path = RENEW_HOOK
         try:
             script = self.p.read(path)
             info = self.p.stat(path)
         except FileNotFoundError:
             return self.answer('WARN', 'Deploy hook Certbot отсутствует.', suggestion=SUGGEST['cert'])
-        expected = ('#!/bin/sh\nset -eu\nnginx -t\nsystemctl reload nginx\n'
-                    'systemctl restart x-ui\n')
         if (not stat.S_ISREG(info.st_mode) or not info.st_mode & stat.S_IXUSR
-                or info.st_uid != 0 or script != expected):
+                or info.st_uid != 0 or script not in (LEGACY_HOOK_SCRIPT, RENEW_HOOK_SCRIPT)):
             return self.answer('WARN', 'Deploy hook Certbot не соответствует ожидаемому.',
                                suggestion=SUGGEST['cert'])
+        if script == RENEW_HOOK_SCRIPT:
+            # This hook comes with a certbot.service retry of a failed reload.
+            try:
+                retry = self.p.read(RETRY_DROPIN)
+            except FileNotFoundError:
+                retry = None
+            if retry != retry_dropin(self.state['domain']):
+                return self.answer('WARN', 'Повтор deploy hook после неудачной перезагрузки TLS '
+                                   'не настроен или изменён.', suggestion=SUGGEST['cert'])
         return self.answer('PASS', 'Deploy hook Certbot присутствует.')
 
     def routing(self):

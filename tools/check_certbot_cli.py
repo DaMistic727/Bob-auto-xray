@@ -28,4 +28,12 @@ for path in map(Path, CERTBOT_CLI_INI):
         print(f'{path}:\n{text.strip()}')
         assert not re.search(r'^\s*(?:pre|post|deploy|renew)[-_]hook\s*=', text, re.M | re.I), \
             f'{path} sets certbot hooks; check_renewal_config() would refuse every installation'
+# The reload retry is an ExecStopPost drop-in for the packaged certbot.service:
+# a oneshot unit that certbot.timer starts to run `certbot renew`.
+unit = next(path for path in map(Path, ('/usr/lib/systemd/system/certbot.service',
+                                        '/lib/systemd/system/certbot.service')) if path.exists())
+text = unit.read_text()
+print(f'{unit}:\n{text.strip()}')
+assert re.search(r'^Type=oneshot$', text, re.M), 'certbot.service is not a oneshot unit'
+assert re.search(r'^ExecStart=\S*certbot\b.*\brenew\b', text, re.M), 'certbot.service does not run renew'
 print('PASS: packaged certbot accepts the Bob renewal dry-run command line')
