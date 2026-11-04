@@ -24,7 +24,7 @@ Bob настраивает Xray и 3x-ui на вашем домене. Посл�
 **2. Запустите установку от root.** Мастер спросит домен и режим WARP. Bootstrap проверит SHA256 архива перед запуском.
 
 ```bash
-bash <(curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' https://github.com/DaMistic727/Bob-auto-xray/releases/download/v0.4.2/install.sh)
+bash <(curl -fsSL --proto '=https' https://github.com/DaMistic727/Bob-auto-xray/releases/download/v0.4.2/install.sh)
 ```
 
 **3. Подключитесь.** Откройте выданную ссылку на 3x-ui. В `vless by bob` уже есть VPN-клиент `admin`. Скопируйте его ссылку или подписку в приложение.
