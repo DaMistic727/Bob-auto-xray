@@ -56,7 +56,7 @@ Bob Doctor: на новых установках `bob doctor [--deep] [--json]`;
 `bash <(curl …/{a.tag}/install.sh) cli-upgrade --check`, затем `cli-upgrade`.
 Старые установки автоматически не мигрируют.
 
-## Установка от root на чистой VPS
+## Установка от root
 
 ```bash
 bash <(curl -fsSL --proto '=https' https://github.com/{a.repo}/releases/download/{a.tag}/install.sh)
