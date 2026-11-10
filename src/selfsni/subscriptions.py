@@ -31,9 +31,8 @@ def verify_network(state):
     pid = run('systemctl','show','x-ui','--property=MainPID','--value').strip()
     require(len(listeners) == 1 and listeners[0].split()[3] == '127.0.0.1:'+str(state['sub_port'])
             and ('pid='+pid+',') in listeners[0], 'Subscription is not exclusively owned loopback TLS')
-    for name in ('user.rules','user6.rules'):
-        require(not re.search(r'--dport\s+'+str(state['sub_port'])+r'\b', Path('/etc/ufw',name).read_text()),
-                'Internal subscription port has a UFW rule')
+    from .firewall import require_private
+    require_private(state['sub_port'], 'Internal subscription port has a UFW rule')
 
 
 def verify_public_routes(state, send=request):

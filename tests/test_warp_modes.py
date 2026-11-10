@@ -142,6 +142,8 @@ class WarpModeTests(unittest.TestCase):
                 return 'port 22\n'
             if parts[:3] == ('ss', '-H', '-lntp'):
                 return listeners
+            if parts[:3] == ('ss', '-H', '-lnup'):
+                return ''
             if parts[0] == 'curl':
                 return '8.8.8.8'
             raise AssertionError(parts)

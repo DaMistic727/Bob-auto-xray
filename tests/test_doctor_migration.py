@@ -105,6 +105,23 @@ class CurrentInstallTests(unittest.TestCase):
         probe.files.pop('/etc/ufw/user6.rules')
         self.assertEqual(check(run(probe), 'security.internalFirewall')['status'], 'UNKNOWN')
 
+    def test_ufw_rule_that_covers_an_internal_port_without_naming_it_is_fail(self):
+        for name, rule in (('/etc/ufw/user.rules', '-A ufw-user-input -p tcp -m multiport --dports 20000:23000 -j ACCEPT'),
+                           ('/etc/ufw/user.rules', '-A ufw-user-input -p tcp -m multiport --dports 80,21000 -j ACCEPT'),
+                           ('/etc/ufw/user6.rules', '-A ufw6-user-input -j ACCEPT')):
+            with self.subTest(rule=rule):
+                probe = FakeProbe('install')
+                probe.files[name] += rule + '\n'
+                self.assertEqual(check(run(probe), 'security.internalFirewall')['status'], 'FAIL')
+
+    def test_operator_rules_that_keep_internal_ports_closed_pass(self):
+        probe = FakeProbe('install')
+        probe.files['/etc/ufw/user.rules'] += ('-A ufw-user-input -p tcp --dport 8080 -j ACCEPT\n'
+                                               '-A ufw-user-input -p tcp --dport 21000 -j DROP\n'
+                                               '-A ufw-user-input -s 203.0.113.9 -j ACCEPT\n'
+                                               '-A ufw-user-input -i lo -j ACCEPT\n')
+        self.assertEqual(check(run(probe), 'security.internalFirewall')['status'], 'PASS')
+
     def test_broken_nginx_public_route_config_is_fail(self):
         tls, panel, sub = ('/etc/nginx/conf.d/selfsni-tls.conf', '/etc/nginx/snippets/selfsni-panel.conf',
                            '/etc/nginx/snippets/selfsni-subscription.conf')

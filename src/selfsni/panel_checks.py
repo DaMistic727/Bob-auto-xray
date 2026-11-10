@@ -9,6 +9,7 @@ from http.cookies import SimpleCookie
 
 from .api import LocalTLS, request
 from .core import require, run
+from .firewall import require_private
 
 
 def panel_network(state):
@@ -20,10 +21,8 @@ def panel_network(state):
             and ('pid='+pid+',') in panel[0], 'Panel is not exclusively owned loopback TLS')
     public = [line for line in lines if line.split()[3].endswith(':443')]
     require(public and all('xray' in line for line in public), 'Public TCP/443 must belong to Xray')
-    for name in ('user.rules', 'user6.rules'):
-        rules = Path('/etc/ufw', name).read_text()
-        require(not re.search(r'--dport\s+'+str(state['panel_port'])+r'\b', rules),
-                'Internal panel port has a UFW rule')
+    # No rule may name the port, and no wider rule (range, "allow all") may open it.
+    require_private(state['panel_port'], 'Internal panel port has a UFW rule')
 
 
 def panel_routes(state, send=request):
