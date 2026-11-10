@@ -780,7 +780,13 @@ class LateResumePreflightTests(unittest.TestCase):
             'hook': lambda: self.put(provision.RENEW_HOOK, '#!/bin/sh\nrm -rf /\n'),
             'jail': lambda: self.put(provision.SSH_JAIL, '[sshd]\nenabled = false\n'),
             'xray': lambda: self.put(self.state['xray_bin'], b'replaced'),
-            'ufw': lambda: self.put('/etc/ufw/user.rules', '-A ufw-user-input -p tcp --dport 8080 -j ACCEPT\n'),
+            # A rule that opens an internal port or blocks a published one; see also
+            # test_operator_firewall_rules_do_not_block_a_late_resume.
+            'ufw panel': lambda: self.put('/etc/ufw/user.rules',
+                                          f'-A ufw-user-input -p tcp --dport {self.state["panel_port"]} -j ACCEPT\n'),
+            'ufw range': lambda: self.put('/etc/ufw/user6.rules',
+                                          '-A ufw6-user-input -p tcp -m multiport --dports 1024:65535 -j ACCEPT\n'),
+            'ufw deny': lambda: self.put('/etc/ufw/user.rules', '-A ufw-user-input -p tcp --dport 443 -j DROP\n'),
             'panel marker': lambda: (self.root / 'var/lib/selfsni/panel-ready').unlink(),
         }
         for name, damage in cases.items():
@@ -789,6 +795,14 @@ class LateResumePreflightTests(unittest.TestCase):
                 damage()
                 with self.assertRaises(InstallError):
                     self.preflight()
+
+    def test_operator_firewall_rules_do_not_block_a_late_resume(self):
+        # Another service of the operator, an extra deny, a rule still missing: none is a conflict.
+        self.put('/etc/ufw/user.rules', '-A ufw-user-input -p tcp --dport 22 -j ACCEPT\n'
+                 '-A ufw-user-input -p tcp --dport 8080 -j ACCEPT\n'
+                 '-A ufw-user-input -p udp --dport 51820 -j ACCEPT\n'
+                 '-A ufw-user-input -p tcp --dport 25 -j DROP\n')
+        self.preflight()
 
     def test_ipv6_is_only_read_and_any_drift_is_refused(self):
         self.preflight()

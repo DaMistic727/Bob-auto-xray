@@ -21,7 +21,7 @@ from .geodata import GEODATA_CRON, GEODATA_TIMEZONE, REQUIRED, automatic_config,
 from .core import InstallError, fqdn
 from .install_state import SCHEMA, bbr_mode, ipv6_mode, warp_mode
 from .routing import BLOCKED_DOMAINS, BLOCKED_IPS, WARP_DOMAINS
-from . import ipv6, swap
+from . import firewall, ipv6, swap
 from .tls_renewal import LEGACY_HOOK_SCRIPT, RENEW_HOOK, RENEW_HOOK_SCRIPT, RETRY_DROPIN, retry_dropin
 
 
@@ -758,14 +758,24 @@ class Doctor:
         ports = self._internal_ports()
         if not ports:
             return self.answer('SKIP', 'Старая схема: правило UFW для порта панели ожидаемо.')
-        for name in UFW_RULES:
+        rules = []
+        for family, name in zip((4, 6), UFW_RULES):
             try:
                 text = self.p.read(name)
             except FileNotFoundError:
                 return self.answer('UNKNOWN', 'Правила UFW недоступны.', suggestion=SUGGEST['security'])
-            if any(re.search(r'--dport\s+' + str(port) + r'\b', text) for port in ports):
+            if any(firewall.names_port(text, port) for port in ports):
                 return self.answer('FAIL', 'UFW открывает внутренний порт панели или подписок.',
                                    suggestion=SUGGEST['security'])
+            rules += firewall.rules_from_text(text, family)
+        # A wider rule (port range, "allow all") opens the port without naming it.
+        try:
+            interfaces = firewall.default_route_interfaces(self.p.read('/proc/net/route'))
+        except OSError:
+            interfaces = None
+        if any(firewall.exposing(rules, port, interfaces) for port in ports):
+            return self.answer('FAIL', 'Правило UFW открывает из интернета диапазон с внутренним '
+                               'портом панели или подписок.', suggestion=SUGGEST['security'])
         return self.answer('PASS', 'UFW не открывает внутренние порты панели и подписок.')
 
     def public_routes_config(self):

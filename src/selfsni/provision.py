@@ -18,6 +18,7 @@ import urllib.request
 
 from .api import PANEL_ACCESS, Panel, request, public_subscription_url
 from . import bbr, ipv6, swap
+from . import firewall as fwpolicy
 from .clients import ensure_admin, verify_admin_runtime, verify_admin_subscriptions
 from . import cli_install
 from .core import (ROOT, CommandError, InstallError, configure_diagnostics, redact,
@@ -31,7 +32,7 @@ from . import menu_warp
 from .install_state import (LATE_RESUME_STAGES, RESUMABLE_FAILURE_STAGES, SECURITY_STEPS, STAGES,
                             InstallerLock, bbr_mode, checkpoint, fail, initialize, ipv6_mode, load,
                             upgrade_legacy_apt_failure, validate_resume, warp_mode)
-from .ui import InstallerUI, interactive_wizard
+from .ui import InstallerUI, confirm, interactive_wizard
 from .geodata import GEODATA_TIMEZONE, verify_server_geodata
 from .portal import generate
 from .tls_renewal import (LEGACY_HOOK_SCRIPT, RELOAD_STAMP, RENEW_HOOK, RENEW_HOOK_SCRIPT,
@@ -41,6 +42,14 @@ from .xray_pin import XRAY_VERSION, install_pinned_xray, pinned_xray_spec
 
 STATE = Path('/var/lib/selfsni')
 DIAGNOSTIC_LOG = Path('/var/log/bob-auto-xray/install.log')
+# Written next to the install log when a real run is refused before any state exists.
+PREFLIGHT_LOG_NAME = 'preflight.log'
+UFW_ROOT = Path('/etc/ufw')
+JAIL_LOCAL = '/etc/fail2ban/jail.local'
+PUBLIC_IPV4_SOURCES = ('https://api.ipify.org', 'https://checkip.amazonaws.com',
+                       'https://ifconfig.me/ip')
+# What the last preflight observed; no credentials are ever added here.
+TRACE = []
 INSTALL_LOCK = Path('/run/lock/bob-auto-xray-install.lock')
 LOG_ENABLED = False
 UI = None
@@ -157,7 +166,7 @@ NGINX_BINARY = '/usr/sbin/nginx'
 NGINX_CGROUP = '/system.slice/nginx.service'
 # APT_INSTALL installs nginx with its default site; certificate() swaps it for
 # Bob's HTTP-01 site. Nothing else may exist before NGINX_PORTAL.
-NGINX_RESUME_SITES = {'APT_INSTALL': ('default',), 'WARP': ('default',),
+NGINX_RESUME_SITES = {'APT_INSTALL': ('default',), 'FIREWALL': ('default',), 'WARP': ('default',),
                       'CERTIFICATE': ('default', 'selfsni-http')}
 
 
@@ -252,7 +261,7 @@ def carried_results(state, ipv6_report):
     require(stage in RESUMABLE_FAILURE_STAGES and
             state.get('last_completed_stage') in STAGES[STAGES.index(stage) - 1:STAGES.index(stage) + 1],
             f'Этап {stage} не согласован с last_completed_stage; resume запрещён')
-    if stage not in ('WARP', 'CERTIFICATE'):
+    if stage not in ('FIREWALL', 'WARP', 'CERTIFICATE'):
         return {}
     def ipv6_result(r):
         if ipv6_mode(r) == 'managed' and ipv6_report.get('mode', 'managed') != 'managed':
@@ -288,23 +297,116 @@ def carried_results(state, ipv6_report):
     return results
 
 
+EXISTING_HINTS = (
+    (('/usr/local/x-ui', '/etc/x-ui', '/usr/bin/x-ui', '/etc/systemd/system/x-ui'),
+     'На сервере уже есть панель 3x-ui. Bob устанавливает собственную панель и существующую не '
+     'перенимает: сохраните нужные данные и удалите её (`x-ui uninstall`) либо используйте другой сервер.'),
+    (('/etc/nginx',),
+     'Bob управляет nginx целиком и не может отличить существующую конфигурацию от своей. Если nginx '
+     'не используется, удалите его вместе с конфигурацией: `apt purge nginx nginx-common nginx-core`.'),
+    (('/etc/letsencrypt',),
+     'Bob ведёт собственный каталог Certbot и проверяет его hooks. Если сертификаты из /etc/letsencrypt '
+     'не нужны, удалите Certbot с конфигурацией: `apt purge certbot && rm -rf /etc/letsencrypt`.'),
+)
+EXISTING_DEFAULT_HINT = ('Это след предыдущей установки Bob или его компонента. Повторная установка '
+                         'поверх существующей не поддерживается: используйте `bob` для диагностики '
+                         'установленной ноды или чистый сервер.')
+
+
+def existing_path(path):
+    hint = next((text for prefixes, text in EXISTING_HINTS
+                 if any(path.startswith(prefix) for prefix in prefixes)), EXISTING_DEFAULT_HINT)
+    return InstallError(f'Обнаружена существующая установка или конфигурация: {path}. {hint}')
+
+
+def check_jail_local(notes):
+    """An operator's Fail2ban configuration stays as it is; only 3x-ui leftovers are a conflict."""
+    path = Path(JAIL_LOCAL)
+    if not (path.exists() or path.is_symlink()):
+        return
+    require(path.is_file() and not path.is_symlink(),
+            f'{JAIL_LOCAL} не является обычным файлом; Bob не может проверить конфигурацию Fail2ban')
+    require('3x-ipl' not in path.read_text(errors='replace'),
+            f'В {JAIL_LOCAL} есть настройки jail 3x-ipl от другой установки 3x-ui: штатный установщик '
+            '3x-ui изменил бы этот файл. Удалите из него раздел [3x-ipl] и запустите установку снова.')
+    notes.append(f'Fail2ban: существующий {JAIL_LOCAL} сохранён; Bob добавит только отдельные файлы в '
+                 '/etc/fail2ban/jail.d (jail sshd и штатный 3x-ipl).')
+
+
+def public_ipv4():
+    """The address the Internet sees; any one of the independent services is enough."""
+    for url in PUBLIC_IPV4_SOURCES:
+        try:
+            value = run('curl', '-4fsS', '--connect-timeout', '10', '--max-time', '20', url).strip()
+            if ipaddress.ip_address(value).version == 4:
+                return value
+        except (CommandError, ValueError):
+            continue
+    raise InstallError('Не удалось определить публичный IPv4 сервера: ни один из сервисов (' +
+                       ', '.join(url.split('/')[2] for url in PUBLIC_IPV4_SOURCES) +
+                       ') не ответил. Проверьте исходящий HTTPS и DNS на сервере и повторите запуск.')
+
+
+def survey_firewall(state, listeners=()):
+    """Existing UFW rules against the ports Bob needs and keeps private. Read-only."""
+    present = shutil.which('ufw') is not None or any(
+        (UFW_ROOT / name).exists() for name in ('user.rules', 'user6.rules'))
+    return fwpolicy.survey(state['ssh_ports'], fwpolicy.internal_ports(state),
+                           fwpolicy.ssh_client(os.environ.get('SSH_CONNECTION')), listeners,
+                           root=UFW_ROOT if present else None, defaults=ipv6.UFW_DEFAULTS,
+                           proc=PROC_ROOT)
+
+
+def host_listeners():
+    text = run('ss', '-H', '-lntp')
+    return text, fwpolicy.parse_listeners(text, 'tcp'), \
+        fwpolicy.parse_listeners(run('ss', '-H', '-lnup'), 'udp')
+
+
+def pick_port(excluded, plan):
+    """A free internal port that no existing firewall rule leaves open to the public."""
+    for _ in range(50):
+        port = free_port(excluded)
+        if not plan.exposes(port):
+            return port
+        excluded = excluded | {port}
+    raise InstallError('Не удалось выбрать внутренний порт: существующие правила UFW открывают из '
+                       'интернета весь диапазон 20000–59999. Сузьте такие правила (`ufw status numbered`).')
+
+
 def preflight(args, resume_state=None):
-    require(os.geteuid() == 0, 'Run as root on the test/clean VPS')
+    del TRACE[:]
+    notes = []
+    require(os.geteuid() == 0, 'Установщик нужно запускать от root (sudo -i), иначе он не сможет '
+                               'настроить систему.')
     info = os_info()
-    require(Path('/run/systemd/system').exists(), 'systemd is required')
+    require(Path('/run/systemd/system').exists(), 'Нужна система с systemd: Bob управляет службами '
+                                                  'через systemctl. Контейнеры без systemd не поддерживаются.')
     if args.warp_mode != 'skip':
-        require(Path('/dev/net/tun').exists(), '/dev/net/tun is required for WARP')
-    require(shutil.disk_usage('/').free >= 2 * 1024**3, 'At least 2 GiB free disk required')
+        require(Path('/dev/net/tun').exists(),
+                'Для Cloudflare WARP нужно устройство /dev/net/tun, а на этом сервере его нет '
+                '(часто так в контейнерах LXC/OpenVZ). Включите TUN у хостера или запустите установку '
+                'без WARP: --no-warp.')
+    free = shutil.disk_usage('/').free
+    require(free >= 2 * 1024**3, f'Нужно не менее 2 ГиБ свободного места на /, сейчас {free // 1024**2} МиБ.')
     for p in [str(STATE), *CONTROLLED_PATHS]:
         if resume_state and p == str(STATE):
             continue
-        if resume_state and resume_state.get('stage') in ('APT_INSTALL', 'WARP', 'CERTIFICATE') and \
+        if p == str(STATE) and STATE.is_dir() and not STATE.is_symlink() and not any(STATE.iterdir()):
+            # An empty directory holds no installation: nothing to own and nothing to lose.
+            continue
+        if p == JAIL_LOCAL:
+            check_jail_local(notes)
+            continue
+        if resume_state and resume_state.get('stage') in ('APT_INSTALL', 'FIREWALL', 'WARP', 'CERTIFICATE') and \
                 p in resume_state.get('absent_paths', ()):
             allowed_resume_paths = {'/etc/nginx', '/etc/letsencrypt'}
+            if resume_state.get('stage') in ('FIREWALL', 'WARP', 'CERTIFICATE'):
+                allowed_resume_paths.update({str(bbr.SYSCTL_CONFIG), str(bbr.MODULE_CONFIG),
+                                             str(ipv6.CONFIG)})
             if resume_state.get('stage') in ('WARP', 'CERTIFICATE'):
                 allowed_resume_paths.update({'/root/VPS-Server-Menu',
-                    '/etc/apt/sources.list.d/cloudflare-client.list',
-                    str(bbr.SYSCTL_CONFIG), str(bbr.MODULE_CONFIG), str(ipv6.CONFIG)})
+                    '/etc/apt/sources.list.d/cloudflare-client.list'})
             if resume_state.get('stage') == 'CERTIFICATE':
                 allowed_resume_paths.add('/var/lib/selfsni-acme')
             if p in allowed_resume_paths:
@@ -318,46 +420,62 @@ def preflight(args, resume_state=None):
                 args.warp_mode in ('adopt', 'skip') and
                 (p.endswith('/cloudflare-client.list') or p == '/root/VPS-Server-Menu')):
             continue
-        require(not (Path(p).exists() or Path(p).is_symlink()),
-                'Existing installation/configuration: ' + p)
+        if Path(p).exists() or Path(p).is_symlink():
+            raise existing_path(p)
     warp_present = shutil.which('warp-cli') is not None if args.warp_mode != 'skip' else False
     warp_resume = bool(args.warp_mode == 'install' and resume_state and resume_state.get('stage') in ('WARP', 'CERTIFICATE'))
     require(not warp_present or args.warp_mode in ('adopt', 'skip') or warp_resume,
-            'Existing WARP: needs explicit --adopt-warp')
-    require(args.warp_mode != 'adopt' or warp_present, '--adopt-warp requires an existing installation')
+            'На сервере уже установлен Cloudflare WARP (warp-cli). Bob не переустанавливает его поверх: '
+            'запустите установку с --adopt-warp (использовать существующий WARP как есть) или с '
+            '--no-warp (не использовать WARP).')
+    require(args.warp_mode != 'adopt' or warp_present,
+            '--adopt-warp требует уже установленный WARP (warp-cli не найден). Запустите установку без '
+            'этого флага: Bob установит WARP сам.')
     # On a fresh VPS cloud-init may still be upgrading openssh-server: sshd -T then exits 255.
     require('cloud-init' not in background_package_processes(PROC_ROOT),
             'cloud-init ещё настраивает систему; дождитесь `cloud-init status --wait` '
             'и запустите установку снова')
     # Socket activation may expose ports absent from sshd_config; preserve both.
     ssh_ports = set()
-    ssh_config = run('/usr/sbin/sshd', '-T')
+    try:
+        ssh_config = run('/usr/sbin/sshd', '-T')
+    except CommandError as error:
+        raise InstallError('Не удалось прочитать действующую конфигурацию SSH (`sshd -T`: '
+                           f'{error}). Bob не меняет firewall, пока не знает SSH-порты. Проверьте '
+                           'конфигурацию командой `sshd -t` и запустите установку снова.') from error
     for line in ssh_config.splitlines():
         if line.startswith('port '):
             ssh_ports.add(int(line.split()[1]))
     connection = os.environ.get('SSH_CONNECTION', '').split()
     if len(connection) == 4:
         ssh_ports.add(int(connection[3]))
-    listeners = run('ss', '-H', '-lntp')
-    for line in listeners.splitlines():
-        if 'sshd' in line:
-            ssh_ports.add(int(line.split()[3].rsplit(':', 1)[1]))
+    listeners, tcp, udp = host_listeners()
+    for listener in tcp:
+        if 'sshd' in listener.text:
+            ssh_ports.add(listener.port)
     if args.ssh_port:
         ssh_ports.add(args.ssh_port)
-    require(bool(ssh_ports) and all(1 <= x <= 65535 for x in ssh_ports), 'Cannot detect SSH port')
-    allowed = ssh_ports | {53}
-    if args.warp_mode == 'adopt' or warp_resume:
-        allowed.add(40000)
-    if args.warp_mode == 'skip':
-        # A pre-existing WARP daemon is outside this installation's ownership.
-        allowed.update(int(line.split()[3].rsplit(':', 1)[1]) for line in listeners.splitlines()
-                       if 'warp-svc' in line)
+    require(bool(ssh_ports) and all(1 <= x <= 65535 for x in ssh_ports),
+            'Не удалось определить SSH-порт. Укажите его явно: --ssh-port <порт>.')
+    TRACE.append('SSH-порты: ' + ', '.join(map(str, sorted(ssh_ports))))
+    TRACE.extend('listener: ' + listener.describe() for listener in tcp + udp)
+    # Only a port Bob itself binds is a conflict; any other service stays as it is.
+    needed = {80: 'HTTP-01 и перенаправление на HTTPS', 443: 'VLESS REALITY',
+              fwpolicy.XRAY_API: 'Xray API (127.0.0.1)', fwpolicy.XRAY_METRICS: 'метрики Xray (127.0.0.1)'}
+    if args.warp_mode == 'install' and not warp_resume:
+        needed[fwpolicy.WARP_SOCKS] = 'SOCKS5 WARP (127.0.0.1)'
+    if resume_state:
+        needed[int(resume_state['panel_port'])] = 'панель 3x-ui (127.0.0.1)'
+        needed[int(resume_state['sub_port'])] = 'подписки (127.0.0.1)'
     nginx_http = owned_nginx_http(resume_state, listeners, run)
     if nginx_http:
-        allowed.add(80)
-    for line in listeners.splitlines():
-        port = int(line.split()[3].rsplit(':', 1)[1])
-        require(port in allowed, f'Foreign TCP listener on port {port}')
+        del needed[80]
+    busy = [listener for listener in tcp if listener.port in needed]
+    require(not busy, 'Порты, которые нужны Bob, уже заняты:\n' + '\n'.join(dict.fromkeys(
+        f'• TCP-порт {listener.port} ({needed[listener.port]}) занят: {listener.owner} слушает '
+        f'{listener.text.split()[3]}' for listener in busy)) +
+        '\nОстановите эту службу или перенесите её на другой порт (`ss -lntp` покажет процесс), '
+        'затем запустите установку снова. Остальные службы сервера Bob не трогает.')
     for port in [80,443,62789,11111]:
         if nginx_http and port == 80:
             continue
@@ -366,18 +484,40 @@ def preflight(args, resume_state=None):
             try:
                 s.bind(('0.0.0.0', port))
             except OSError as e:
-                raise InstallError(f'Required port {port} is occupied') from e
-    if shutil.which('ufw'):
-        resume_ports = {80, 443} if resume_state and resume_state.get('stage') in ('WARP', 'CERTIFICATE') else set()
-        check_ufw_rules(ssh_ports | resume_ports)
+                raise InstallError(f'TCP-порт {port} ({needed[port]}) занят: система не даёт его открыть '
+                                   f'({e.strerror or e}). Найдите процесс: `ss -lntp | grep :{port}`.') from e
+    bob_ports = ssh_ports | set(needed) | {80, fwpolicy.WARP_SOCKS}
+    foreign = [listener for listener in tcp + udp
+               if listener.proto == 'udp' or listener.port not in bob_ports]
+    # Loopback sockets and the DHCP/mDNS clients UFW itself serves are not worth a line.
+    outside = list(dict.fromkeys(
+        listener.describe() for listener in foreign if listener.public and
+        not (listener.proto == 'udp' and listener.port in fwpolicy.UFW_BUILTIN_UDP)))
+    if outside:
+        notes.append('Сторонние службы не затронуты: ' + '; '.join(outside[:8]) +
+                     (f' и ещё {len(outside) - 8}' if len(outside) > 8 else '') + '.')
+    known = dict(ssh_ports=sorted(ssh_ports), warp_mode=args.warp_mode)
+    if resume_state:
+        known.update(panel_port=resume_state['panel_port'], sub_port=resume_state['sub_port'])
+    plan = survey_firewall(known, tcp + udp)
+    TRACE.append(f'UFW: enabled={plan.enabled} incoming={plan.incoming} outgoing={plan.outgoing}')
+    TRACE.extend(f'UFW rule IPv{rule.family} [{rule.action}]: {rule.line}' for rule in plan.rules)
+    plan.refuse()
     domain = fqdn(args.domain)
-    addresses = {x[4][0] for x in socket.getaddrinfo(domain, 80, type=socket.SOCK_STREAM)}
+    try:
+        addresses = {x[4][0] for x in socket.getaddrinfo(domain, 80, type=socket.SOCK_STREAM)}
+    except socket.gaierror as error:
+        raise InstallError(f'Домен {domain} не найден в DNS ({error.strerror or error}). Создайте '
+                           'A-запись с публичным IPv4 этого сервера и дождитесь её обновления.') from error
     v4 = {x for x in addresses if ipaddress.ip_address(x).version == 4}
-    public = run('curl', '-4fsS', '--connect-timeout', '10', '--max-time', '20', 'https://api.ipify.org').strip()
+    public = public_ipv4()
     require(ipaddress.ip_address(public).is_global and v4 == {public},
-            'DNS A must contain only this public IPv4; disable CDN proxying')
+            f'DNS A-запись {domain} должна содержать только публичный IPv4 этого сервера ({public}); '
+            f'сейчас в DNS: {", ".join(sorted(v4)) or "A-записи нет"}. Исправьте запись и отключите '
+            'проксирование CDN (в Cloudflare — режим «DNS only»).')
     v6 = {x for x in addresses if ipaddress.ip_address(x).version == 6}
-    require(not v6, 'Installation FQDN has an AAAA record; IPv4-only requires removing it')
+    require(not v6, f'У домена {domain} есть AAAA-запись ({", ".join(sorted(v6))}). Bob работает только '
+                    'по IPv4: удалите AAAA-запись и запустите установку снова.')
     ipv6_report = ipv6.preflight(domain, ufw_defaults=ipv6.UFW_DEFAULTS)
     excluded = set(ssh_ports) | {80,443,40000,62789,11111}
     if resume_state:
@@ -388,8 +528,16 @@ def preflight(args, resume_state=None):
         require(1024 <= panel_port <= 65535 and 1024 <= sub_port <= 65535 and panel_port != sub_port,
                 'Сохранённые порты некорректны или совпадают')
     else:
-        panel_port = free_port(excluded)
-        sub_port = free_port(excluded | {panel_port})
+        panel_port = pick_port(excluded, plan)
+        sub_port = pick_port(excluded | {panel_port}, plan)
+    consent = plan.consent + plan.cutoff
+    over_ipv6 = list(dict.fromkeys(
+        listener.describe() for listener in foreign
+        if listener.address is not None and listener.address.version == 6 and listener.public and
+        not listener.address.is_unspecified))
+    if over_ipv6 and ipv6_mode(ipv6_report) == 'managed':
+        consent.append('Bob отключит IPv6 на сервере (режим IPv4-only). Службы, которые слушают '
+                       'IPv6-адреса, станут недоступны по IPv6: ' + '; '.join(over_ipv6) + '.')
     # Keep all preflight modes read-only. kmod is installed below before
     # configure() may need modprobe on a minimal Ubuntu image.
     # Read-only decision; an unsupported or foreign BBR/FQ setup never stops the installation.
@@ -405,14 +553,53 @@ def preflight(args, resume_state=None):
                 panel_access=PANEL_ACCESS, subscription_access=PANEL_ACCESS,
                 warp_mode=args.warp_mode, adopt_warp=args.warp_mode == 'adopt',
                 bbr_preflight=bbr_report, ipv6_preflight=ipv6_report, **credentials,
+                foreign_tcp_ports=sorted({listener.port for listener in foreign
+                                          if listener.proto == 'tcp' and listener.public}),
+                firewall_preflight=plan.summary(), compatibility=notes, consent_required=consent,
                 status='INSTALLING')
     if resume_state:
         preserved = ('panel_path', 'sub_path', 'username', 'password', 'panel_port', 'sub_port',
                      'installation_id', 'schema', 'absent_paths', 'resume_count', 'stage',
-                     'last_completed_stage', 'legacy_resume')
+                     'last_completed_stage', 'legacy_resume', 'approved_changes')
         fresh.update({key: resume_state[key] for key in preserved if key in resume_state})
         fresh.update(carried_results(resume_state, ipv6_report))
     return fresh
+
+
+def compatibility_notes(s):
+    """What preflight found on a host that is not clean, and what Bob does about it."""
+    plan = s.get('firewall_preflight') or {}
+    kept = plan.get('kept', [])
+    lines = ['✓ ' + note for note in s.get('compatibility', [])]
+    lines += ['✓ UFW, правило сохранено: ' + note for note in kept[:10]]
+    if len(kept) > 10:
+        lines.append(f'✓ UFW: сохранено ещё правил: {len(kept) - 10}.')
+    if kept or plan.get('enabled'):
+        lines += ['• UFW: Bob ' + change + '.' for change in plan.get('changes', [])]
+    return lines
+
+
+def approve_changes(s, approved, interactive):
+    """Changes that alter how the host works today need an explicit yes; never a default."""
+    required = s.pop('consent_required', [])
+    pending = [item for item in required if item not in approved]
+    s['approved_changes'] = list(dict.fromkeys([*approved, *required]))
+    if not pending:
+        return
+    text = ('Установка изменит работу уже настроенного сервера:\n' +
+            '\n'.join('• ' + item for item in pending))
+    refusal = ('\nБез подтверждения такие изменения не выполняются. Устраните причину (команды '
+               'указаны выше) или запустите установщик в терминале без --domain и подтвердите их.')
+    if not interactive:
+        raise InstallError(text + refusal)
+    try:
+        if UI:
+            UI.clear()
+        agreed = confirm(text + '\n\nПродолжить установку с этими изменениями?')
+    except InstallError as error:
+        raise InstallError(text + refusal) from error
+    require(agreed, 'Установка отменена: изменения не подтверждены. Система не изменена этим запуском.')
+
 
 IPV6_REASONS = {
     'external': 'обнаружена внешняя конфигурация',
@@ -482,15 +669,6 @@ def report_system(s):
         UI.note('✓ Установка VPN продолжается.')
 
 
-def check_ufw_rules(allowed, root=Path('/etc/ufw')):
-    for name in ['user.rules', 'user6.rules']:
-        for line in (Path(root) / name).read_text().splitlines():
-            if line.startswith('-A ufw-user-input '):
-                match = re.fullmatch(r'-A ufw-user-input -p tcp --dport (\d+) -j ACCEPT', line)
-                require(match is not None and int(match.group(1)) in allowed,
-                        'Existing non-SSH UFW rules')
-
-
 def late_resume_preflight(args, state):
     """SECURITY/ACCEPTANCE resume: prove that finished stages still match the system.
 
@@ -544,8 +722,10 @@ def late_resume_preflight(args, state):
             same(path, content)
     if done and not legacy:
         same(RETRY_DROPIN, retry_dropin(domain), 0o644)
-    if shutil.which('ufw'):
-        check_ufw_rules(set(s['ssh_ports']) | {80, 443}, host('/etc/ufw'))
+    # Only a rule that blocks a published port or opens an internal one refuses the
+    # resume; a missing allow rule is added by the pending firewall step.
+    fwpolicy.survey(s['ssh_ports'], fwpolicy.internal_ports(s), root=host('/etc/ufw'),
+                    defaults=host('/etc/default/ufw'), proc=host('/proc')).refuse()
     # BBR already proved the IPv4-only policy persistent across reboot; a late
     # resume only reads it (sysctl, networkd drop-in, runtime) and never rewrites it.
     try:
@@ -563,7 +743,7 @@ def late_resume_preflight(args, state):
         require(not host(ipv6.CONFIG).exists() and not host(ipv6.CONFIG).is_symlink(),
                 'IPv6-файл Bob появился, хотя IPv6 не управлялся Bob; resume запрещён')
         try:
-            ipv6.check_exposure(s['ssh_ports'])
+            ipv6.check_exposure(fwpolicy.published_ports(s))
         except InstallError as error:
             raise InstallError(f'IPv6 не исключает доступ к внутренним службам ({error}); '
                                'resume запрещён') from error
@@ -608,13 +788,59 @@ def saved_secrets(s):
 
 
 def firewall(s, public=False):
-    for port in s['ssh_ports']:
-        run('ufw', 'allow', str(port) + '/tcp', 'comment', 'Self-SNI SSH')
-    run('ufw', 'allow', '80/tcp')
-    run('ufw', 'allow', '443/tcp')
-    run('ufw', 'default', 'deny', 'incoming')
-    run('ufw', 'default', 'allow', 'outgoing')
-    run('ufw', '--force', 'enable')
+    """Publish SSH, 80 and 443 and enable UFW; the operator's rules are never edited.
+
+    The rules are surveyed again right before the change: a rule added since
+    preflight is judged the same way. Only missing allow rules are added, so a
+    repeated call changes nothing. On any failure the commands of this call
+    are undone in reverse order and the stage can be resumed.
+    """
+    plan = survey_firewall(s)
+    plan.refuse()
+    unapproved = [item for item in plan.consent if item not in s.get('approved_changes', ())]
+    require(not unapproved, 'Сетевая конфигурация сервера изменилась после проверки системы:\n' +
+            '\n'.join('• ' + item for item in unapproved) +
+            '\nUFW не изменён. Запустите установщик снова: он покажет эти изменения и запросит '
+            'подтверждение.')
+    undo = []
+    try:
+        for port in plan.allow:
+            run('ufw', 'allow', f'{port}/tcp',
+                *(('comment', 'Self-SNI SSH') if port in s['ssh_ports'] else ()))
+            if port in plan.removable:  # no existing rule names the port: the new one is Bob's alone
+                undo.append(('ufw', 'delete', 'allow', f'{port}/tcp'))
+        if plan.incoming != 'REJECT':  # an operator's reject is already a deny
+            if plan.incoming == 'ACCEPT':
+                undo.append(('ufw', 'default', 'allow', 'incoming'))
+            run('ufw', 'default', 'deny', 'incoming')
+        if plan.outgoing != 'ACCEPT':
+            undo.append(('ufw', 'default', 'reject' if plan.outgoing == 'REJECT' else 'deny', 'outgoing'))
+        run('ufw', 'default', 'allow', 'outgoing')
+        if not plan.enabled:
+            undo.append(('ufw', 'disable'))
+        run('ufw', '--force', 'enable')
+        after = survey_firewall(s)
+        after.refuse()
+        require(after.enabled and not after.allow,
+                'UFW не подтвердил новую конфигурацию: ' +
+                ('UFW не включён' if not after.enabled else
+                 'нет разрешающего правила для TCP ' + ', '.join(map(str, after.allow))))
+    except BaseException as error:
+        # Also on Ctrl+C: the host keeps the firewall it had before this call.
+        failed = []
+        for command in reversed(undo):
+            try:
+                run(*command)
+            except CommandError as problem:
+                failed.append(' '.join(command) + f' ({problem})')
+        if failed:
+            raise InstallError('Настройка UFW не удалась, и откат выполнен не полностью: ' +
+                               '; '.join(failed) + '. Проверьте `ufw status verbose` и доступ по SSH '
+                               'до закрытия текущей сессии.') from error
+        if isinstance(error, InstallError):
+            raise InstallError(f'{error}\nИзменения UFW, сделанные этим запуском, отменены; этап можно '
+                               'повторить, запустив установщик снова.') from error
+        raise
 
 def install_apt_key(source, target):
     run('gpg', '--batch', '--yes', '--dearmor', '--output', target, source)
@@ -690,12 +916,24 @@ def nginx_files(s):
     }
 
 
+def php_service(sockets):
+    """PHP-FPM service of the portal; another PHP version on the host stays untouched."""
+    names = sorted(path.name.replace('.sock', '') for path in sockets)
+    if len(names) > 1:
+        # The php-fpm metapackage installed by Bob names the distribution's version.
+        depends = run('dpkg-query', '-W', '-f', '${Depends}', 'php-fpm')
+        names = [name for name in names
+                 if re.search(r'(^|[\s,|])' + re.escape(name) + r'($|[\s,(|])', depends)]
+    require(len(names) == 1, 'Не удалось определить службу PHP-FPM для страницы входа: ожидался один '
+                             'сокет /run/php/php*-fpm.sock версии из пакета php-fpm. Проверьте '
+                             '`systemctl status "php*-fpm"`.')
+    return names[0]
+
+
 def decoy(s):
     stage('Unique cloud portal + PHP-FPM + REALITY TLS socket')
     values = generate('/var/www/selfsni')
-    sockets = list(Path('/run/php').glob('php[0-9]*-fpm.sock'))
-    require(len(sockets) == 1, 'Expected one PHP-FPM version')
-    s['php_service'] = sockets[0].name.replace('.sock', '')
+    s['php_service'] = php_service(list(Path('/run/php').glob('php[0-9]*-fpm.sock')))
     s['portal'] = values
     files = nginx_files(s)
     write('/etc/nginx/snippets/selfsni-fastcgi.conf', files['/etc/nginx/snippets/selfsni-fastcgi.conf'], 0o644)
@@ -998,6 +1236,33 @@ def install_doctor(s):
         UI.note(DOCTOR_NOTES[s['doctor_cli']['status']])
 
 
+def preflight_log(message):
+    """Minimal root-only record of a refusal that happened before any state existed.
+
+    Holds the reason and what preflight observed (listeners, UFW rules); no
+    credentials exist at that point and the text is redacted anyway. The system
+    configuration is not touched. Returns the path, or None when it cannot be written.
+    """
+    if os.geteuid() != 0:
+        return None
+    path = DIAGNOSTIC_LOG.parent / PREFLIGHT_LOG_NAME
+    stamp = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+    try:
+        version = (ROOT / 'VERSION').read_text().strip()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.is_symlink():
+            return None
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, 'a') as log:
+            os.fchmod(fd, 0o600)
+            log.write(f'[{stamp}] Bob Auto Xray {version}: установка отклонена на этапе проверки системы\n'
+                      + redact(message) + '\n' +
+                      ''.join('  ' + redact(line) + '\n' for line in TRACE) + '\n')
+    except OSError:
+        return None
+    return path
+
+
 def secure(s):
     """SECURITY with a checkpoint after every step; a resume repeats only unfinished steps."""
     actions = {'fail2ban': security, 'renewal': renew_hook,
@@ -1012,6 +1277,7 @@ def secure(s):
 def main():
     global LOG_ENABLED, UI
     owns_state = False
+    checking = False  # the system check has started and no state exists yet
     state = None
     parser = argparse.ArgumentParser(description='Bob Auto Xray: автоматическая настройка VPN-сервера')
     parser.add_argument('--domain')
@@ -1022,6 +1288,8 @@ def main():
     warp_flags.add_argument('--no-warp', action='store_true')
     parser.add_argument('--preflight-only', action='store_true')
     args = parser.parse_args()
+    # --domain means "no questions": a change that needs consent is then refused, not asked.
+    interactive = not args.domain
     explicit_warp_mode = args.adopt_warp or args.no_warp
     args.warp_mode = 'adopt' if args.adopt_warp else 'skip' if args.no_warp else None
     UI = InstallerUI()
@@ -1050,6 +1318,10 @@ def main():
             UI.stage(1, 13, 'Проверка системы')
             checked = preflight(args)
             UI.stage(1, 13, 'Проверка системы', 'ok')
+            for line in compatibility_notes(checked):
+                UI.note(line)
+            for item in checked.get('consent_required', []):
+                UI.note('⚠ Потребуется подтверждение при установке: ' + item)
             decision = checked.get('ipv6_preflight', {})
             if ipv6_mode(decision) != 'managed':
                 UI.note(ipv6_notes(decision)[0])
@@ -1066,11 +1338,12 @@ def main():
                 require(not args.email or args.email == previous.get('email', ''),
                         'Для продолжения используйте исходный Let’s Encrypt email')
                 args.email = previous.get('email', '')
-                UI.completed = {'APT_UPDATE': 1, 'APT_UPGRADE': 2, 'APT_INSTALL': 3,
+                UI.completed = {'APT_UPDATE': 1, 'APT_UPGRADE': 2, 'APT_INSTALL': 3, 'FIREWALL': 5,
                                 'WARP': 6, 'CERTIFICATE': 7, 'SECURITY': 10,
                                 'ACCEPTANCE': 11}.get(previous.get('stage'), 0)
             late = bool(previous) and previous.get('stage') in LATE_RESUME_STAGES
             UI.stage(1, 13, 'Проверка системы')
+            checking = True
             if late:
                 stage('Preflight: saved state against installed certificate, nginx, panel, Xray')
                 s = late_resume_preflight(args, previous)
@@ -1079,13 +1352,19 @@ def main():
                 s = preflight(args, previous)
             s['email'] = args.email
             UI.stage(1, 13, 'Проверка системы', 'ok')
+            if not late:  # a late resume reuses the saved state and surveys nothing anew
+                for line in compatibility_notes(s):
+                    UI.note(line)
+            # Asked before anything is created or changed; a refusal leaves no state behind.
+            approve_changes(s, (previous or {}).get('approved_changes', []), interactive)
             os.umask(0o077)
             if previous:
                 s['status'] = 'INSTALLING'
             else:
                 absent = [path for path in CONTROLLED_PATHS if not Path(path).exists()]
                 s = initialize(s, absent)
-                STATE.mkdir(mode=0o700)
+                STATE.mkdir(mode=0o700, exist_ok=True)  # preflight accepts only an empty directory
+                STATE.chmod(0o700)
             owns_state = True
             LOG_ENABLED = True
             configure_diagnostics(DIAGNOSTIC_LOG, (s['username'], s['password'],
@@ -1129,13 +1408,10 @@ def main():
                     s['bbr'] = bbr.apply()
                     s['swap'] = swap.apply()
                     checkpoint(STATE, s, 'BBR')
-                    s['ipv6'] = ipv6.apply(s['domain'], s['ssh_ports'])
+                    s['ipv6'] = ipv6.apply(s['domain'], fwpolicy.published_ports(s))
                     checkpoint(STATE, s, 'BBR', True)
                     report_system(s)
                     UI.stage(5, 13, 'Системные настройки', 'ok')
-                    checkpoint(STATE, s, 'FIREWALL'); UI.stage(6, 13, 'Настройка сетевой защиты')
-                    firewall(s); checkpoint(STATE, s, 'FIREWALL', True)
-                    UI.stage(6, 13, 'Настройка сетевой защиты', 'ok')
                 elif not late:
                     # A reboot between attempts can re-enable IPv6 on the interface while the
                     # persisted files stay intact; restore the runtime policy before acceptance.
@@ -1144,7 +1420,12 @@ def main():
                     if ipv6_mode(s.get('ipv6', {})) == 'managed':
                         s['ipv6'], _ = ipv6.configure(s['domain'])
                     else:
-                        ipv6.check_exposure(s['ssh_ports'])
+                        ipv6.check_exposure(fwpolicy.published_ports(s))
+                if pending('FIREWALL'):
+                    # Idempotent: a resumed run adds only the rules that are still missing.
+                    checkpoint(STATE, s, 'FIREWALL'); UI.stage(6, 13, 'Настройка сетевой защиты')
+                    firewall(s); checkpoint(STATE, s, 'FIREWALL', True)
+                    UI.stage(6, 13, 'Настройка сетевой защиты', 'ok')
                 if pending('WARP'):
                     checkpoint(STATE, s, 'WARP')
                     if s['warp_mode'] == 'skip':
@@ -1210,8 +1491,16 @@ def main():
             if current:
                 fail(STATE, current, message)
             write(STATE/'FAILED', message+'\n')
+        if owns_state:
+            log = DIAGNOSTIC_LOG
+        elif args.preflight_only:
+            log = 'не создаётся (--preflight-only ничего не записывает)'
+        else:
+            # A refusal of the system check is recorded; a cancelled wizard or Ctrl+C is not.
+            recorded = checking and not isinstance(e, KeyboardInterrupt)
+            log = (preflight_log(message) if recorded else None) or 'не создан (preflight)'
         if UI:
-            UI.failure(message, DIAGNOSTIC_LOG if owns_state else 'не создан (preflight)')
+            UI.failure(message, log)
         raise SystemExit(130 if isinstance(e, KeyboardInterrupt) else 1)
 
 if __name__ == '__main__':

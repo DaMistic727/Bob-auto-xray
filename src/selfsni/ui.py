@@ -33,6 +33,10 @@ class InstallerUI:
                   end='', file=self.stream, flush=True)
             self.live = False
 
+    def clear(self):
+        """Remove the live progress line before something else writes to the terminal."""
+        self._clear()
+
     def banner(self, version):
         width = shutil.get_terminal_size((80, 20)).columns
         lines = [f'BOB AUTO XRAY · Версия {version}', 'Автоматическая настройка VPN']
@@ -133,6 +137,24 @@ def _read(source, output, prompt):
     if not value:
         raise InstallError('Ввод прерван. Установка не начата.')
     return value.strip()
+
+
+def confirm(question, input_stream=None, output=None):
+    """Ask on the controlling terminal. Only an explicit yes is consent; Enter is a no."""
+    output = output or sys.stdout
+    source, close = input_stream, False
+    if source is None:
+        try:
+            source = open('/dev/tty')
+            close = True
+        except OSError as error:
+            raise InstallError('Нет терминала для подтверждения') from error
+    try:
+        print('\n' + question, file=output)
+        return _read(source, output, 'Введите yes для продолжения [yes/N] › ').lower() in ('yes', 'да')
+    finally:
+        if close:
+            source.close()
 
 
 def existing_warp():

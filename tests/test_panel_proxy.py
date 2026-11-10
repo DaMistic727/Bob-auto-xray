@@ -43,13 +43,25 @@ class PanelProxyTests(unittest.TestCase):
         self.assertNotIn(':21000', output.getvalue())
 
     def test_firewall_never_allows_internal_port(self):
+        import tempfile
+        from pathlib import Path
+        from selfsni import provision
+        from ufw_model import FakeUfw
         for public in (False, True):
-            with self.subTest(public=public), patch('selfsni.provision.run') as run:
-                firewall(state(), public=public)
-                calls = [call.args for call in run.call_args_list]
+            with self.subTest(public=public), tempfile.TemporaryDirectory() as directory:
+                ufw = FakeUfw(directory)  # firewall() verifies what ufw wrote, so ufw is modelled
+                with patch.object(provision, 'UFW_ROOT', ufw.directory), \
+                     patch.object(provision.ipv6, 'UFW_DEFAULTS', ufw.defaults), \
+                     patch.object(provision, 'PROC_ROOT', Path(directory) / 'proc'), \
+                     patch.dict('os.environ', {'SSH_CONNECTION': ''}), \
+                     patch('selfsni.provision.run', side_effect=ufw.command):
+                    firewall(state(), public=public)
+                calls = ufw.calls
                 self.assertNotIn(('ufw', 'allow', '21000/tcp'), calls)
                 self.assertNotIn(('ufw', 'allow', '22000/tcp'), calls)
                 self.assertIn(('ufw', 'default', 'deny', 'incoming'), calls)
+                allowed = {call[2] for call in calls if call[1] == 'allow'}
+                self.assertEqual(allowed, {f'{port}/tcp' for port in (*state()['ssh_ports'], 80, 443)})
 
     def test_proxy_retains_uri_and_verifies_tls(self):
         conf = render('nginx-panel.conf', {'DOMAIN': 'vpn.example.com', 'PANEL_PORT': 21000})

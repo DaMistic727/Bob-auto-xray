@@ -14,7 +14,7 @@ from selfsni.menu_upstream import OFFICIAL_REPOSITORY
 REAL_EXISTS = Path.exists
 HOST_PATHS = {'/run/systemd/system', '/dev/net/tun', '/etc/nginx'}
 PREVIOUS = {'APT_UPDATE': 'PREFLIGHT', 'APT_UPGRADE': 'APT_UPDATE',
-            'APT_INSTALL': 'APT_UPGRADE', 'WARP': 'FIREWALL', 'CERTIFICATE': 'WARP'}
+            'APT_INSTALL': 'APT_UPGRADE', 'FIREWALL': 'BBR', 'WARP': 'FIREWALL', 'CERTIFICATE': 'WARP'}
 NGINX_CGROUP = '0::/system.slice/nginx.service'
 
 
@@ -37,6 +37,11 @@ class Host:
         self.bbr_config.write_text(''.join(f'{k} = {v}\n' for k, v in provision.bbr.DESIRED.items()))
         self.listeners = ['LISTEN 0 128 0.0.0.0:22 0.0.0.0:* users:(("sshd",pid=1,fd=3))']
         self.main_pid = '0'
+        self.udp = []
+        self.jail_local = self.root / 'etc/fail2ban/jail.local'
+        self.sshd = 'port 22\n'
+        self.public_ip = '8.8.8.8'
+        self.ufw = self.root / 'etc/ufw'
         self.swap_verify = MagicMock(side_effect=lambda report: report)
 
     def enable(self, name):
@@ -73,7 +78,7 @@ class Host:
             ipv6_preflight={'saved': True}, email=''), ['/etc/nginx'])
         state.update(status='FAILED', stage=stage, last_completed_stage=PREVIOUS[stage],
                      failure='simulated')
-        if stage in ('WARP', 'CERTIFICATE'):
+        if stage in ('FIREWALL', 'WARP', 'CERTIFICATE'):
             state.update(
                 ipv6={'interfaces': ['all', 'default', 'lo', 'ens3'],
                       'persistentConfig': str(self.ipv6_config), 'networkDropin': str(self.dropin)},
@@ -88,11 +93,18 @@ class Host:
 
     def command(self, *parts, **kwargs):
         if parts[:2] == ('/usr/sbin/sshd', '-T'):
-            return 'port 22\n'
+            return self.sshd
         if parts[:3] == ('ss', '-H', '-lntp'):
             return '\n'.join(self.listeners)
+        if parts[:3] == ('ss', '-H', '-lnup'):
+            return '\n'.join(self.udp)
         if parts[0] == 'curl':
-            return '8.8.8.8'
+            if isinstance(self.public_ip, dict):  # per-service answers
+                answer = self.public_ip[parts[-1]]
+                if isinstance(answer, Exception):
+                    raise answer
+                return answer
+            return self.public_ip
         if parts[:2] == ('systemctl', 'show'):
             return self.main_pid + '\n'
         raise AssertionError(parts)
@@ -118,13 +130,15 @@ class Host:
                     raise OSError(98, 'Address already in use')
         return Socket()
 
-    def preflight(self, state):
-        mode = state['warp_mode']
-        args = Namespace(domain='vpn.example.com', ssh_port=None, warp_mode=mode,
+    def preflight(self, state=None, mode='install', connection='', version='26.04', ssh_port=None):
+        """Resume preflight of a saved state, or a fresh one when state is None."""
+        mode = state['warp_mode'] if state else mode
+        args = Namespace(domain='vpn.example.com', ssh_port=ssh_port, warp_mode=mode,
                          adopt_warp=mode == 'adopt')
 
         # The nginx package is installed only by APT_INSTALL.
-        host_paths = (HOST_PATHS - {'/etc/nginx'} if state['stage'] in ('APT_UPDATE', 'APT_UPGRADE')
+        host_paths = (HOST_PATHS - {'/etc/nginx'}
+                      if state is None or state['stage'] in ('APT_UPDATE', 'APT_UPGRADE')
                       else HOST_PATHS)
 
         def exists(path):
@@ -132,14 +146,21 @@ class Host:
             return REAL_EXISTS(path) if text.startswith(str(self.root)) else text in host_paths
 
         with patch.object(provision.os, 'geteuid', return_value=0), \
-             patch.object(provision, 'os_info', return_value={'VERSION_ID': '26.04', 'VERSION_CODENAME': 'resolute'}), \
+             patch.object(provision, 'os_info', return_value={'VERSION_ID': version, 'VERSION_CODENAME': 'resolute'}), \
              patch.object(provision.platform, 'machine', return_value='x86_64'), \
              patch.object(provision.shutil, 'disk_usage', return_value=type('D', (), {'free': 3 * 1024**3})()), \
              patch.object(provision.shutil, 'which',
                           side_effect=lambda name: '/usr/bin/warp-cli' if name == 'warp-cli' and mode == 'adopt' else None), \
+             patch.dict(os.environ, {'SSH_CONNECTION': connection}), \
+             patch.object(provision.ipv6, 'UFW_DEFAULTS', self.root / 'etc/default/ufw'), \
+             patch.object(provision, 'CONTROLLED_PATHS',
+                          [str(self.jail_local) if path == provision.JAIL_LOCAL else path
+                           for path in provision.CONTROLLED_PATHS]), \
+             patch.object(provision, 'JAIL_LOCAL', str(self.jail_local)), \
              patch.object(provision.Path, 'exists', exists), \
              patch.object(provision, 'NGINX_ROOT', self.nginx, create=True), \
              patch.object(provision, 'PROC_ROOT', self.proc, create=True), \
+             patch.object(provision, 'UFW_ROOT', self.ufw), \
              patch.object(provision.ipv6, 'CONFIG', self.ipv6_config), \
              patch.object(provision.bbr, 'SYSCTL_CONFIG', self.bbr_config), \
              patch.object(provision.swap, 'verify', self.swap_verify), \
@@ -186,7 +207,7 @@ class ResumeNginxOwnershipTests(unittest.TestCase):
         self.host.enable('selfsni-http')
         self.host.process(300, cgroup='0::/system.slice/foreign.service', exe='/usr/bin/python3')
         self.host.listen('0.0.0.0:80', ('python3', 300))
-        self.assertRefused(self.host.saved('CERTIFICATE'), 'Foreign TCP listener on port 80')
+        self.assertRefused(self.host.saved('CERTIFICATE'), 'TCP-порт 80 .*занят')
 
     def test_process_named_nginx_outside_nginx_service_is_foreign(self):
         # A container or hand-started nginx can have the same name and binary path.
@@ -199,7 +220,7 @@ class ResumeNginxOwnershipTests(unittest.TestCase):
                     host.process(100)
                     host.process(400, cgroup=cgroup)
                     host.listen('0.0.0.0:80', ('nginx', 400))
-                    with self.assertRaisesRegex(InstallError, 'Foreign TCP listener on port 80'):
+                    with self.assertRaisesRegex(InstallError, 'TCP-порт 80 .*занят'):
                         host.preflight(host.saved(stage))
 
     def test_listener_must_include_nginx_service_main_pid(self):
@@ -208,7 +229,7 @@ class ResumeNginxOwnershipTests(unittest.TestCase):
         self.host.process(100)
         self.host.process(101)
         self.host.listen('0.0.0.0:80', ('nginx', 101))
-        self.assertRefused(self.host.saved('WARP'), 'Foreign TCP listener on port 80')
+        self.assertRefused(self.host.saved('WARP'), 'TCP-порт 80 .*занят')
 
     def test_one_foreign_worker_or_unexpected_binary_breaks_ownership(self):
         cases = {
@@ -223,7 +244,7 @@ class ResumeNginxOwnershipTests(unittest.TestCase):
                 host.process(100)
                 host.process(101, **process)
                 host.listen('0.0.0.0:80', ('nginx', 100), ('nginx', 101))
-                with self.assertRaisesRegex(InstallError, 'Foreign TCP listener on port 80'):
+                with self.assertRaisesRegex(InstallError, 'TCP-порт 80 .*занят'):
                     host.preflight(host.saved('WARP'))
 
     def test_extra_foreign_listener_next_to_own_nginx_is_refused(self):
@@ -231,26 +252,26 @@ class ResumeNginxOwnershipTests(unittest.TestCase):
         self.host.own_nginx()
         self.host.process(300, cgroup='0::/system.slice/foreign.service', exe='/usr/bin/python3')
         self.host.listen('127.0.0.1:80', ('python3', 300))
-        self.assertRefused(self.host.saved('WARP'), 'Foreign TCP listener on port 80')
+        self.assertRefused(self.host.saved('WARP'), 'TCP-порт 80 .*занят')
 
     def test_own_nginx_never_unlocks_port_443(self):
         self.host.enable('default')
         self.host.own_nginx()
         self.host.listen('0.0.0.0:443', ('nginx', 100))
-        self.assertRefused(self.host.saved('WARP'), 'Foreign TCP listener on port 443')
+        self.assertRefused(self.host.saved('WARP'), 'TCP-порт 443 .*занят')
 
     def test_nginx_listener_is_foreign_before_apt_install(self):
         self.host.enable('default')
         self.host.own_nginx()
         for stage in ('APT_UPDATE', 'APT_UPGRADE'):
             with self.subTest(stage=stage):
-                self.assertRefused(self.host.saved(stage), 'Foreign TCP listener on port 80')
+                self.assertRefused(self.host.saved(stage), 'TCP-порт 80 .*занят')
 
     def test_nginx_present_before_installation_is_never_owned(self):
         self.host.enable('default')
         self.host.own_nginx()
         state = self.host.saved('WARP', absent_paths=[])
-        self.assertRefused(state, 'Existing installation/configuration: /etc/nginx')
+        self.assertRefused(state, 'существующая установка или конфигурация: /etc/nginx')
 
     def test_foreign_nginx_configuration_is_refused(self):
         cases = {
@@ -491,6 +512,7 @@ class ResumeAfterRebootTests(unittest.TestCase):
         configure = MagicMock(side_effect=lambda domain: calls.append(domain) or ({'fresh': True}, {}))
         apply = MagicMock(side_effect=lambda domain, ssh_ports: calls.append(domain) or {'fresh': True})
         self.exposure = MagicMock(side_effect=lambda ports: calls.append(('exposure', ports)))
+        self.bbr = MagicMock(apply=MagicMock(return_value={}), configure=MagicMock(return_value={}))
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             if stage:
@@ -505,9 +527,9 @@ class ResumeAfterRebootTests(unittest.TestCase):
                  patch.object(provision, 'preflight', return_value=saved), \
                  patch.object(provision, 'AptRunner'), \
                  patch.object(provision, 'run', return_value='versions'), \
-                 patch.object(provision, 'firewall'), \
+                 patch.object(provision, 'firewall') as self.firewall, \
                  patch.multiple(provision, ipv6=MagicMock(configure=configure, apply=apply, check_exposure=self.exposure),
-                                bbr=MagicMock(apply=MagicMock(return_value={}), configure=MagicMock(return_value={})),
+                                bbr=self.bbr,
                                 swap=MagicMock(apply=MagicMock(return_value={'status': 'skipped', 'reason': 'test'}), configure=MagicMock(return_value={'status': 'skipped'}))), \
                  patch.multiple(provision, certificate=DEFAULT, decoy=DEFAULT, panel=DEFAULT,
                                 security=DEFAULT, renew_hook=DEFAULT), \
@@ -537,6 +559,21 @@ class ResumeAfterRebootTests(unittest.TestCase):
                     self.assertEqual(calls, [('exposure', [22])])
                     self.assertEqual(final['ipv6'], report)
                     self.assertEqual(final['status'], 'HEALTHY_LOCAL')
+
+    def test_firewall_resume_repeats_only_the_firewall_stage(self):
+        calls, final = self.run_installer('FIREWALL')
+        # IPv6, BBR and swap are finished stages: only the runtime IPv6 policy is restored.
+        self.assertEqual(calls, ['vpn.example.com'])
+        self.assertEqual(self.firewall.call_count, 2)  # the FIREWALL stage and the SECURITY step
+        self.bbr.apply.assert_not_called()
+        self.assertEqual(final['status'], 'HEALTHY_LOCAL')
+
+    def test_later_resume_does_not_repeat_the_firewall_stage(self):
+        self.run_installer('WARP')
+        # Only the SECURITY step runs it (idempotent), not the FIREWALL stage.
+        self.assertEqual(self.firewall.call_count, 1)
+        self.run_installer(None)
+        self.assertEqual(self.firewall.call_count, 2)
 
     def test_fresh_install_applies_ipv6_once(self):
         calls, final = self.run_installer(None)

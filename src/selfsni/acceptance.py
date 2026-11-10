@@ -21,6 +21,7 @@ from .api import PANEL_ACCESS, LocalTLS, Panel, public_panel_port, request, publ
 from .panel_checks import panel_login, panel_network, panel_routes
 from .bbr import verify as verify_bbr
 from .ipv6 import check_exposure as check_ipv6_exposure, verify as verify_ipv6
+from .firewall import published_ports
 from .install_state import bbr_mode, ipv6_mode
 from .swap import verify as verify_swap
 from .core import (digest, json_obj, InstallError, require, run, save, token,
@@ -357,7 +358,7 @@ def verify(s, installed_xray=False):
     else:
         # Bob did not apply IPv4-only and never claims it; prove IPv6 exposes nothing internal.
         check(f'IPv6 not managed by Bob ({ipv6_policy}): UFW filters IPv6, no internal port on public IPv6',
-              lambda: check_ipv6_exposure(s['ssh_ports']))
+              lambda: check_ipv6_exposure(published_ports(s)))
     if 'swap' in s:
         check('Managed 2 GiB swap, when installed', lambda: verify_swap(s['swap']))
     return {'menuRevision': s.get('menu_revision'), 'scope':'on-host; no external client/reboot claims', 'checks':checks,

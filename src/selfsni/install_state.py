@@ -36,7 +36,8 @@ def policy_mode(report):
 ipv6_mode = bbr_mode = policy_mode
 
 
-RESUMABLE_FAILURE_STAGES = {'APT_UPDATE', 'APT_UPGRADE', 'APT_INSTALL', 'WARP', 'CERTIFICATE'}
+# FIREWALL only adds missing allow rules and undoes its own commands on failure.
+RESUMABLE_FAILURE_STAGES = {'APT_UPDATE', 'APT_UPGRADE', 'APT_INSTALL', 'FIREWALL', 'WARP', 'CERTIFICATE'}
 # After PANEL every credential, key and identity exists; a late resume reuses
 # them as saved and repeats only unfinished SECURITY steps and acceptance.
 LATE_RESUME_STAGES = ('SECURITY', 'ACCEPTANCE')
