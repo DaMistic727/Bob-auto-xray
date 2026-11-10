@@ -26,6 +26,10 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Install validation tools
         run: sudo apt-get update && sudo apt-get install -y shellcheck nginx openssl jq
+      - name: Python syntax on this interpreter
+        # Before the tests: a module that does not compile (for example more than 20
+        # nested blocks on Python 3.10) is otherwise reported only as import errors.
+        run: python -m compileall -q src tools tests
       - name: Tests
         env:
           PYTHONPATH: src
@@ -48,7 +52,6 @@ jobs:
           bash -n install.sh
           bash -n vendor/3x-ui/install.sh
           bash -n vendor/3x-ui/x-ui.sh
-          python -m compileall -q src tools tests
       - name: Reproducible release build
         run: |
           python tools/release.py --tag "v$(cat VERSION)"

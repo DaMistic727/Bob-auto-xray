@@ -1,4 +1,5 @@
 """Resume preflight: TCP/80 ownership by Bob's nginx and carried stage results."""
+import contextlib
 import os
 import tempfile
 import unittest
@@ -145,30 +146,40 @@ class Host:
             text = str(path)
             return REAL_EXISTS(path) if text.startswith(str(self.root)) else text in host_paths
 
-        with patch.object(provision.os, 'geteuid', return_value=0), \
-             patch.object(provision, 'os_info', return_value={'VERSION_ID': version, 'VERSION_CODENAME': 'resolute'}), \
-             patch.object(provision.platform, 'machine', return_value='x86_64'), \
-             patch.object(provision.shutil, 'disk_usage', return_value=type('D', (), {'free': 3 * 1024**3})()), \
-             patch.object(provision.shutil, 'which',
-                          side_effect=lambda name: '/usr/bin/warp-cli' if name == 'warp-cli' and mode == 'adopt' else None), \
-             patch.dict(os.environ, {'SSH_CONNECTION': connection}), \
-             patch.object(provision.ipv6, 'UFW_DEFAULTS', self.root / 'etc/default/ufw'), \
-             patch.object(provision, 'CONTROLLED_PATHS',
-                          [str(self.jail_local) if path == provision.JAIL_LOCAL else path
-                           for path in provision.CONTROLLED_PATHS]), \
-             patch.object(provision, 'JAIL_LOCAL', str(self.jail_local)), \
-             patch.object(provision.Path, 'exists', exists), \
-             patch.object(provision, 'NGINX_ROOT', self.nginx, create=True), \
-             patch.object(provision, 'PROC_ROOT', self.proc, create=True), \
-             patch.object(provision, 'UFW_ROOT', self.ufw), \
-             patch.object(provision.ipv6, 'CONFIG', self.ipv6_config), \
-             patch.object(provision.bbr, 'SYSCTL_CONFIG', self.bbr_config), \
-             patch.object(provision.swap, 'verify', self.swap_verify), \
-             patch.object(provision, 'run', side_effect=self.command), \
-             patch.object(provision.socket, 'getaddrinfo', return_value=[(None, None, None, None, ('8.8.8.8', 80))]), \
-             patch.object(provision.socket, 'socket', side_effect=self.socket), \
-             patch.object(provision.bbr, 'decision', return_value={'live': 'bbr'}), \
-             patch.object(provision.ipv6, 'preflight', return_value={'live': 'ipv6', 'networkDropin': str(self.dropin)}):
+        # One ExitStack instead of one `with` of 21 managers: CPython before 3.11 refuses
+        # more than 20 statically nested blocks. The patches are entered in this order
+        # and undone in reverse, exactly as a single `with` statement does.
+        with contextlib.ExitStack() as stack:
+            enter = stack.enter_context
+            enter(patch.object(provision.os, 'geteuid', return_value=0))
+            enter(patch.object(provision, 'os_info',
+                               return_value={'VERSION_ID': version, 'VERSION_CODENAME': 'resolute'}))
+            enter(patch.object(provision.platform, 'machine', return_value='x86_64'))
+            enter(patch.object(provision.shutil, 'disk_usage',
+                               return_value=type('D', (), {'free': 3 * 1024**3})()))
+            enter(patch.object(provision.shutil, 'which',
+                               side_effect=lambda name: '/usr/bin/warp-cli' if name == 'warp-cli' and mode == 'adopt' else None))
+            enter(patch.dict(os.environ, {'SSH_CONNECTION': connection}))
+            enter(patch.object(provision.ipv6, 'UFW_DEFAULTS', self.root / 'etc/default/ufw'))
+            # Built from the real JAIL_LOCAL, so it must precede the patch of JAIL_LOCAL.
+            enter(patch.object(provision, 'CONTROLLED_PATHS',
+                               [str(self.jail_local) if path == provision.JAIL_LOCAL else path
+                                for path in provision.CONTROLLED_PATHS]))
+            enter(patch.object(provision, 'JAIL_LOCAL', str(self.jail_local)))
+            enter(patch.object(provision.Path, 'exists', exists))
+            enter(patch.object(provision, 'NGINX_ROOT', self.nginx, create=True))
+            enter(patch.object(provision, 'PROC_ROOT', self.proc, create=True))
+            enter(patch.object(provision, 'UFW_ROOT', self.ufw))
+            enter(patch.object(provision.ipv6, 'CONFIG', self.ipv6_config))
+            enter(patch.object(provision.bbr, 'SYSCTL_CONFIG', self.bbr_config))
+            enter(patch.object(provision.swap, 'verify', self.swap_verify))
+            enter(patch.object(provision, 'run', side_effect=self.command))
+            enter(patch.object(provision.socket, 'getaddrinfo',
+                               return_value=[(None, None, None, None, ('8.8.8.8', 80))]))
+            enter(patch.object(provision.socket, 'socket', side_effect=self.socket))
+            enter(patch.object(provision.bbr, 'decision', return_value={'live': 'bbr'}))
+            enter(patch.object(provision.ipv6, 'preflight',
+                               return_value={'live': 'ipv6', 'networkDropin': str(self.dropin)}))
             return provision.preflight(args, state)
 
 
